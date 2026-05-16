@@ -1,74 +1,92 @@
 # Weather Agents — Model Catalog
 # Each agent can use a different model. Configure via `wa config set model.<agent> <model>`
 # Each model supports optional fallback chain and cost estimates.
+# Prices in USD per 1K tokens (as of May 2026).
 
 openai:
-  gpt-4o:
-    provider: "openai"
-    context_window: 128000
-    max_output: 16384
-    input_cost_per_1k: 0.00250
-    output_cost_per_1k: 0.01000
-  gpt-4o-mini:
-    provider: "openai"
-    context_window: 128000
-    max_output: 16384
-    input_cost_per_1k: 0.00015
-    output_cost_per_1k: 0.00060
   gpt-4.1:
     provider: "openai"
-    context_window: 1047576
+    context_window: 1048576
     max_output: 32768
     input_cost_per_1k: 0.00200
     output_cost_per_1k: 0.00800
   gpt-4.1-mini:
     provider: "openai"
-    context_window: 1047576
+    context_window: 1048576
     max_output: 32768
     input_cost_per_1k: 0.00040
     output_cost_per_1k: 0.00160
   gpt-4.1-nano:
     provider: "openai"
-    context_window: 1047576
+    context_window: 1048576
     max_output: 32768
     input_cost_per_1k: 0.00010
     output_cost_per_1k: 0.00040
+  o3:
+    provider: "openai"
+    context_window: 200000
+    max_output: 100000
+    input_cost_per_1k: 0.01000
+    output_cost_per_1k: 0.04000
+  o4-mini:
+    provider: "openai"
+    context_window: 200000
+    max_output: 100000
+    input_cost_per_1k: 0.00110
+    output_cost_per_1k: 0.00440
 
 anthropic:
   claude-sonnet-4-6:
     provider: "anthropic"
     context_window: 200000
-    max_output: 16384
+    max_output: 65536
     input_cost_per_1k: 0.00300
     output_cost_per_1k: 0.01500
   claude-opus-4-7:
     provider: "anthropic"
-    context_window: 200000
-    max_output: 16384
-    input_cost_per_1k: 0.01500
-    output_cost_per_1k: 0.07500
+    context_window: 1000000
+    max_output: 131072
+    input_cost_per_1k: 0.00500
+    output_cost_per_1k: 0.02500
   claude-haiku-4-5:
     provider: "anthropic"
     context_window: 200000
-    max_output: 8192
+    max_output: 65536
     input_cost_per_1k: 0.00080
     output_cost_per_1k: 0.00400
 
 deepseek:
   deepseek/deepseek-v4-flash:
     provider: "deepseek"
-    context_window: 128000
-    max_output: 8192
-    input_cost_per_1k: 0.00020
-    output_cost_per_1k: 0.00020
+    context_window: 1000000
+    max_output: 384000
+    input_cost_per_1k: 0.00014
+    output_cost_per_1k: 0.00028
     fallback:
-      - deepseek/deepseek-v4-pro
+      - gpt-4.1-mini
   deepseek/deepseek-v4-pro:
     provider: "deepseek"
-    context_window: 128000
-    max_output: 8192
-    input_cost_per_1k: 0.00055
-    output_cost_per_1k: 0.00219
+    context_window: 1000000
+    max_output: 384000
+    input_cost_per_1k: 0.00174
+    output_cost_per_1k: 0.00348
+    fallback:
+      - deepseek/deepseek-v4-flash
+      - gpt-4.1-mini
+
+google:
+  gemini/gemini-2.5-flash:
+    provider: "google"
+    context_window: 1000000
+    max_output: 65536
+    input_cost_per_1k: 0.00030
+    output_cost_per_1k: 0.00250
+  gemini/gemini-2.5-pro:
+    provider: "google"
+    context_window: 1000000
+    max_output: 65536
+    input_cost_per_1k: 0.00125
+    output_cost_per_1k: 0.01000
 
 local:
   ollama/llama3:

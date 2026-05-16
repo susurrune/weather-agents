@@ -96,6 +96,10 @@ _COMMANDS: list[tuple[str, str]] = [
 
 _COMMAND_LOOKUP: dict[str, str] = {c[0].split()[0].lstrip("/"): c[0] for c in _COMMANDS}
 
+# Input-line history buffer (shared across all agents in the session)
+_input_history: list[str] = []
+_history_idx: int = 0
+
 # ── Cross-platform key reader ─────────────────────────────────────────────
 
 
@@ -141,26 +145,51 @@ def _get_key() -> str:
         fd = sys.stdin.fileno()
         old = _termios.tcgetattr(fd)
         try:
+            import select
+
             _tty.setraw(fd)
             ch = sys.stdin.read(1)
             if ch == "\x1b":
-                nxt = sys.stdin.read(2)
-                if nxt == "[A":
-                    return "up"
-                if nxt == "[B":
-                    return "down"
-                if nxt == "[C":
-                    return "right"
-                if nxt == "[D":
-                    return "left"
-                if nxt == "[Z":
-                    return "shift_tab"
-                if nxt in ("OQ", "OP", "OQ"):
+                # Drain the full escape sequence with a short timeout
+                seq = "\x1b"
+                while True:
+                    r, _, _ = select.select([fd], [], [], 0.05)
+                    if not r:
+                        break
+                    more = sys.stdin.read(1)
+                    if not more:
+                        break
+                    seq += more
+                    # CSI sequences end with a byte in 0x40–0x7E
+                    if ord(more) in range(0x40, 0x7F):
+                        break
+                if seq == "\x1b":
+                    return "esc"
+                if seq.startswith("\x1b["):
+                    final = seq[-1]
+                    if final == "A":
+                        return "up"
+                    if final == "B":
+                        return "down"
+                    if final == "C":
+                        return "right"
+                    if final == "D":
+                        return "left"
+                    if final == "Z":
+                        return "shift_tab"
+                    return "esc"
+                if seq.startswith("\x1bO") and seq[-1] in "PQ":
                     return "tab"
                 return "esc"
             if ch == "\x03":
                 raise KeyboardInterrupt
-            if ch == "\r":
+            if ch in ("\r", "\n"):
+                # Consume trailing \n from \r\n sent by some IMEs
+                r, _, _ = select.select([fd], [], [], 0.01)
+                if r:
+                    nxt = sys.stdin.read(1)
+                    if nxt == "\n":
+                        pass  # consumed
                 return "enter"
             if ch in ("\x7f", "\x08"):
                 return "backspace"
@@ -463,7 +492,7 @@ def _show_choice_menu(
     with Live(
         Table(show_header=False, box=None, padding=0),
         console=console,
-        refresh_per_second=30,
+        refresh_per_second=10,
         transient=True,
     ) as live:
         while True:
@@ -744,7 +773,7 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
     with Live(
         Table(show_header=False, box=None, padding=0),
         console=console,
-        refresh_per_second=30,
+        refresh_per_second=10,
         transient=True,
     ) as live:
         while True:
@@ -812,6 +841,29 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
                     cursor_pos += 1
                 continue
 
+            if key == "up":
+                if popup_visible and filtered:
+                    selected_idx = max(0, selected_idx - 1)
+                elif _input_history:
+                    if _history_idx > 0:
+                        _history_idx -= 1
+                    buffer[:] = list(_input_history[_history_idx])
+                    cursor_pos = len(buffer)
+                continue
+
+            if key == "down":
+                if popup_visible and filtered:
+                    selected_idx = min(len(filtered) - 1, selected_idx + 1)
+                elif _input_history:
+                    if _history_idx < len(_input_history) - 1:
+                        _history_idx += 1
+                        buffer[:] = list(_input_history[_history_idx])
+                    else:
+                        _history_idx = len(_input_history)
+                        buffer.clear()
+                    cursor_pos = len(buffer)
+                continue
+
             if key == "shift_tab":
                 # Toggle between auto and plan mode
                 global INTERACTIVE_MODE
@@ -858,6 +910,12 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
                         selected_idx = 0
 
     if result:
+        # Save to history (no duplicates, limit 50)
+        if not _input_history or _input_history[-1] != result:
+            _input_history.append(result)
+            if len(_input_history) > 50:
+                _input_history.pop(0)
+        _history_idx = len(_input_history)
         color = AGENT_COLORS.get(agent.name, "cyan")
         echo = Text()
         echo.append(agent.display_name, style=f"bold {color}")
@@ -1073,6 +1131,17 @@ async def _interactive(agent_name: str | None = None) -> None:
                 activities: list[dict] = []
                 _empty_retried = False
                 _auto_continue_count = 0
+                _esc_event = asyncio.Event()
+
+                async def _esc_watcher():
+                    loop = asyncio.get_running_loop()
+                    while not _esc_event.is_set():
+                        key = await loop.run_in_executor(None, _get_key)
+                        if key == "esc":
+                            _esc_event.set()
+                            break
+
+                esc_task = asyncio.create_task(_esc_watcher())
 
                 live = Live(
                     _build_stream_display(agent, "", ""),
@@ -1084,6 +1153,9 @@ async def _interactive(agent_name: str | None = None) -> None:
 
                 try:
                     async for event in agent.chat_stream(inp):
+                        if _esc_event.is_set():
+                            interrupted = True
+                            break
                         if event["type"] == "content":
                             md_content += event["text"]
                             live.update(_build_stream_display(agent, status_text, md_content))
@@ -1112,6 +1184,10 @@ async def _interactive(agent_name: str | None = None) -> None:
                 except KeyboardInterrupt:
                     interrupted = True
                 finally:
+                    _esc_event.set()
+                    esc_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await esc_task
                     if md_content.strip():
                         live.update(
                             _build_response_panel(

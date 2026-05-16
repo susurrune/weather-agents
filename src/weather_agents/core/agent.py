@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -60,6 +61,10 @@ class BaseAgent:
     system_prompt: str = ""
     tool_names: list[str] = []
     skill_names: list[str] = []
+
+    # Time-tag cache (shared across all instances, 30s TTL)
+    _time_tag: str | None = None
+    _time_tag_ts: float = 0.0
 
     def __init__(
         self,
@@ -120,6 +125,25 @@ class BaseAgent:
             )
         return prompt + ws_block
 
+    def _current_time_tag(self) -> str:
+        """One-line current-date tag for the system prompt.
+
+        30-second class-level cache saves the clock call on rapid rebuilds
+        (skill activate/deactivate, language switch).
+        """
+        now = time.time()
+        if BaseAgent._time_tag is not None and now - BaseAgent._time_tag_ts < 30:
+            return BaseAgent._time_tag
+        import datetime
+
+        tag = (
+            f"Today is {datetime.date.today().isoformat()}. "
+            f"Current time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')}."
+        )
+        BaseAgent._time_tag = tag
+        BaseAgent._time_tag_ts = now
+        return tag
+
     def _inject_behavior_rules(self, prompt: str) -> str:
         """Append concise behavior rules to the system prompt."""
         lang = getattr(self.config.llm, "language", "zh")
@@ -178,6 +202,7 @@ class BaseAgent:
         self._base_system_prompt = self._inject_workspace_info(self._base_system_prompt)
         self._base_system_prompt = self._inject_behavior_rules(self._base_system_prompt)
         self._base_system_prompt = self._inject_programming_wisdom(self._base_system_prompt)
+        self._base_system_prompt += "\n\n" + self._current_time_tag()
         for msg in self.memory.short_term:
             if msg.role == "system":
                 msg.content = self._base_system_prompt
@@ -193,6 +218,7 @@ class BaseAgent:
         self._base_system_prompt = self._inject_workspace_info(self._base_system_prompt)
         self._base_system_prompt = self._inject_behavior_rules(self._base_system_prompt)
         self._base_system_prompt = self._inject_programming_wisdom(self._base_system_prompt)
+        self._base_system_prompt += "\n\n" + self._current_time_tag()
         if not any(m.role == "system" for m in self.memory.short_term):
             self.memory.add_message("system", self._base_system_prompt)
         self._tools = self.tool_registry.get_tools()

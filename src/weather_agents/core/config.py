@@ -388,6 +388,8 @@ def _load_config_uncached() -> AppConfig:
         cfg.llm.api_keys["anthropic"] = os.getenv("ANTHROPIC_API_KEY", "")
     if not cfg.llm.api_keys.get("deepseek") and os.getenv("DEEPSEEK_API_KEY"):
         cfg.llm.api_keys["deepseek"] = os.getenv("DEEPSEEK_API_KEY", "")
+    if not cfg.llm.api_keys.get("google") and os.getenv("GOOGLE_API_KEY"):
+        cfg.llm.api_keys["google"] = os.getenv("GOOGLE_API_KEY", "")
 
     _sync_api_keys_to_env(cfg.llm.api_keys)
 
@@ -398,6 +400,9 @@ _ENV_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
 }
 
 
@@ -419,7 +424,7 @@ def set_config(key: str, value: str) -> tuple[bool, str]:
     Supported keys:
       default_model, temperature, max_tokens, timeout
       model.<agent>      (fog/rain/frost/snow/dew/sunshine)
-      api_key.<provider> (openai/anthropic)
+      api_key.<provider> (openai/anthropic/deepseek/google)
     """
     parts = key.split(".")
 
