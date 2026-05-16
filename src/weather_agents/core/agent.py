@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import time
@@ -538,7 +539,8 @@ class BaseAgent:
             async for ev in self._chat_stream_impl(message):
                 yield ev
         finally:
-            _call_agent_var.reset(_token)
+            with contextlib.suppress(ValueError):
+                _call_agent_var.reset(_token)
 
     async def _chat_stream_impl(self, message: str) -> AsyncIterator[dict]:
         await self._set_state(AgentState.THINKING)
