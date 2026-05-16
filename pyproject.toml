@@ -35,7 +35,7 @@ dev = [
 ]
 
 [project.scripts]
-wacode = "weather_agents.cli.main:app"
+wa = "weather_agents.cli.main:app"
 
 [build-system]
 requires = ["hatchling"]

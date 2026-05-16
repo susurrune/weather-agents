@@ -212,7 +212,7 @@ def _poll_esc() -> bool:
     return False
 
 
-app = typer.Typer(name="wacode", help="Weather Agents CLI", no_args_is_help=False)
+app = typer.Typer(name="wa", help="Weather Agents CLI", no_args_is_help=False)
 console = Console()
 
 # Per-agent animated spinner themes for streaming / status indicators
@@ -2085,7 +2085,7 @@ def _interactive_model_select(prompt: str = "Select model") -> str | None:
                 return None
 
             if key == "enter":
-                return entries[selected_idx].get("name", "")
+                return str(entries[selected_idx].get("name", ""))
             if key == "esc":
                 return None
             if key == "up":
@@ -2348,14 +2348,14 @@ def chat(
         raise typer.Exit(1)
 
     # First-run: nothing is configured yet. Walk the user through the wizard,
-    # then drop straight into chat — no separate `wacode init` step required.
+    # then drop straight into chat — no separate `wa init` step required.
     if not _is_configured():
         console.print("\n  [yellow]No API key configured yet — running first-run setup.[/yellow]")
         _run_setup_wizard()
         if not _is_configured():
             console.print(
                 "\n  [yellow]Skipped without entering a key. "
-                "Run [cyan]wacode init[/cyan] later when ready.[/yellow]\n"
+                "Run [cyan]wa init[/cyan] later when ready.[/yellow]\n"
             )
             raise typer.Exit(0)
 
@@ -2456,7 +2456,7 @@ def config(
 
     elif action == "set":
         if not key or value is None:
-            console.print("  [red]usage: wacode config set <key> <value>[/red]")
+            console.print("  [red]usage: wa config set <key> <value>[/red]")
             raise typer.Exit(1)
         ok, msg = set_config(key, value)
         color = "green" if ok else "red"
@@ -2464,7 +2464,7 @@ def config(
 
     elif action == "delete":
         if not key:
-            console.print("  [red]usage: wacode config delete <key>[/red]")
+            console.print("  [red]usage: wa config delete <key>[/red]")
             raise typer.Exit(1)
         ok, msg = delete_config(key)
         color = "green" if ok else "red"
@@ -2696,7 +2696,7 @@ def init() -> None:
     if answer in ("", "y", "yes"):
         asyncio.run(_interactive())
     else:
-        console.print("\n  [dim]Run `wacode` when ready.[/dim]\n")
+        console.print("\n  [dim]Run `wa` when ready.[/dim]\n")
 
 
 # -- Version ---------------------------------------------------------------

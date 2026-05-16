@@ -179,15 +179,15 @@ Weather Agents 是一个天气主题的多智能体 AI 编排框架，包含 **6
 ### 启动命令
 
 ```bash
-wacode                          # 默认进入 Fog 交互模式
-wacode --help                   # 显示帮助
-wacode --version                # 显示版本
-wacode init                     # 首次配置向导
-wacode chat [agent] [message]   # 单次对话
-wacode task "<goal>"            # 多 Agent 编排任务
-wacode status                   # 所有 Agent 状态
-wacode config list              # 显示配置
-wacode memory status            # 记忆状态
+wa                              # 默认进入 Fog 交互模式
+wa --help                       # 显示帮助
+wa --version                    # 显示版本
+wa init                         # 首次配置向导
+wa chat [agent] [message]       # 单次对话
+wa task "<goal>"                # 多 Agent 编排任务
+wa status                       # 所有 Agent 状态
+wa config list                  # 显示配置
+wa memory status                # 记忆状态
 ```
 
 ### 交互模式命令 (/ 命令)
