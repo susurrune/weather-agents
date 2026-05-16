@@ -167,6 +167,23 @@ class WorkspaceConfig:
 
 
 @dataclass
+class TTSConfig:
+    enabled: bool = False
+    provider: str = "doubao"
+    access_token: str = ""
+    api_key: str = ""
+    app_id: str = ""
+    resource_id: str = "seed-tts-2.0"
+    voice_type: str = "zh_female_cancan_mars_bigtts"
+    encoding: str = "mp3"
+    sample_rate: int = 24000
+    speed_ratio: float = 1.0
+    volume_ratio: float = 1.0
+    pitch_ratio: float = 1.0
+    emotion: str = "happy"
+
+
+@dataclass
 class PluginConfig:
     enabled: bool = True
     directories: list[str] = field(default_factory=lambda: ["~/.weather-agents/plugins"])
@@ -195,6 +212,7 @@ class AppConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     web: WebConfig = field(default_factory=WebConfig)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
+    tts: TTSConfig = field(default_factory=TTSConfig)
     plugins: PluginConfig = field(default_factory=PluginConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
 
@@ -356,6 +374,22 @@ def _load_config_uncached() -> AppConfig:
     if web := merged.get("web"):
         cfg.web.host = web.get("host", cfg.web.host)
         cfg.web.port = web.get("port", cfg.web.port)
+
+    # TTS (Doubao / Volcano Engine)
+    if tts_cfg := merged.get("tts"):
+        cfg.tts.enabled = tts_cfg.get("enabled", False)
+        cfg.tts.provider = tts_cfg.get("provider", cfg.tts.provider)
+        cfg.tts.access_token = tts_cfg.get("access_token", "")
+        cfg.tts.api_key = tts_cfg.get("api_key", "")
+        cfg.tts.app_id = tts_cfg.get("app_id", "")
+        cfg.tts.resource_id = tts_cfg.get("resource_id", cfg.tts.resource_id)
+        cfg.tts.voice_type = tts_cfg.get("voice_type", cfg.tts.voice_type)
+        cfg.tts.encoding = tts_cfg.get("encoding", cfg.tts.encoding)
+        cfg.tts.sample_rate = int(tts_cfg.get("sample_rate", 24000))
+        cfg.tts.speed_ratio = float(tts_cfg.get("speed_ratio", 1.0))
+        cfg.tts.volume_ratio = float(tts_cfg.get("volume_ratio", 1.0))
+        cfg.tts.pitch_ratio = float(tts_cfg.get("pitch_ratio", 1.0))
+        cfg.tts.emotion = tts_cfg.get("emotion", cfg.tts.emotion)
 
     # Workspace
     if ws := merged.get("workspace"):

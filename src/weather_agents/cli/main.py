@@ -2445,46 +2445,84 @@ async def _run_task(goal: str, agents=None) -> None:
             await own_ctx.close_all()
 
 
-async def _run_voice_server(host: str, port: int, agent_name: str) -> None:
+async def _run_voice_server(
+    host: str, port: int, agent_name: str,
+    cert_file: str | None = None,
+    key_file: str | None = None,
+) -> None:
     """Start the voice WebSocket server and print connection info."""
-    import socket
+    import contextlib
+    import ssl
+    import subprocess
 
+    from weather_agents.core.config import load_config
     from weather_agents.web import run_voice_server as _run_voice
+    from weather_agents.web.certs import detect_all_lan_ips, ensure_self_signed_cert
 
-    # Resolve local IP address for the user-friendly URL
-    local_ip = "127.0.0.1"
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.1)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        pass
+    # Detect all LAN IPs (Wi-Fi, hotspot, etc.)
+    all_ips = detect_all_lan_ips()
+
+    # Try to add Windows firewall rule (requires admin; silently ignore failure)
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            [
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name=WA Voice ({port})",
+                "dir=in", "action=allow", "protocol=TCP",
+                f"localport={port}",
+            ],
+            capture_output=True, timeout=5,
+        )
+
+    # Build SSL context if cert/key provided or auto-generate
+    ssl_context = None
+    is_https = False
+    if cert_file and key_file:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(cert_file, key_file)
+        is_https = True
+    elif all_ips:
+        generated_cert, generated_key = ensure_self_signed_cert(all_ips)
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(generated_cert, generated_key)
+        is_https = True
 
     color = AGENT_COLORS.get(agent_name, "#FFD700")
     display = AGENT_CLASSES[agent_name].display_name if agent_name in AGENT_CLASSES else agent_name
 
-    console.print()
-    console.print(
-        Panel(
-            Text()
-            .append(f"{display} · 语音对话", style=f"bold {color}")
-            .append("\n\n  服务地址:  ", style="dim")
-            .append(f"http://{host}:{port}", style="cyan")
-            .append("\n  局域网访问:  ", style="dim")
-            .append(f"http://{local_ip}:{port}", style="cyan")
-            .append("\n\n  用手机浏览器打开上面的地址进行语音对话", style="dim")
-            .append("\n  支持 Chrome / Edge / Safari (iOS 16+)", style="dim"),
-            border_style=color,
-            box=box.ROUNDED,
-            padding=(1, 2),
+    # Check TTS status
+    cfg = load_config()
+    tts_status = "豆包 TTS" if cfg.tts.enabled else "浏览器 TTS"
+
+    firewall_hint = ""
+    with contextlib.suppress(Exception):
+        r = subprocess.run(
+            ["netsh", "advfirewall", "firewall", "show", "rule", f"name=WA Voice ({port})"],
+            capture_output=True, timeout=5,
         )
-    )
+        stdout = r.stdout.decode("gbk", errors="replace")
+        if "No rules" in stdout or "没有匹配" in stdout:
+            firewall_hint = (
+                f"  ⚠ 防火墙未放行 {port} 端口，手机无法连接。"
+                f" 请以管理员身份运行: netsh advfirewall firewall add rule name=\"WA Voice\" dir=in action=allow protocol=TCP localport={port}"
+            )
+
+    panel_text = Text().append(f"{display} · 语音对话", style=f"bold {color}")
+    panel_text.append("\n  ", style="dim").append(f"http://127.0.0.1:{port}", style="cyan").append("  (本机)", style="dim")
+    if is_https:
+        for lan_ip in all_ips:
+            panel_text.append(f"\n  https://{lan_ip}:{port}", style="cyan").append("  (手机 HTTPS · 有安全警告点继续)", style="green")
+    panel_text.append(f"\n  TTS: {tts_status}", style="dim")
+    if firewall_hint:
+        panel_text.append(firewall_hint, style="yellow")
+    else:
+        panel_text.append("\n  手机与电脑需在同一 Wi-Fi 或热点", style="dim")
+    console.print()
+    console.print(Panel(panel_text, border_style=color, box=box.ROUNDED, padding=(1, 2)))
     console.print()
 
     try:
-        await _run_voice(host=host, port=port, agent_name=agent_name)
+        await _run_voice(host=host, port=port, agent_name=agent_name, ssl_context=ssl_context)
     except KeyboardInterrupt:
         console.print("\n  [dim]语音服务已关闭[/dim]\n")
 
@@ -2543,9 +2581,28 @@ def voice(
         "-a",
         help="Agent to use for voice chat",
     ),
+    cert_file: str | None = typer.Option(
+        None,
+        "--cert-file",
+        "-c",
+        help="Path to TLS certificate (auto-generated if omitted for remote access)",
+    ),
+    key_file: str | None = typer.Option(
+        None,
+        "--key-file",
+        "-k",
+        help="Path to TLS private key (required with --cert-file)",
+    ),
 ) -> None:
-    """Start voice chat server for remote voice conversation."""
-    asyncio.run(_run_voice_server(host, port, agent))
+    """Start voice chat server for remote voice conversation.
+
+    When accessing from a mobile browser (not localhost), HTTPS is required
+    for microphone access.  If --cert-file/--key-file are provided they are
+    used directly; otherwise a self-signed certificate is auto-generated.
+    """
+    if (cert_file is None) != (key_file is None):
+        raise typer.BadParameter("--cert-file and --key-file must be used together")
+    asyncio.run(_run_voice_server(host, port, agent, cert_file, key_file))
 
 
 @app.command()

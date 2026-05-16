@@ -363,6 +363,12 @@ let isListening = false;
 let isSpeaking = false;
 let isWaitingResponse = false;
 let reconnectTimer = null;
+let audioCtx = null;
+let pendingAudioB64 = '';
+let serverTtsPending = false;
+let lastFullText = '';
+let currentAudioSource = null;
+let serverTtsTimeoutId = null;
 
 const UI = {
   messages: document.getElementById('messages'),
@@ -389,7 +395,8 @@ let currentUtterance = null;
 // ── WebSocket ──
 function getWsUrl() {
   const loc = window.location;
-  return `ws://${loc.host}/ws`;
+  const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${loc.host}/ws`;
 }
 
 function connect() {
@@ -453,6 +460,9 @@ function handleMsg(msg) {
       setStatus('waiting');
       currentAgentMsgEl = null;
       showThinking();
+      // Clear any pending audio from previous response
+      pendingAudioB64 = '';
+      serverTtsPending = false;
       break;
     case 'content':
       hideThinking();
@@ -466,16 +476,51 @@ function handleMsg(msg) {
       break;
     case 'done':
       isWaitingResponse = false;
+      lastFullText = msg.full_text || '';
+      serverTtsPending = !!msg.tts;
       if (currentAgentMsgEl) {
         currentAgentMsgEl.classList.remove('streaming');
-        const fullText = msg.full_text || currentAgentMsgEl.querySelector('.text').textContent;
-        currentAgentMsgEl.querySelector('.text').textContent = fullText;
+        currentAgentMsgEl.querySelector('.text').textContent = lastFullText;
         scrollBottom();
-        speakText(fullText);
       } else {
         hideThinking();
-        speakText(msg.full_text || '');
       }
+      if (!serverTtsPending) {
+        speakText(lastFullText);
+      } else {
+        setStatus('waiting');
+        // Timeout: if server TTS doesn't deliver within 10s, fall back to browser TTS
+        if (serverTtsTimeoutId) clearTimeout(serverTtsTimeoutId);
+        serverTtsTimeoutId = setTimeout(() => {
+          serverTtsTimeoutId = null;
+          serverTtsPending = false;
+          if (lastFullText) speakText(lastFullText);
+        }, 10000);
+      }
+      break;
+    case 'audio_start':
+      pendingAudioB64 = '';
+      setStatus('speaking');
+      break;
+    case 'audio_chunk':
+      pendingAudioB64 += msg.data;
+      break;
+    case 'audio_end':
+      if (serverTtsTimeoutId) { clearTimeout(serverTtsTimeoutId); serverTtsTimeoutId = null; }
+      if (msg.error) {
+        // Server TTS failed; fall back to browser SpeechSynthesis
+        serverTtsPending = false;
+        pendingAudioB64 = '';
+        if (lastFullText) speakText(lastFullText);
+      } else if (pendingAudioB64) {
+        playBase64Audio(pendingAudioB64);
+      } else {
+        isSpeaking = false;
+        setStatus('connected');
+        tryAutoListen();
+      }
+      pendingAudioB64 = '';
+      serverTtsPending = false;
       break;
     case 'status':
       if (!currentAgentMsgEl) {
@@ -666,12 +711,57 @@ function stopSpeaking() {
     synth.cancel();
     currentUtterance = null;
   }
+  if (currentAudioSource) {
+    try { currentAudioSource.stop(); } catch(_) {}
+    currentAudioSource = null;
+  }
   isSpeaking = false;
 }
 
 function tryAutoListen() {
   if (autoListenEnabled && !isWaitingResponse && ws && ws.readyState === WebSocket.OPEN) {
     startListening();
+  }
+}
+
+// ── Audio playback (Doubao TTS) ──
+function playBase64Audio(b64data) {
+  try {
+    const binaryStr = atob(b64data);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    isSpeaking = true;
+    setStatus('speaking');
+    audioCtx.decodeAudioData(bytes.buffer, (buffer) => {
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      currentAudioSource = source;
+      source.start(0);
+      source.onended = () => {
+        if (currentAudioSource === source) currentAudioSource = null;
+        isSpeaking = false;
+        setStatus('connected');
+        tryAutoListen();
+      };
+    }, (err) => {
+      console.warn('audio decode error:', err);
+      isSpeaking = false;
+      setStatus('connected');
+      if (lastFullText) speakText(lastFullText);
+      tryAutoListen();
+    });
+  } catch(e) {
+    console.warn('playBase64Audio error:', e);
+    isSpeaking = false;
+    setStatus('connected');
+    if (lastFullText) speakText(lastFullText);
+    tryAutoListen();
   }
 }
 
