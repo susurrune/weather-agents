@@ -92,6 +92,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/sunshine", "switch to Sunshine (晴)"),
     ("/version", "version info"),
     ("/quit", "exit chat"),
+    ("/exit", "exit chat"),
 ]
 
 _COMMAND_LOOKUP: dict[str, str] = {c[0].split()[0].lstrip("/"): c[0] for c in _COMMANDS}
@@ -1427,6 +1428,7 @@ def _print_help(ctx) -> None:
                 ("/session load <id>", _h("加载会话", "switch to session")),
                 ("/session delete <id>", _h("删除会话", "delete session")),
                 ("/quit", _h("退出", "exit")),
+                ("/exit", _h("退出", "exit")),
             ],
         ),
     ]
