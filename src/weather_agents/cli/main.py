@@ -2466,19 +2466,21 @@ async def _run_voice_server(host: str, port: int, agent_name: str) -> None:
     display = AGENT_CLASSES[agent_name].display_name if agent_name in AGENT_CLASSES else agent_name
 
     console.print()
-    console.print(Panel(
-        Text()
-        .append(f"{display} · 语音对话", style=f"bold {color}")
-        .append(f"\n\n  服务地址:  ", style="dim")
-        .append(f"http://{host}:{port}", style="cyan")
-        .append(f"\n  局域网访问:  ", style="dim")
-        .append(f"http://{local_ip}:{port}", style="cyan")
-        .append(f"\n\n  用手机浏览器打开上面的地址进行语音对话", style="dim")
-        .append(f"\n  支持 Chrome / Edge / Safari (iOS 16+)", style="dim"),
-        border_style=color,
-        box=box.ROUNDED,
-        padding=(1, 2),
-    ))
+    console.print(
+        Panel(
+            Text()
+            .append(f"{display} · 语音对话", style=f"bold {color}")
+            .append("\n\n  服务地址:  ", style="dim")
+            .append(f"http://{host}:{port}", style="cyan")
+            .append("\n  局域网访问:  ", style="dim")
+            .append(f"http://{local_ip}:{port}", style="cyan")
+            .append("\n\n  用手机浏览器打开上面的地址进行语音对话", style="dim")
+            .append("\n  支持 Chrome / Edge / Safari (iOS 16+)", style="dim"),
+            border_style=color,
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+    )
     console.print()
 
     try:
@@ -2524,20 +2526,28 @@ def task(goal: str = typer.Argument(..., help="Task goal for multi-agent orchest
 @app.command()
 def voice(
     host: str = typer.Option(
-        "0.0.0.0", "--host", "-H",
+        "0.0.0.0",
+        "--host",
+        "-H",
         help="Bind host (use 0.0.0.0 for remote access)",
     ),
     port: int = typer.Option(
-        8765, "--port", "-p",
+        8765,
+        "--port",
+        "-p",
         help="Listen port",
     ),
     agent: str = typer.Option(
-        "sunshine", "--agent", "-a",
+        "sunshine",
+        "--agent",
+        "-a",
         help="Agent to use for voice chat",
     ),
 ) -> None:
     """Start voice chat server for remote voice conversation."""
     asyncio.run(_run_voice_server(host, port, agent))
+
+
 @app.command()
 def status() -> None:
     """Show all agent status and model configuration."""

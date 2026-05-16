@@ -80,6 +80,7 @@ async def test_index_returns_html(voice_server):
 @pytest.mark.asyncio
 async def test_speech_round_trip(voice_server, mock_agent, mock_ws):
     """Full round-trip: send speech → start/content/done events."""
+
     async def mock_stream(_text):
         yield {"type": "content", "text": "Hello "}
         yield {"type": "content", "text": "world!"}
@@ -97,6 +98,7 @@ async def test_speech_round_trip(voice_server, mock_agent, mock_ws):
 @pytest.mark.asyncio
 async def test_speech_with_tool_status(voice_server, mock_agent, mock_ws):
     """Tool_status events are forwarded."""
+
     async def mock_stream(_text):
         yield {"type": "tool_status", "label": "Searching..."}
         yield {"type": "content", "text": "Result"}
@@ -114,6 +116,7 @@ async def test_speech_with_tool_status(voice_server, mock_agent, mock_ws):
 @pytest.mark.asyncio
 async def test_speech_error_handling(voice_server, mock_agent, mock_ws):
     """Agent exception sends error message."""
+
     async def mock_stream(_text):
         raise RuntimeError("test error")
         yield
@@ -130,6 +133,7 @@ async def test_speech_error_handling(voice_server, mock_agent, mock_ws):
 @pytest.mark.asyncio
 async def test_done_has_stripped_text(voice_server, mock_agent, mock_ws):
     """Done event strips markdown from full_text."""
+
     async def mock_stream(_text):
         yield {"type": "content", "text": "**Hello**"}
         yield {"type": "done"}
@@ -146,6 +150,7 @@ async def test_done_has_stripped_text(voice_server, mock_agent, mock_ws):
 @pytest.mark.asyncio
 async def test_reasoning_events_skipped(voice_server, mock_agent, mock_ws):
     """Reasoning events are not forwarded."""
+
     async def mock_stream(_text):
         yield {"type": "reasoning", "text": "thinking..."}
         yield {"type": "content", "text": "Answer"}
@@ -164,6 +169,7 @@ async def test_reasoning_events_skipped(voice_server, mock_agent, mock_ws):
 async def test_empty_text_no_agent_call(voice_server, mock_agent, mock_ws):
     """Empty text doesn't call chat_stream."""
     called = False
+
     async def mock_stream(_text):
         nonlocal called
         called = True
@@ -179,18 +185,21 @@ async def test_empty_text_no_agent_call(voice_server, mock_agent, mock_ws):
 # ── Markdown stripping ──
 
 
-@pytest.mark.parametrize("md,expected", [
-    ("**bold**", "bold"),
-    ("*italic*", "italic"),
-    ("`code`", ""),
-    ("```block```", ""),
-    ("# Heading", "Heading"),
-    ("[link](url)", "link"),
-    ("- item", "item"),
-    ("1. item", "item"),
-    ("> quote", "quote"),
-    ("**bold** and *italic*", "bold and italic"),
-])
+@pytest.mark.parametrize(
+    "md,expected",
+    [
+        ("**bold**", "bold"),
+        ("*italic*", "italic"),
+        ("`code`", ""),
+        ("```block```", ""),
+        ("# Heading", "Heading"),
+        ("[link](url)", "link"),
+        ("- item", "item"),
+        ("1. item", "item"),
+        ("> quote", "quote"),
+        ("**bold** and *italic*", "bold and italic"),
+    ],
+)
 def test_strip_markdown(md, expected):
     assert _strip_markdown(md) == expected, f"failed for: {md!r}"
 
@@ -200,4 +209,5 @@ def test_strip_markdown(md, expected):
 
 def _make_request(method: str, path: str):
     from aiohttp.test_utils import make_mocked_request
+
     return make_mocked_request(method, path)
