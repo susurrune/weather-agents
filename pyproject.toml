@@ -25,7 +25,6 @@ dependencies = [
     "ddgs>=8.0",
     "aiohttp>=3.9",
     "cryptography>=35",
-    "websockets>=13",
 ]
 
 [project.optional-dependencies]

@@ -100,9 +100,16 @@ class VoiceServer:
 
         return ws
 
+    async def _safe_send(self, ws: web.WebSocketResponse, data: dict[str, Any]) -> bool:
+        try:
+            await ws.send_json(data)
+            return True
+        except (ConnectionResetError, ConnectionError, OSError):
+            return False
+
     async def _handle_speech(self, ws: web.WebSocketResponse, text: str) -> None:
         """Stream user speech through the agent and pipe events back via WS."""
-        await ws.send_json({"type": "start"})
+        await self._safe_send(ws, {"type": "start"})
 
         full_text = ""
         try:
@@ -112,48 +119,50 @@ class VoiceServer:
                 if ev_type == "content":
                     chunk = event.get("text", "")
                     full_text += chunk
-                    await ws.send_json({"type": "content", "text": chunk})
+                    if not await self._safe_send(ws, {"type": "content", "text": chunk}):
+                        return
                 elif ev_type == "reasoning":
-                    pass  # skip reasoning in voice mode
+                    pass
                 elif ev_type == "tool_status":
-                    await ws.send_json({"type": "status", "label": event.get("label", "")})
+                    if not await self._safe_send(ws, {"type": "status", "label": event.get("label", "")}):
+                        return
                 elif ev_type == "done":
                     break
         except Exception as exc:
             _log.warning("voice_speech_error %s", exc)
-            await ws.send_json({"type": "error", "text": f"error: {exc}"})
+            await self._safe_send(ws, {"type": "error", "text": f"error: {exc}"})
             return
 
-        # Strip markdown for client-side TTS consumption
         clean = _strip_markdown(full_text)
         done_msg: dict[str, Any] = {"type": "done", "full_text": clean, "raw_text": full_text}
         if self.tts_engine and clean:
             done_msg["tts"] = "doubao"
-        await ws.send_json(done_msg)
+        if not await self._safe_send(ws, done_msg):
+            return
 
-        # Synthesize audio via Doubao TTS if engine is available
         if self.tts_engine and clean:
             await self._synthesize_audio(ws, clean)
 
     async def _synthesize_audio(self, ws: web.WebSocketResponse, text: str) -> None:
         """Synthesize text to audio and send chunks via WebSocket."""
-        assert self.tts_engine is not None  # guarded at call site
+        assert self.tts_engine is not None
         try:
             audio_data = await self.tts_engine.synthesize(text)
             if not audio_data:
                 _log.warning("tts_empty_audio")
-                await ws.send_json({"type": "audio_end", "error": "empty"})
+                await self._safe_send(ws, {"type": "audio_end", "error": "empty"})
                 return
             audio_b64 = base64.b64encode(audio_data).decode("ascii")
-            await ws.send_json({"type": "audio_start", "format": self.tts_engine.encoding})
-            # Send large audio in ~32KB base64 chunks
-            chunk_size = 48000  # 36 KB base64 ≈ 27 KB raw per chunk
+            if not await self._safe_send(ws, {"type": "audio_start", "format": self.tts_engine.encoding}):
+                return
+            chunk_size = 48000
             for i in range(0, len(audio_b64), chunk_size):
-                await ws.send_json({"type": "audio_chunk", "data": audio_b64[i : i + chunk_size]})
-            await ws.send_json({"type": "audio_end"})
+                if not await self._safe_send(ws, {"type": "audio_chunk", "data": audio_b64[i : i + chunk_size]}):
+                    return
+            await self._safe_send(ws, {"type": "audio_end"})
         except Exception as exc:
             _log.warning("tts_synthesis_error %s", exc)
-            await ws.send_json({"type": "audio_end", "error": str(exc)})
+            await self._safe_send(ws, {"type": "audio_end", "error": str(exc)})
 
     async def run(self) -> None:
         """Start the aiohttp server and run until cancelled."""
