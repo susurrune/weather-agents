@@ -764,6 +764,7 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
         prompt.append(" ❯ ", style=color)
         return console.input(prompt)
 
+    global _history_idx
     buffer: list[str] = []
     cursor_pos = 0
     popup_visible = False
