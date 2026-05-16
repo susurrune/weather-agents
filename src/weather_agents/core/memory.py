@@ -50,6 +50,7 @@ class Memory:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(str(self._db_path))
         await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
         await self._db.execute(
             """
