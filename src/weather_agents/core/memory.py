@@ -178,43 +178,50 @@ class Memory:
         The LLM API requires every 'tool' role message to be preceded by an
         'assistant' message whose tool_calls array contains the matching id.
         Truncation or compaction can break this invariant by removing an
-        assistant message while leaving its tool responses behind. This method
-        restores correctness by:
+        assistant message while leaving its tool responses behind.
 
-        1. Removing assistant messages whose tool_calls never got a response
-           (e.g. interrupted mid-round), and the user message that triggered them.
-        2. Removing tool messages whose tool_call_id doesn't match any
-           preceding assistant's tool_calls (the reverse case — orphaned
-           tool responses whose assistant message was removed).
+        Uses position-aware matching: each tool message satisfies the *closest*
+        preceding assistant that contains its tool_call_id.  This correctly
+        handles duplicate tool_call_ids across different assistant messages,
+        which the naive set-based approach would conflate.
         """
         if not self.short_term:
             return
 
-        # ── Pass 1: remove assistant messages with orphaned tool_calls ──
-        responded_ids: set[str] = set()
-        for msg in self.short_term:
-            if msg.role == "tool" and msg.tool_call_id:
-                responded_ids.add(msg.tool_call_id)
+        n = len(self.short_term)
+        remove = [False] * n
 
-        pruned_tool_call_ids: set[str] = set()
-        keep: list[Message] = []
-        for msg in self.short_term:
+        # ── Pass 1: position-aware matching ──
+        # For each tool_call_id, a stack of assistant indices waiting for a
+        # response. A tool message pops from the stack — satisfying the most
+        # recent (closest) preceding assistant.
+        waiting: dict[str, list[int]] = {}
+        for i, msg in enumerate(self.short_term):
             if msg.role == "assistant" and msg.tool_calls:
-                tc_ids = {tcid for tc in msg.tool_calls if (tcid := tc.get("id"))}
-                if tc_ids - responded_ids:
-                    pruned_tool_call_ids |= tc_ids
-                    continue
-            keep.append(msg)
+                for tc in msg.tool_calls:
+                    if tid := tc.get("id"):
+                        waiting.setdefault(tid, []).append(i)
+            elif msg.role == "tool" and msg.tool_call_id:
+                tid = msg.tool_call_id
+                if tid in waiting and waiting[tid]:
+                    waiting[tid].pop()  # consumed by closest assistant
+                else:
+                    remove[i] = True  # orphaned tool message
 
-        if pruned_tool_call_ids:
-            keep = [
-                m for m in keep if not (m.role == "tool" and m.tool_call_id in pruned_tool_call_ids)
-            ]
+        # Any assistant indices still in waiting stacks are orphaned.
+        for indices in waiting.values():
+            for i in indices:
+                remove[i] = True
+
+        if not any(remove):
+            return
+
+        kept = [m for i, m in enumerate(self.short_term) if not remove[i]]
 
         # ── Pass 2: remove tool messages with no preceding assistant ──
         seen_tc_ids: set[str] = set()
         sanitized: list[Message] = []
-        for msg in keep:
+        for msg in kept:
             if msg.role == "assistant" and msg.tool_calls:
                 for tc in msg.tool_calls:
                     if tid := tc.get("id"):

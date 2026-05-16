@@ -311,6 +311,34 @@ class TestDanglingToolCallPruning:
             m.role != "assistant" or not m.tool_calls for m in mem.short_term
         )
 
+    def test_prune_duplicate_tool_call_ids(self):
+        """Duplicate tool_call_ids across assistants — each needs its own response."""
+        from weather_agents.core.memory import Memory, MemoryConfig
+
+        mem = Memory(MemoryConfig(db_path=":memory:", max_persisted_messages=100), "test")
+        mem.short_term = [
+            Message(role="system", content="base"),
+            Message(role="user", content="read file"),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[{"id": "call_X", "function": {"name": "read_file", "arguments": "{}"}}],
+            ),
+            Message(role="tool", content="result", tool_call_id="call_X"),
+            Message(role="assistant", content="Here is the result"),
+            Message(role="user", content="write file"),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[{"id": "call_X", "function": {"name": "write_file", "arguments": "{}"}}],
+            ),
+            # No tool response for the second call_X → second assistant should be pruned
+            Message(role="user", content="next"),
+        ]
+        mem._prune_dangling_tool_calls()
+        roles = [m.role for m in mem.short_term]
+        assert roles == ["system", "user", "assistant", "tool", "assistant", "user", "user"]
+
 
 class TestMessageDataclass:
     def test_message_defaults(self):
