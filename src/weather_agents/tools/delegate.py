@@ -12,6 +12,32 @@ from weather_agents.core.tool import Tool, ToolParameter
 if TYPE_CHECKING:
     from weather_agents.core.agent import BaseAgent
 
+
+def _build_shared_context(calling_agent: BaseAgent | None, context: str) -> str:
+    """Assemble shared context for the delegated agent.
+
+    Includes the most recent conversation exchange from the calling agent
+    so the delegate arrives with enough information to work independently.
+    """
+    parts: list[str] = []
+    if context:
+        parts.append(f"Additional context: {context}")
+
+    if calling_agent:
+        # Pass the last 2 messages from the calling agent as shared context
+        recent = calling_agent.memory.short_term
+        non_system = [m for m in recent if m.role != "system"]
+        if non_system:
+            ctx_msgs = non_system[-4:]  # last 2 exchanges
+            msg_text = "\n".join(
+                f"[{m.role}] {(m.content or '')[:500]}"
+                for m in ctx_msgs
+            )
+            if msg_text:
+                parts.append(f"Calling agent context:\n{msg_text}")
+
+    return "\n\n".join(parts)
+
 _log = get_logger("delegate")
 
 AGENT_SPECIALTIES: dict[str, str] = {
@@ -35,6 +61,7 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
     from weather_agents.core.agent import AgentState, Task
 
     _delegation_depth = 0
+    _MAX_DEPTH = 2  # allow 1 level of nesting (0→1→2, blocked at 3)
 
     async def _handle(agent: str, task: str, context: str = "") -> str:
         nonlocal _delegation_depth
@@ -45,9 +72,9 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
 
         target = agent_map[agent]
 
-        if _delegation_depth > 0:
+        if _delegation_depth >= _MAX_DEPTH:
             return (
-                "Nested delegation is not supported. "
+                f"Nested delegation depth limit ({_MAX_DEPTH}) reached. "
                 f"Agent '{agent}' must complete the task directly using its own tools."
             )
 
@@ -55,16 +82,25 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
         try:
             await target.init()
 
+            # Build shared context from the calling agent
+            from weather_agents.core.agent import _call_agent
+
+            shared_ctx = _build_shared_context(_call_agent, context)
+
             task_obj = Task(
                 id=f"dlg-{id(task) & 0xFFFF:04x}",
                 description=task,
                 assigned_to=agent,
-                metadata={"context": context} if context else {},
+                metadata={"context": shared_ctx} if shared_ctx else {},
             )
 
             _log.info(
                 "delegation_start",
-                extra={"target": agent, "task": task[:120]},
+                extra={
+                    "target": agent,
+                    "task": task[:120],
+                    "depth": _delegation_depth,
+                },
             )
 
             target.bus.add_event(

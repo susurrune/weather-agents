@@ -451,7 +451,7 @@ def _parse_questionnaire(text: str) -> list[dict] | None:
 
         # Parse sub-options separated by ？ ? /
         opts = re.split(r"[？?/]\s*", parts[1])
-        opts = [o.strip().rstrip("？?)）") for o in opts if o.strip() and len(o.strip()) > 1]
+        opts = [o.strip().rstrip("？?)）") for o in opts if o.strip()]
 
         if q_text and len(opts) >= 2:
             questions.append({"question": q_text, "options": opts})
@@ -606,12 +606,13 @@ _AUTO_STOP = re.compile(
 )
 
 
-def _should_auto_continue(text: str, had_tool_calls: bool = False) -> bool:
+def _should_auto_continue(text: str, had_tool_calls: bool = False, had_errors: bool = False) -> bool:
     """Check if the AI response signals more work — auto-continue.
 
     1. Explicit "done" markers → stop (strongest signal).
-    2. Tool calls → continue (the model took action, likely more to come).
-    3. Text pattern match → continue if planning/signalling more steps.
+    2. Tool errors → continue (the model should retry with corrected approach).
+    3. Tool calls → continue (the model took action, likely more to come).
+    4. Text pattern match → continue if planning/signalling more steps.
     """
     # Only inspect the tail — the last paragraph where forward-looking
     # language actually lives.
@@ -620,9 +621,82 @@ def _should_auto_continue(text: str, had_tool_calls: bool = False) -> bool:
 
     if _AUTO_STOP.search(tail):
         return False
+    if had_errors:
+        return True  # always retry after tool errors
     if had_tool_calls:
         return True
     return bool(_AUTO_CONTINUE.search(tail))
+
+
+# ── Plan / checklist extraction for auto-continue display ─────────────────
+
+
+_PLAN_STEP = re.compile(
+    r"^\s*(?:\d+[\.\)、]\s*|[-*+]\s*(?:\[.\]\s*)?|[*#]\*?\s*Step\s+\d+[:\-—]?\s*)"
+    r"(.{4,})",  # capture group 1 = step text after the marker
+    re.MULTILINE,
+)
+
+
+def _parse_plan_steps(text: str) -> list[str]:
+    """Extract a sequential plan from the model's first substantive response.
+
+    Looks for numbered items, markdown task lists, bullet steps, or
+    ``**Step N:**`` headings.  Stops at the first blank-line-separated
+    paragraph break — the plan is a contiguous block.
+    """
+    # Take the first substantial chunk of text (before tools / verbose explanation)
+    chunks = text.split("\n\n")
+    plan_block = ""
+    for ch in chunks:
+        if not ch.strip():
+            continue
+        # If the block has at least 2 step-like lines, treat it as the plan
+        if len(_PLAN_STEP.findall(ch)) >= 2:
+            plan_block = ch
+            break
+
+    if not plan_block:
+        return []
+
+    steps: list[str] = []
+    for line in plan_block.split("\n"):
+        m = _PLAN_STEP.match(line)
+        if m:
+            clean = m.group(1).strip()
+            # Remove bold / italic / inline-code formatting
+            clean = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", clean)
+            clean = re.sub(r"_{1,3}([^_]+)_{1,3}", r"\1", clean)
+            clean = re.sub(r"`([^`]+)`", r"\1", clean)
+            if len(clean) >= 3:
+                steps.append(clean)
+            if len(steps) >= 8:
+                break
+
+    return steps if len(steps) >= 2 else []
+
+
+def _render_plan_checklist(
+    steps: list[str],
+    completed: set[int],
+    current: int | None = None,
+) -> Table:
+    """Render a small checklist panel.  Completed items get strikethrough."""
+    tbl = Table(show_header=False, box=None, padding=(0, 0), expand=False)
+    tbl.add_column(width=2)
+    tbl.add_column(max_width=60)
+
+    for i, step in enumerate(steps):
+        marker = Text()
+        if i in completed:
+            marker.append("✓", style="bold green")
+        elif i == current:
+            marker.append("●", style="bold yellow")
+        else:
+            marker.append("○", style="dim")
+        tbl.add_row(marker, step)
+
+    return tbl
 
 
 # -- Chat -------------------------------------------------------------------
@@ -1164,7 +1238,8 @@ async def _interactive(agent_name: str | None = None) -> None:
 
             # --- Streaming chat with tool-call support ---
             # Inner loop: allows choice-menu re-entry with a new input
-            _auto_continue_count = 0
+            _plan_steps: list[str] = []
+            _plan_completed: set[int] = set()
             while True:
                 await _init_agent_lazy(agent, ctx)
                 t0 = time.monotonic()
@@ -1175,17 +1250,16 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _empty_retried = False
                 _esc_event = asyncio.Event()
 
-                async def _esc_watcher(ev: asyncio.Event):
+                async def _esc_poller(ev: asyncio.Event):
+                    """Poll Esc on the main event loop — reliable everywhere."""
                     loop = asyncio.get_running_loop()
                     while not ev.is_set():
                         if sys.platform == "win32":
-                            hit = await loop.run_in_executor(None, _msvcrt.kbhit)
-                            if hit:
-                                ch = await loop.run_in_executor(None, _msvcrt.getwch)
-                                if ch == "\x1b":
-                                    ev.set()
-                                    break
-                            await asyncio.sleep(0.05)
+                            # Main-thread msvcrt is reliable; executor-thread is not.
+                            if _poll_esc():
+                                ev.set()
+                                break
+                            await asyncio.sleep(0.06)
                         else:
                             key = await loop.run_in_executor(None, _get_key)
                             if key == "esc":
@@ -1214,7 +1288,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                 )
                 live.start()
 
-                esc_task = asyncio.create_task(_esc_watcher(_esc_event))
+                esc_task = asyncio.create_task(_esc_poller(_esc_event))
                 resize_task = asyncio.create_task(_resize_watcher(live))
 
                 try:
@@ -1289,18 +1363,38 @@ async def _interactive(agent_name: str | None = None) -> None:
 
                 # — Auto mode: continue if the AI signals more work —
                 had_tools = any(a["status"] == "done" for a in activities)
+                had_errors = any(a["status"] == "error" for a in activities)
                 if (
                     INTERACTIVE_MODE == "auto"
                     and not interrupted
-                    and _should_auto_continue(md_content, had_tool_calls=had_tools)
-                    and _auto_continue_count < 10
+                    and _should_auto_continue(md_content, had_tool_calls=had_tools, had_errors=had_errors)
                 ):
-                    _auto_continue_count += 1
+                    # Parse plan from the first substantive response
+                    if not _plan_steps and md_content:
+                        _plan_steps = _parse_plan_steps(md_content)
+
+                    # Mark plan steps as complete based on tool activity labels
+                    for a in activities:
+                        if a["status"] in ("done", "error"):
+                            label_lower = a["label"].lower()
+                            for i, step in enumerate(_plan_steps):
+                                if i in _plan_completed:
+                                    continue
+                                step_words = {w.lower() for w in re.findall(r"\w{3,}", step)}
+                                label_words = {w.lower() for w in re.findall(r"\w{3,}", label_lower)}
+                                if step_words & label_words:
+                                    _plan_completed.add(i)
+
+                    # Show plan checklist
+                    if _plan_steps:
+                        current_idx = (
+                            next((i for i in range(len(_plan_steps)) if i not in _plan_completed), None)
+                            if _plan_completed else 0
+                        )
+                        checklist = _render_plan_checklist(_plan_steps, _plan_completed, current_idx)
+                        console.print(checklist)
+
                     inp = "请继续完成"
-                    console.print(
-                        f"  [dim]⋯ auto-continue ({_auto_continue_count}/10)[/dim]"
-                        + (" [tools]" if had_tools else "")
-                    )
                     continue  # Restart streaming
 
                 # — Choice menu: detect numbered options and show interactive popup —

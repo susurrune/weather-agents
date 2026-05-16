@@ -182,7 +182,7 @@ class Memory:
         restores correctness by:
 
         1. Removing assistant messages whose tool_calls never got a response
-           (e.g. truncated mid-round).
+           (e.g. interrupted mid-round), and the user message that triggered them.
         2. Removing tool messages whose tool_call_id doesn't match any
            preceding assistant's tool_calls (the reverse case — orphaned
            tool responses whose assistant message was removed).

@@ -310,9 +310,10 @@ class LLMClient:
         agent_name: str | None = None,
         tools: list[str] | None = None,
         stream: bool = False,
+        overrides: dict | None = None,
     ) -> LLMResponse:
         self._check_budget()
-        model = self._get_model(agent_name)
+        model = overrides.get("model") if overrides and overrides.get("model") else self._get_model(agent_name)
 
         fallback_models = [m for m in _FALLBACK_CHAINS.get(model, []) if self._has_key_for_model(m)]
         models_to_try = [model] + fallback_models
@@ -327,6 +328,7 @@ class LLMClient:
                     agent_name,
                     tools,
                     stream,
+                    overrides=overrides,
                 )
             except Exception as e:
                 if i == 0:
@@ -364,14 +366,20 @@ class LLMClient:
         agent_name: str | None = None,
         tools: list[str] | None = None,
         stream: bool = False,
+        overrides: dict | None = None,
     ) -> LLMResponse:
         tool_schemas = self.tool_registry.get_schemas(tools) if tools else None
+
+        # Apply skill config overrides
+        ov = overrides or {}
+        temperature = ov.get("temperature", self.config.llm.temperature)
+        max_tokens = ov.get("max_tokens", self.config.llm.max_tokens)
 
         # Cache key must include sampling params so different temperature/max_tokens
         # don't collide on the same prompt.
         cache_params = {
-            "temperature": self.config.llm.temperature,
-            "max_tokens": self.config.llm.max_tokens,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }
         use_cache = not tools and not stream
         if use_cache:
@@ -392,8 +400,8 @@ class LLMClient:
                 kwargs: dict[str, Any] = {
                     "model": model,
                     "messages": messages,
-                    "temperature": self.config.llm.temperature,
-                    "max_tokens": self.config.llm.max_tokens,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
                     "timeout": self.config.llm.timeout,
                 }
                 if provider:
@@ -556,6 +564,7 @@ class LLMClient:
         agent_name: str | None = None,
         tools: list[str] | None = None,
         tool_registry: Any = None,
+        overrides: dict | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream completion with tool-call awareness.
 
@@ -563,16 +572,20 @@ class LLMClient:
         - StreamEvent(type="content", text="...") for text chunks
         - StreamEvent(type="tool_call", tool_call={...}) when a tool call is complete
         - StreamEvent(type="done", usage={...}) at end of stream
+
+        If overrides are provided, they take precedence over agent config:
+        overrides = {"model": "claude-opus-4-7", "temperature": 0.3, "max_tokens": 32000}
         """
         self._check_budget()
-        model = self._get_model(agent_name)
+        ov = overrides or {}
+        model = ov.get("model") or self._get_model(agent_name)
         provider, _stripped = _split_provider(model)
 
         stream_kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": self.config.llm.temperature,
-            "max_tokens": self.config.llm.max_tokens,
+            "temperature": ov.get("temperature", self.config.llm.temperature),
+            "max_tokens": ov.get("max_tokens", self.config.llm.max_tokens),
             "timeout": self.config.llm.timeout,
             "stream": True,
         }

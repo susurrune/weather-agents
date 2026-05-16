@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import os
+import re as _re
 import shlex
 import subprocess
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -18,6 +20,8 @@ _MAX_FILE_BYTES = 50_000
 _MAX_SHELL_OUTPUT = 20_000
 _MAX_SEARCH_OUTPUT = 10_000
 _MAX_CODE_SEARCH_FILES = 5_000
+_MAX_GREP_FILES = 10_000
+_MAX_GREP_MATCHES = 200
 
 # Paths that write/delete tools should never touch.
 _WRITE_PROTECT_EXACT = {
@@ -419,6 +423,251 @@ async def _code_search(
     return _truncate("\n".join(matches), _MAX_SEARCH_OUTPUT, "matches")
 
 
+# -- Grep Tool (general-purpose text search) --
+
+
+_BINARY_EXTENSIONS = {
+    ".pyc", ".pyo", ".so", ".dll", ".exe", ".bin", ".dat", ".db",
+    ".sqlite", ".sqlite3", ".ico", ".png", ".jpg", ".jpeg", ".gif",
+    ".bmp", ".svgz", ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".o", ".a", ".lib", ".class", ".jar", ".war",
+}
+
+_SKIP_DIRS_GREP = {
+    ".git", "node_modules", ".venv", "__pycache__",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "dist", "build", ".next", "target", "vendor",
+    ".tox", ".eggs", ".cache",
+}
+
+
+async def _grep(
+    directory: str,
+    pattern: str,
+    glob: str = "",
+    regex: bool = False,
+    ignore_case: bool = False,
+    context_around: int = 0,
+    context_before: int = 0,
+    context_after: int = 0,
+    **kwargs,
+) -> str:
+    """Search for text or regex in all text files (not limited to code extensions).
+
+    Supports file-type filtering via glob, regex mode, case-insensitive mode,
+    and context lines. Skips binary files and common generated directories.
+    """
+    try:
+        root = Path(directory).expanduser().resolve()
+        if not root.is_dir():
+            return f"Error: not a directory: {directory}"
+    except OSError as e:
+        return f"Error: {e}"
+
+    # Compile pattern
+    flags = _re.IGNORECASE if ignore_case else 0
+    if regex:
+        try:
+            compiled = _re.compile(pattern, flags)
+        except _re.error as e:
+            return f"Error: invalid regex '{pattern}': {e}"
+    else:
+        compiled = _re.compile(_re.escape(pattern), flags)
+
+    # Build glob filter
+    glob_pattern: str | None = None
+    if glob:
+        from fnmatch import translate as _fm_translate
+        glob_pattern = _fm_translate(glob) if glob else None
+
+    matches: list[str] = []
+    files_scanned = 0
+
+    for fp in root.rglob("*"):
+        if not fp.is_file():
+            continue
+        if fp.suffix.lower() in _BINARY_EXTENSIONS:
+            continue
+        if any(part in _SKIP_DIRS_GREP for part in fp.parts):
+            continue
+
+        # Glob filter
+        if glob_pattern:
+            import re as _re2
+            if not _re2.match(glob_pattern, fp.name):
+                continue
+
+        files_scanned += 1
+        if files_scanned > _MAX_GREP_FILES:
+            out = "\n".join(matches) if matches else "No matches found within limit."
+            return _truncate(out, _MAX_SEARCH_OUTPUT, f"grep results (stopped after {_MAX_GREP_FILES} files)")
+
+        try:
+            with fp.open(encoding="utf-8", errors="ignore") as fh:
+                lines = fh.readlines()
+        except OSError:
+            continue
+
+        ctx = context_around or context_before or 0
+        ctx_after = context_around or context_after or 0
+
+        for i, line in enumerate(lines):
+            if compiled.search(line):
+                ctx_before = max(0, context_before)
+                if ctx > 0 or ctx_before > 0 or ctx_after > 0:
+                    # Show context lines
+                    start = max(0, i - max(ctx, ctx_before))
+                    end = min(len(lines), i + max(ctx, ctx_after) + 1)
+                    for j in range(start, end):
+                        prefix = ":" if i == j else "-"
+                        matches.append(
+                            f"{fp}:{j + 1}:{prefix}:{lines[j].rstrip()}"
+                        )
+                    matches.append("--")
+                else:
+                    matches.append(f"{fp}:{i + 1}:{line.rstrip()}")
+                if len(matches) >= _MAX_GREP_MATCHES:
+                    return _truncate("\n".join(matches), _MAX_SEARCH_OUTPUT, f"grep matches ({_MAX_GREP_MATCHES}+ found)")
+
+    if not matches:
+        return f"No matches for '{pattern}' in {directory} (scanned {files_scanned} files)"
+    return _truncate("\n".join(matches), _MAX_SEARCH_OUTPUT, "grep matches")
+
+
+# -- Git Tools --
+
+
+async def _git_status(repo: str = ".", **kwargs) -> str:
+    """Run `git status --porcelain` in the given repository directory."""
+    return await _run_git_command(["status", "--porcelain", "--branch"], cwd=repo)
+
+
+async def _git_diff(staged: bool = False, path: str = "", repo: str = ".", **kwargs) -> str:
+    """Run `git diff` (unstaged) or `git diff --staged` (staged).
+
+    Specify path to diff a single file or directory.
+    """
+    args = ["diff"]
+    if staged:
+        args.append("--staged")
+    if path:
+        args.append("--")
+        args.append(path)
+    return await _run_git_command(args, cwd=repo)
+
+
+async def _git_log(
+    count: int = 10,
+    oneline: bool = True,
+    all_branches: bool = False,
+    repo: str = ".",
+    **kwargs,
+) -> str:
+    """Run `git log` with configurable format."""
+    args = ["log"]
+    if oneline:
+        args.append("--oneline")
+    if all_branches:
+        args.append("--all")
+    args.extend(["-n", str(min(count, 50))])
+    return await _run_git_command(args, cwd=repo)
+
+
+async def _git_add(files: str, repo: str = ".", **kwargs) -> str:
+    """Stage one or more files for commit.
+
+    Accepts space-separated file paths. Refuses `-A` / `--all` / `.` for safety.
+    """
+    file_list = shlex.split(files)
+    if not file_list:
+        return "Error: no files specified"
+    dangerous = {"-A", "--all", ".", "*"}
+    for f in file_list:
+        if f in dangerous:
+            return "Error: refusing to stage everything — specify individual files"
+    return await _run_git_command(["add"] + file_list, cwd=repo)
+
+
+async def _git_commit(message: str, repo: str = ".", **kwargs) -> str:
+    """Create a git commit with the given message.
+
+    Refuses empty commits (the -m flag ensures no interactive editor).
+    """
+    if not message or not message.strip():
+        return "Error: commit message cannot be empty"
+    msg = message.strip()
+    if len(msg) > 2000:
+        return "Error: commit message too long (>2000 chars)"
+    return await _run_git_command(["commit", "-m", msg], cwd=repo)
+
+
+async def _git_checkout(branch: str, create: bool = False, repo: str = ".", **kwargs) -> str:
+    """Switch to a branch. Set create=true to create a new branch."""
+    args = ["checkout"]
+    if create:
+        args.append("-b")
+    args.append(branch)
+    return await _run_git_command(args, cwd=repo)
+
+
+async def _run_git_command(args: list[str], cwd: str = ".") -> str:
+    """Execute a git command and return its formatted output."""
+    work_dir = os.path.expanduser(cwd)
+    if not os.path.isdir(work_dir):
+        return f"Error: not a directory: {cwd}"
+
+    # Verify this is inside a git repo
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "rev-parse", "--git-dir",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=work_dir,
+        )
+        _stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode != 0:
+            return f"Error: not a git repository: {work_dir}"
+    except FileNotFoundError:
+        return "Error: git not found. Is git installed?"
+    except asyncio.TimeoutError:
+        return "Error: git rev-parse timed out"
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=work_dir,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=30
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return "Error: git command timed out (30s)"
+
+        stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+        stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+
+        parts: list[str] = []
+        if stdout:
+            parts.append(_truncate(stdout, _MAX_SHELL_OUTPUT, "git output"))
+        if stderr:
+            parts.append("STDERR:\n" + _truncate(stderr, 5000, "stderr"))
+        if proc.returncode != 0 and proc.returncode is not None:
+            parts.append(f"[exit code: {proc.returncode}]")
+        return "\n".join(parts) if parts else "Git command completed with no output."
+    except FileNotFoundError:
+        return "Error: git not found. Is git installed?"
+    except Exception as e:
+        return f"Error executing git command: {e}"
+
+
 # -- Shell Tool (safe mode) --
 
 _BLOCKED_COMMANDS = {
@@ -572,26 +821,32 @@ async def _shell_exec(command: str, timeout: int = 30, cwd: str = "", **kwargs) 
             return f"Error: cwd is not a directory: {cwd}"
 
     try:
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=work_dir,
-            check=False,
         )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return f"Command timed out after {timeout}s"
+
+        stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+        stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+
         parts = [f"[cwd: {work_dir or os.getcwd()}]"]
-        if result.stdout:
-            parts.append(_truncate(result.stdout, _MAX_SHELL_OUTPUT, "stdout"))
-        if result.stderr:
-            parts.append("STDERR:\n" + _truncate(result.stderr, 5000, "stderr"))
-        if result.returncode != 0:
-            parts.append(f"[exit code: {result.returncode}]")
+        if stdout:
+            parts.append(_truncate(stdout, _MAX_SHELL_OUTPUT, "stdout"))
+        if stderr:
+            parts.append("STDERR:\n" + _truncate(stderr, 5000, "stderr"))
+        if proc.returncode != 0 and proc.returncode is not None:
+            parts.append(f"[exit code: {proc.returncode}]")
         return "\n".join(parts) if len(parts) > 1 else "Command completed with no output."
-    except subprocess.TimeoutExpired:
-        return f"Command timed out after {timeout}s"
     except FileNotFoundError:
         return f"Command not found: {args[0]}"
     except OSError as e:
@@ -913,6 +1168,201 @@ def register_builtin_tools() -> None:
                 ),
             ],
             handler=_code_search,
+        ),
+        Tool(
+            name="grep",
+            description="Search text/regex in ALL text files (no hardcoded extension limit). Supports glob, regex, ignore_case, context lines.",
+            parameters=[
+                ToolParameter(name="directory", type="string", description="Directory to search in"),
+                ToolParameter(name="pattern", type="string", description="Text or regex pattern to search for"),
+                ToolParameter(
+                    name="glob",
+                    type="string",
+                    description="Optional file name pattern filter (e.g. '*.py', '*.md')",
+                    required=False,
+                    default="",
+                ),
+                ToolParameter(
+                    name="regex",
+                    type="boolean",
+                    description="Treat pattern as regex (default false)",
+                    required=False,
+                    default=False,
+                ),
+                ToolParameter(
+                    name="ignore_case",
+                    type="boolean",
+                    description="Case-insensitive search (default false)",
+                    required=False,
+                    default=False,
+                ),
+                ToolParameter(
+                    name="context_around",
+                    type="integer",
+                    description="Lines to show before and after each match",
+                    required=False,
+                    default=0,
+                ),
+                ToolParameter(
+                    name="context_before",
+                    type="integer",
+                    description="Lines to show before each match",
+                    required=False,
+                    default=0,
+                ),
+                ToolParameter(
+                    name="context_after",
+                    type="integer",
+                    description="Lines to show after each match",
+                    required=False,
+                    default=0,
+                ),
+            ],
+            handler=_grep,
+        ),
+        Tool(
+            name="git_status",
+            description="Show the working tree status (git status --porcelain --branch)",
+            parameters=[
+                ToolParameter(
+                    name="repo",
+                    type="string",
+                    description="Repository directory (default: '.')",
+                    required=False,
+                    default=".",
+                ),
+            ],
+            handler=_git_status,
+        ),
+        Tool(
+            name="git_diff",
+            description="Show changes (git diff). Set staged=true for staged changes, path to diff a single file.",
+            parameters=[
+                ToolParameter(
+                    name="staged",
+                    type="boolean",
+                    description="Show staged changes (default false)",
+                    required=False,
+                    default=False,
+                ),
+                ToolParameter(
+                    name="path",
+                    type="string",
+                    description="Limit diff to a specific file or directory",
+                    required=False,
+                    default="",
+                ),
+                ToolParameter(
+                    name="repo",
+                    type="string",
+                    description="Repository directory (default: '.')",
+                    required=False,
+                    default=".",
+                ),
+            ],
+            handler=_git_diff,
+        ),
+        Tool(
+            name="git_log",
+            description="Show commit history (git log)",
+            parameters=[
+                ToolParameter(
+                    name="count",
+                    type="integer",
+                    description="Number of recent commits to show (default 10, max 50)",
+                    required=False,
+                    default=10,
+                ),
+                ToolParameter(
+                    name="oneline",
+                    type="boolean",
+                    description="Compact one-line format (default true)",
+                    required=False,
+                    default=True,
+                ),
+                ToolParameter(
+                    name="all_branches",
+                    type="boolean",
+                    description="Include all branches (default false)",
+                    required=False,
+                    default=False,
+                ),
+                ToolParameter(
+                    name="repo",
+                    type="string",
+                    description="Repository directory (default: '.')",
+                    required=False,
+                    default=".",
+                ),
+            ],
+            handler=_git_log,
+        ),
+        Tool(
+            name="git_add",
+            description="Stage files for commit. Accepts space-separated paths. Refuses -A/--all for safety.",
+            parameters=[
+                ToolParameter(
+                    name="files",
+                    type="string",
+                    description="Space-separated file paths to stage",
+                ),
+                ToolParameter(
+                    name="repo",
+                    type="string",
+                    description="Repository directory (default: '.')",
+                    required=False,
+                    default=".",
+                ),
+            ],
+            handler=_git_add,
+            dangerous=True,
+        ),
+        Tool(
+            name="git_commit",
+            description="Create a commit with the given message",
+            parameters=[
+                ToolParameter(
+                    name="message",
+                    type="string",
+                    description="Commit message",
+                ),
+                ToolParameter(
+                    name="repo",
+                    type="string",
+                    description="Repository directory (default: '.')",
+                    required=False,
+                    default=".",
+                ),
+            ],
+            handler=_git_commit,
+            dangerous=True,
+        ),
+        Tool(
+            name="git_checkout",
+            description="Switch to a branch. Set create=true to create a new branch first.",
+            parameters=[
+                ToolParameter(
+                    name="branch",
+                    type="string",
+                    description="Branch name",
+                ),
+                ToolParameter(
+                    name="create",
+                    type="boolean",
+                    description="Create the branch before switching (default false)",
+                    required=False,
+                    default=False,
+                ),
+                ToolParameter(
+                    name="repo",
+                    type="string",
+                    description="Repository directory (default: '.')",
+                    required=False,
+                    default=".",
+                ),
+            ],
+            handler=_git_checkout,
+            dangerous=True,
         ),
         Tool(
             name="shell_exec",

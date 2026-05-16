@@ -85,6 +85,7 @@ class BaseAgent:
         self._skills: list[Skill] = []
         self._active_skills: set[str] = set()
         self._skill_tools: dict[str, list[str]] = {}  # skill_name -> tool_names
+        self._skill_config_overrides: dict[str, dict] = {}  # active overrides merged from skills
         self._base_system_prompt: str = ""
         agent_cfg = getattr(config.agents, self.name, None)
         self._max_tool_rounds: int = agent_cfg.max_tool_rounds if agent_cfg else 10
@@ -152,8 +153,15 @@ class BaseAgent:
                 "\n\n## Behavior\n"
                 '1. Execute tools immediately — no "I will..." or "Let me..." narration before tool calls. Just call them.\n'
                 "2. After completing work: give a 1-2 sentence concise report, no log-style verbosity.\n"
-                "3. Do not use decorative separator lines (---, ***, ___, etc) — the interface handles visual separation.\n"
-                "4. No emoji in generated web pages — use SVG icons, CSS shapes, or Unicode symbols instead."
+                '3. Do not use decorative separator lines (---, ***, ___, etc) — the interface handles visual separation.\n'
+                "4. No emoji in generated web pages — use SVG icons, CSS shapes, or Unicode symbols instead.\n"
+                "5. Proportional planning: for simple tasks (stop server, show status, answer a question) — just do it directly. "
+                "Only break work into numbered steps when the task genuinely needs 3+ distinct actions. "
+                "Don't survey the workspace or read files unless the task requires it.\n"
+                "6. Self-verify: after tool execution, check results. If a tool returned an error, "
+                "diagnose the cause and try a corrected approach immediately. "
+                "If a file write/edit succeeded, read it back to confirm the content is correct. "
+                "Report the final verified state, not just the attempt."
             )
         else:
             rules = (
@@ -161,7 +169,12 @@ class BaseAgent:
                 "1. 执行工具前不赘述 — 不说「我将要...」「让我先...」，直接调用\n"
                 "2. 完成后用 1-2 句简洁汇报结果，不要日志式的冗长叙述\n"
                 "3. 不要使用 ---、***、___ 等装饰性分隔线 — 界面自有视觉分隔\n"
-                "4. 制作网页时不要使用 emoji 表情符 — 需要图标时使用 SVG 或 CSS 实现"
+                "4. 制作网页时不要使用 emoji 表情符 — 需要图标时使用 SVG 或 CSS 实现\n"
+                "5. 按需规划：简单任务（停止服务器、查看状态、回答问题）直接做，不要列出步骤。"
+                "只有任务确实需要 3 步以上不同操作时才拆分计划。"
+                "不要为了了解情况而遍历工作空间或读取文件，除非任务本身需要。\n"
+                "6. 执行后验证：工具执行后检查结果，如有错误立即诊断并重试修正。"
+                "写入/编辑文件后应读取确认内容正确。汇报最终验证后的状态，而非仅说已尝试。"
             )
         return prompt + rules
 
@@ -305,6 +318,10 @@ class BaseAgent:
     def activate_skill(self, name: str) -> bool:
         """Activate a skill by name. Invokes handler for custom tool injection.
 
+        Applies skill-level config overrides (model, temperature, max_tokens)
+        when the skill is activated. Later activations take precedence for
+        conflicting overrides.
+
         Searches both pre-loaded skills and the global registry, allowing
         runtime activation of any registered skill.
         """
@@ -320,17 +337,29 @@ class BaseAgent:
             handler_tools = skill.handler(self, self.tool_registry)
             if handler_tools:
                 self._skill_tools[name] = [t.name for t in handler_tools]
+        # Merge config overrides (later activations take precedence)
+        overrides: dict = {}
+        if skill.model:
+            overrides["model"] = skill.model
+        if skill.temperature is not None:
+            overrides["temperature"] = skill.temperature
+        if skill.max_tokens is not None:
+            overrides["max_tokens"] = skill.max_tokens
+        if overrides:
+            self._skill_config_overrides[name] = overrides
         self._rebuild_system_prompt()
         return True
 
     def deactivate_skill(self, name: str) -> bool:
-        """Deactivate a skill. Removes handler-injected tools."""
+        """Deactivate a skill. Removes handler-injected tools and config overrides."""
         if name not in self._active_skills:
             return False
         self._active_skills.discard(name)
         # Remove handler-injected tools
         for tool_name in self._skill_tools.pop(name, []):
             self.tool_registry.unregister(tool_name)
+        # Remove config overrides
+        self._skill_config_overrides.pop(name, None)
         self._rebuild_system_prompt()
         return True
 
@@ -362,6 +391,17 @@ class BaseAgent:
 
     def get_active_skills(self) -> list[str]:
         return list(self._active_skills)
+
+    def get_skill_config_overrides(self) -> dict:
+        """Merge config overrides from all active skills.
+
+        Later activations take precedence for conflicting keys.
+        Returns a dict with optional keys: model, temperature, max_tokens.
+        """
+        merged: dict = {}
+        for overrides in self._skill_config_overrides.values():
+            merged.update(overrides)
+        return merged
 
     def get_available_skills(self) -> list[dict]:
         return [
@@ -438,6 +478,7 @@ class BaseAgent:
             return response.content
         except Exception as e:
             await self._set_state(AgentState.ERROR)
+            self.memory._prune_dangling_tool_calls()
             error_msg = f"[{self.display_name}] Error: {e}"
             self.memory.add_message("assistant", error_msg)
             return error_msg
@@ -472,6 +513,7 @@ class BaseAgent:
                     agent_name=self.name,
                     tools=tool_names or None,
                     tool_registry=self.tool_registry if tool_names else None,
+                    overrides=self.get_skill_config_overrides() or None,
                 ):
                     if event.type == "content":
                         full_content += event.text
@@ -608,6 +650,13 @@ class BaseAgent:
             await self._set_state(AgentState.ERROR)
             err_text = str(e) or type(e).__name__
             yield {"type": "content", "text": f"\n[Error: {err_text}]"}
+        finally:
+            # Clean up any orphaned tool_calls that lack corresponding tool results.
+            # Critical when the stream is interrupted (Esc) mid-tool-execution:
+            # the assistant message with tool_calls was already persisted but tool
+            # results were never written. Without this the next LLM call will fail
+            # with "insufficient tool message" from providers like DeepSeek.
+            self.memory._prune_dangling_tool_calls()
 
     def _pop_last_user_message(self) -> None:
         """Remove the most recent user message from short-term memory.
@@ -656,6 +705,7 @@ class BaseAgent:
                 }
             ],
             agent_name=self.name,
+            overrides=self.get_skill_config_overrides() or None,
         )
         summary = resp.content.strip()[:600]
 
@@ -719,99 +769,106 @@ class BaseAgent:
         response = LLMResponse(content="")
         tool_names = self._active_tool_names()
 
-        for _ in range(max_iterations):
-            messages = self.memory.get_messages()
-            if on_status:
-                on_status("thinking...")
-            response = await self.llm.complete(
-                messages=messages,
-                agent_name=self.name,
-                tools=tool_names or None,
-            )
-
-            if not response.tool_calls:
-                return response
-
-            self.bus.add_event(
-                Event(
-                    type=EventType.LLM_CALL,
-                    source=self.name,
-                    data={"model": response.model, "usage": response.usage},
+        try:
+            for _ in range(max_iterations):
+                messages = self.memory.get_messages()
+                if on_status:
+                    on_status("thinking...")
+                response = await self.llm.complete(
+                    messages=messages,
+                    agent_name=self.name,
+                    tools=tool_names or None,
+                    overrides=self.get_skill_config_overrides() or None,
                 )
-            )
 
-            # Record assistant message with tool_calls
-            self.memory.add_message(
-                "assistant",
-                response.content or "",
-                tool_calls=response.tool_calls,
-                reasoning_content=response.reasoning_content,
-            )
-
-            for tc in response.tool_calls:
-                tool_name = tc["function"]["name"]
-                raw_args = tc["function"]["arguments"]
-                if isinstance(raw_args, str):
-                    tool_args = _parse_tool_args(raw_args)
-                    if tool_args is None:
-                        parse_error = f"Invalid JSON in tool call arguments for '{tool_name}': {raw_args[:200]}"
-                else:
-                    tool_args = raw_args
-
-                tool = self.tool_registry.get(tool_name)
-                tool_label = (
-                    _tool_status_label(tool_name, tool_args)
-                    if tool_args
-                    else f"{tool_name} (bad args)"
-                )
+                if not response.tool_calls:
+                    return response
 
                 self.bus.add_event(
                     Event(
-                        type=EventType.TOOL_CALL,
+                        type=EventType.LLM_CALL,
                         source=self.name,
-                        data={"tool": tool_name, "args": tool_args or {}},
+                        data={"model": response.model, "usage": response.usage},
                     )
                 )
 
-                if on_status:
-                    on_status(tool_label)
+                # Record assistant message with tool_calls
+                self.memory.add_message(
+                    "assistant",
+                    response.content or "",
+                    tool_calls=response.tool_calls,
+                    reasoning_content=response.reasoning_content,
+                )
 
-                if tool_args is None:
-                    self.memory.add_message(
-                        "tool",
-                        parse_error,
-                        name=tool_name,
-                        tool_call_id=tc["id"],
+                for tc in response.tool_calls:
+                    tool_name = tc["function"]["name"]
+                    raw_args = tc["function"]["arguments"]
+                    if isinstance(raw_args, str):
+                        tool_args = _parse_tool_args(raw_args)
+                        if tool_args is None:
+                            parse_error = f"Invalid JSON in tool call arguments for '{tool_name}': {raw_args[:200]}"
+                    else:
+                        tool_args = raw_args
+
+                    tool = self.tool_registry.get(tool_name)
+                    tool_label = (
+                        _tool_status_label(tool_name, tool_args)
+                        if tool_args
+                        else f"{tool_name} (bad args)"
                     )
-                elif tool:
-                    if tool.dangerous:
-                        _log.warning(
-                            "dangerous_tool_call",
-                            extra={
-                                "tool": tool_name,
-                                "agent": self.name,
-                                "tool_args": dict(tool_args) if tool_args else {},
-                            },
+
+                    self.bus.add_event(
+                        Event(
+                            type=EventType.TOOL_CALL,
+                            source=self.name,
+                            data={"tool": tool_name, "args": tool_args or {}},
                         )
-                    await self._set_state(AgentState.ACTING)
-                    result = await tool.execute(**tool_args)
-                    self.memory.add_message(
-                        "tool",
-                        result,
-                        name=tool_name,
-                        tool_call_id=tc["id"],
-                    )
-                else:
-                    self.memory.add_message(
-                        "tool",
-                        f"Tool '{tool_name}' not found",
-                        name=tool_name,
-                        tool_call_id=tc["id"],
                     )
 
-            await self._set_state(AgentState.THINKING)
+                    if on_status:
+                        on_status(tool_label)
 
-        return response
+                    if tool_args is None:
+                        self.memory.add_message(
+                            "tool",
+                            parse_error,
+                            name=tool_name,
+                            tool_call_id=tc["id"],
+                        )
+                    elif tool:
+                        if tool.dangerous:
+                            _log.warning(
+                                "dangerous_tool_call",
+                                extra={
+                                    "tool": tool_name,
+                                    "agent": self.name,
+                                    "tool_args": dict(tool_args) if tool_args else {},
+                                },
+                            )
+                        await self._set_state(AgentState.ACTING)
+                        result = await tool.execute(**tool_args)
+                        self.memory.add_message(
+                            "tool",
+                            result,
+                            name=tool_name,
+                            tool_call_id=tc["id"],
+                        )
+                    else:
+                        self.memory.add_message(
+                            "tool",
+                            f"Tool '{tool_name}' not found",
+                            name=tool_name,
+                            tool_call_id=tc["id"],
+                        )
+
+                await self._set_state(AgentState.THINKING)
+
+            return response
+        except Exception:
+            # On tool execution failure: remove any orphaned tool_calls that
+            # lack corresponding tool results so the next call doesn't fail.
+            self.memory._prune_dangling_tool_calls()
+            raise
 
     async def execute_task(
         self,
@@ -846,6 +903,7 @@ class BaseAgent:
         except Exception as e:
             task.status = "failed"
             task.result = str(e)
+            self.memory._prune_dangling_tool_calls()
             await self._set_state(AgentState.ERROR)
             return TaskResult(success=False, content=str(e))
 
@@ -887,6 +945,7 @@ _TOOL_LABELS: dict[str, str] = {
     "list_directory": "Listing {path}",
     "file_search": "Searching {directory}/{pattern}",
     "code_search": "Searching for '{query}'",
+    "grep": "Grepping '{pattern}'",
     "shell_exec": "Running: {command}",
     "http_get": "GET {url}",
     "http_post": "POST {url}",
@@ -902,6 +961,12 @@ _TOOL_LABELS: dict[str, str] = {
     "delegate_to": "Delegating to {agent}: {task}",
     "use_skill": "Activating {name}",
     "list_skills": "Listing available skills",
+    "git_status": "Git status",
+    "git_diff": "Git diff",
+    "git_log": "Git log",
+    "git_add": "Git add {files}",
+    "git_commit": "Git commit",
+    "git_checkout": "Git checkout {branch}",
 }
 
 

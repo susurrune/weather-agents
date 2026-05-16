@@ -105,7 +105,7 @@ class TestDelegateExecution:
         tool = create_delegate_tool(agent_map)
         await tool.execute(agent="rain", task="write code", context="use Python 3.12")
         task_arg = agent_map["rain"].execute_task.call_args[0][0]
-        assert task_arg.metadata["context"] == "use Python 3.12"
+        assert "use Python 3.12" in task_arg.metadata["context"]
 
     @pytest.mark.asyncio
     async def test_empty_context_not_in_metadata(self, agent_map):
@@ -152,15 +152,21 @@ class TestDelegateNestingGuard:
         tool = create_delegate_tool(agent_map)
         nested_result = None
 
-        async def _delegate_inside(task):
+        # Create a 3-level chain: rain -> frost -> dew
+        # Depth 2 (dew) should be blocked (MAX_DEPTH = 2)
+        async def _delegate_deep(task):
             nonlocal nested_result
-            nested_result = await tool.execute(agent="frost", task="review")
+            nested_result = await tool.execute(agent="dew", task="deploy")
             return TaskResult(success=True, content=nested_result)
 
-        agent_map["rain"].execute_task = _delegate_inside
+        async def _delegate_first(task):
+            agent_map["frost"].execute_task = _delegate_deep
+            return await tool.execute(agent="frost", task="review")
+
+        agent_map["rain"].execute_task = _delegate_first
         await tool.execute(agent="rain", task="write and review")
         assert nested_result is not None
-        assert "Nested delegation" in nested_result
+        assert "depth limit" in nested_result.lower()
 
     @pytest.mark.asyncio
     async def test_depth_resets_after_completion(self, agent_map):

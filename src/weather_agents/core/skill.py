@@ -24,6 +24,7 @@ class Skill:
     - Markdown files with YAML frontmatter
     - name, description, tools (required_tools)
     - Optional handler for custom tool injection
+    - Optional config overrides: model, temperature, max_tokens
 
     Attributes:
         name: Unique identifier (e.g. "code_reviewer").
@@ -33,6 +34,9 @@ class Skill:
         tools: Additional tools this skill registers via its handler.
         handler: Optional callable that receives (agent, tool_registry) and
                  registers custom tools when the skill is activated.
+        model: Optional model override when this skill is active.
+        temperature: Optional temperature override (0.0-2.0).
+        max_tokens: Optional max output tokens override.
     """
 
     name: str
@@ -41,6 +45,9 @@ class Skill:
     required_tools: list[str] = field(default_factory=list)
     tools: list[Any] = field(default_factory=list)
     handler: Callable[..., Any] | None = None
+    model: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
 
     @classmethod
     def from_markdown(cls, path: Path) -> Skill | None:
@@ -54,6 +61,9 @@ class Skill:
         tools:
           - required_tool_a
           - required_tool_b
+        model: claude-opus-4-7  # optional override
+        temperature: 0.3        # optional override
+        max_tokens: 32000       # optional override
         ---
 
         ## Skill: My Skill
@@ -70,11 +80,19 @@ class Skill:
         tools = fm.get("tools", [])
         required_tools = [t for t in tools if isinstance(t, str)] if isinstance(tools, list) else []
 
+        # Config overrides
+        model = fm.get("model")
+        temperature = fm.get("temperature")
+        max_tokens = fm.get("max_tokens")
+
         return cls(
             name=name,
             description=description,
             system_prompt=body.strip(),
             required_tools=required_tools,
+            model=model if isinstance(model, str) else None,
+            temperature=temperature if isinstance(temperature, (int, float)) else None,
+            max_tokens=max_tokens if isinstance(max_tokens, int) else None,
         )
 
 
