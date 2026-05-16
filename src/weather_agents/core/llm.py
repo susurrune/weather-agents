@@ -117,7 +117,7 @@ def _format_user_facing_error(model: str, err: BaseException | None) -> str:
             f"会话消息序列可能损坏，可运行 `wacode memory clear` 清理后重试。"
         )
     # Generic fallback — short, no stack trace, no LiteLLM banner.
-    short = text.splitlines()[0][:200]
+    short = text.splitlines()[0][:200] if text and text.strip() else type(err).__name__
     return f"❌  {model} 调用失败：{short}"
 
 
@@ -582,48 +582,47 @@ class LLMClient:
         if tools and tool_registry:
             stream_kwargs["tools"] = tool_registry.get_schemas(tools)
 
-        try:
-            response = await litellm.acompletion(**stream_kwargs)
-        except Exception as e:
-            yield StreamEvent(type="error", text=_format_user_facing_error("(stream)", e))
-            return
-
         full_content = ""
         reasoning_content: str | None = None
         tool_call_acc: dict[int, dict[str, Any]] = {}
         start = time.monotonic()
 
-        async with asyncio.timeout(self.config.llm.timeout):
-            async for chunk in response:
-                delta = chunk.choices[0].delta
+        try:
+            response = await litellm.acompletion(**stream_kwargs)
+            async with asyncio.timeout(self.config.llm.timeout):
+                async for chunk in response:
+                    delta = chunk.choices[0].delta
 
-                if delta.content:
-                    full_content += delta.content
-                    yield StreamEvent(type="content", text=delta.content)
+                    if delta.content:
+                        full_content += delta.content
+                        yield StreamEvent(type="content", text=delta.content)
 
-                # Capture reasoning_content for providers that require it (DeepSeek thinking mode)
-                if getattr(delta, "reasoning_content", None):
-                    if reasoning_content is None:
-                        reasoning_content = ""
-                    reasoning_content += delta.reasoning_content
-                    yield StreamEvent(type="reasoning", text=delta.reasoning_content)
+                    # Capture reasoning_content (DeepSeek thinking mode etc.)
+                    if getattr(delta, "reasoning_content", None):
+                        if reasoning_content is None:
+                            reasoning_content = ""
+                        reasoning_content += delta.reasoning_content
+                        yield StreamEvent(type="reasoning", text=delta.reasoning_content)
 
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_call_acc:
-                            tool_call_acc[idx] = {
-                                "id": tc_delta.id or "",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        acc = tool_call_acc[idx]
-                        if tc_delta.id:
-                            acc["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                acc["function"]["name"] += tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                acc["function"]["arguments"] += tc_delta.function.arguments
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_call_acc:
+                                tool_call_acc[idx] = {
+                                    "id": tc_delta.id or "",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            acc = tool_call_acc[idx]
+                            if tc_delta.id:
+                                acc["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    acc["function"]["name"] += tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    acc["function"]["arguments"] += tc_delta.function.arguments
+        except Exception as e:
+            yield StreamEvent(type="error", text=_format_user_facing_error(model, e))
+            return
 
         # Emit fully accumulated tool calls after all streaming chunks are processed.
         # Must NOT emit mid-stream: tool call arguments arrive across multiple chunks

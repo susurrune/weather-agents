@@ -606,7 +606,8 @@ class BaseAgent:
             if not assistant_stored:
                 self._pop_last_user_message()
             await self._set_state(AgentState.ERROR)
-            yield {"type": "content", "text": f"\n[Error: {e}]"}
+            err_text = str(e) or type(e).__name__
+            yield {"type": "content", "text": f"\n[Error: {err_text}]"}
 
     def _pop_last_user_message(self) -> None:
         """Remove the most recent user message from short-term memory.

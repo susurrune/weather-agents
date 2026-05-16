@@ -61,8 +61,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/help", "show all commands"),
     ("/clear", "clear screen"),
     ("/status", "agent overview"),
-    ("/cost", "usage & cost"),
-    ("/cost reset", "reset cost counter"),
+    ("/cost", "usage & cost (reset: /cost reset)"),
     ("/compact", "compress context"),
     ("/history", "event log"),
     ("/mcp", "MCP server status"),
@@ -73,16 +72,10 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/session new ", "start new session"),
     ("/session load ", "switch session"),
     ("/session delete ", "delete session"),
-    ("/memory", "memory stats"),
-    ("/memory clear", "clear short-term memory"),
-    ("/workspace", "workspace info"),
-    ("/workspace set ", "set workspace path"),
-    ("/workspace auto", "auto-detect workspace"),
-    ("/model", "view/change model"),
-    ("/model ", "set per-agent model"),
-    ("/apikey", "manage API keys"),
-    ("/apikey set ", "add/replace API key"),
-    ("/apikey del ", "remove API key"),
+    ("/memory", "memory stats (clear: /memory clear)"),
+    ("/workspace", "workspace info/set/auto"),
+    ("/model", "view/change model  (all: /model all <m>)"),
+    ("/apikey", "manage API keys  (set/del)"),
     ("/task ", "multi-agent orchestration"),
     ("/fog", "switch to Fog"),
     ("/rain", "switch to Rain"),
@@ -199,6 +192,24 @@ def _get_key() -> str:
             return ch
         finally:
             _termios.tcsetattr(fd, _termios.TCSADRAIN, old)
+
+
+def _poll_esc() -> bool:
+    """Non-blocking check for Esc / Ctrl+C keypress.
+
+    Called from the streaming loop as a secondary interrupt path so Esc is
+    detected even when the background _esc_watcher executor thread can't read
+    from the console (e.g. Windows Terminal limits on background threads).
+    """
+    if sys.platform == "win32":
+        try:
+            while _msvcrt.kbhit():
+                ch = _msvcrt.getwch()
+                if ch in ("\x1b", "\x03"):
+                    return True
+        except Exception:
+            pass
+    return False
 
 
 app = typer.Typer(name="wacode", help="Weather Agents CLI", no_args_is_help=False)
@@ -1167,12 +1178,33 @@ async def _interactive(agent_name: str | None = None) -> None:
                 async def _esc_watcher(ev: asyncio.Event):
                     loop = asyncio.get_running_loop()
                     while not ev.is_set():
-                        key = await loop.run_in_executor(None, _get_key)
-                        if key == "esc":
-                            ev.set()
-                            break
+                        if sys.platform == "win32":
+                            hit = await loop.run_in_executor(None, _msvcrt.kbhit)
+                            if hit:
+                                ch = await loop.run_in_executor(None, _msvcrt.getwch)
+                                if ch == "\x1b":
+                                    ev.set()
+                                    break
+                            await asyncio.sleep(0.05)
+                        else:
+                            key = await loop.run_in_executor(None, _get_key)
+                            if key == "esc":
+                                ev.set()
+                                break
 
-                esc_task = asyncio.create_task(_esc_watcher(_esc_event))
+                async def _resize_watcher(lv: Live):
+                    """Refresh Live display when terminal is resized (drag/resize)."""
+                    loop = asyncio.get_running_loop()
+                    last = None
+                    while True:
+                        cur = await loop.run_in_executor(
+                            None, lambda: (console.width, console.height)
+                        )
+                        if last is not None and cur != last:
+                            with contextlib.suppress(Exception):
+                                lv.refresh()
+                        last = cur
+                        await asyncio.sleep(0.3)
 
                 live = Live(
                     _build_stream_display(agent, "", ""),
@@ -1182,9 +1214,14 @@ async def _interactive(agent_name: str | None = None) -> None:
                 )
                 live.start()
 
+                esc_task = asyncio.create_task(_esc_watcher(_esc_event))
+                resize_task = asyncio.create_task(_resize_watcher(live))
+
                 try:
                     async for event in agent.chat_stream(inp):
-                        if _esc_event.is_set():
+                        if _esc_event.is_set() or _poll_esc():
+                            if not _esc_event.is_set():
+                                _esc_event.set()
                             interrupted = True
                             break
                         if event["type"] == "content":
@@ -1217,8 +1254,11 @@ async def _interactive(agent_name: str | None = None) -> None:
                 finally:
                     _esc_event.set()
                     esc_task.cancel()
+                    resize_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await esc_task
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await resize_task
                     if md_content.strip():
                         live.update(
                             _build_response_panel(
@@ -1420,9 +1460,10 @@ def _print_help(ctx) -> None:
         (
             _h("设置", "Config"),
             [
-                ("/model", _h("查看模型", "view current model")),
+                ("/model", _h("查看模型 (↑↓选择)", "view model (↑↓ select)")),
                 ("/model <name>", _h("设置全局模型", "set default model")),
                 ("/model <agent> <name>", _h("设置 Agent 模型", "override per-agent model")),
+                ("/model all <name>", _h("批量设置全部 Agent", "set all agents model")),
                 ("/apikey", _h("查看密钥", "list API keys")),
                 ("/apikey set <prov> <key>", _h("添加密钥", "add / replace key")),
                 ("/apikey del <prov>", _h("删除密钥", "remove key")),
@@ -1968,8 +2009,107 @@ def _handle_workspace_auto(ctx) -> None:
 # -- Model & API key management --------------------------------------------
 
 
+def _interactive_model_select(prompt: str = "Select model") -> str | None:
+    """Show available models and let the user pick with ↑↓ / enter / esc."""
+    catalog = load_model_catalog()
+    if not catalog:
+        console.print("  [red]No models found in catalog[/red]")
+        return None
+
+    # Flatten to ordered list — group by provider, with a header row
+    entries: list[dict] = []  # {name, provider, context, max_output, is_header?}
+    for provider, models in catalog.items():
+        entries.append({"name": provider, "is_header": True})
+        for m in models:
+            m["is_header"] = False
+            entries.append(m)
+
+    selected_idx = 0
+    # Move to first non-header
+    for i, e in enumerate(entries):
+        if not e.get("is_header"):
+            selected_idx = i
+            break
+
+    # Show current configuration above the selection list
+    with Live(
+        Table(show_header=False, box=None, padding=0),
+        console=console,
+        refresh_per_second=10,
+        transient=True,
+    ) as live:
+        while True:
+            tbl = Table(show_header=False, box=None, padding=0, expand=True)
+            tbl.add_column(ratio=1)
+
+            # Prompt line
+            prompt_line = Text()
+            prompt_line.append(f"\n  {prompt}", style="bold")
+            prompt_line.append("  (↑↓ select  enter confirm  esc cancel)", style="dim")
+            tbl.add_row(prompt_line)
+            tbl.add_row(Text())
+
+            # Model list
+            for i, e in enumerate(entries):
+                if e.get("is_header"):
+                    tbl.add_row(Text(f"  [{e['name'].upper()}]", style="bold dim"))
+                    continue
+
+                line = Text()
+                marker = "❯" if i == selected_idx else " "
+                style = "bold cyan" if i == selected_idx else ""
+                line.append(f" {marker} ", style=style)
+                line.append(f"  {e['name']}", style=style)
+
+                ctx_str = f"ctx={e.get('context_window', '?')}"
+                if i == selected_idx:
+                    line.append(f"  ({ctx_str}, max={e.get('max_output', '?')})", style="dim")
+                else:
+                    line.append(f"  ({ctx_str})", style="dim")
+
+                tbl.add_row(line)
+
+            tbl.add_row(Text())
+            hint = Text()
+            hint.append("  [dim]Tip: /model <agent> </dim>", style="dim")
+            hint.append("<name>", style="cyan dim")
+            hint.append(" [dim]for per-agent,  [/dim]", style="dim")
+            hint.append("/model all <name>", style="cyan dim")
+            hint.append(" [dim]for all[/dim]", style="dim")
+            tbl.add_row(hint)
+            live.update(tbl)
+
+            try:
+                key = _get_key()
+            except KeyboardInterrupt:
+                return None
+
+            if key == "enter":
+                return entries[selected_idx].get("name", "")
+            if key == "esc":
+                return None
+            if key == "up":
+                for j in range(selected_idx - 1, -1, -1):
+                    if not entries[j].get("is_header"):
+                        selected_idx = j
+                        break
+            if key == "down":
+                for j in range(selected_idx + 1, len(entries)):
+                    if not entries[j].get("is_header"):
+                        selected_idx = j
+                        break
+            if key == "left":
+                selected_idx = 0
+                for j, e in enumerate(entries):
+                    if not e.get("is_header"):
+                        selected_idx = j
+                        break
+
+
 def _handle_model_command(cmd: str, ctx) -> None:
     parts = cmd.strip().split(maxsplit=1)
+
+    # ── /model (no args) — show status + interactive select ──────────────
     if len(parts) == 1:
         current = ctx.config.llm.default_model
         console.print(f"\n  [bold]default:[/bold] [cyan]{current}[/cyan]\n")
@@ -1981,19 +2121,54 @@ def _handle_model_command(cmd: str, ctx) -> None:
         console.print(
             "\n  [dim]/model <name>           set default model\n"
             "  /model <agent> <name>    set agent model\n"
+            "  /model all <name>        set for all agents\n"
             "  /model <agent> default   reset to default[/dim]"
         )
+
+        model = _interactive_model_select("Select model")
+        if model:
+            ok, msg = set_config("default_model", model)
+            if ok:
+                ctx.config.llm.default_model = model
+                console.print(f"\n  [green]model -> {model}[/green]")
+            else:
+                console.print(f"\n  [red]{msg}[/red]")
         return
 
     arg = parts[1].strip()
     tokens = arg.split(maxsplit=1)
 
-    # Guard: a single token that happens to be an agent name like "/model fog"
-    # used to silently get persisted as the default model. Require explicit form.
-    if len(tokens) == 1 and tokens[0] in AGENT_CLASSES:
-        console.print(f"  [red]missing model name. Usage: /model {tokens[0]} <model>[/red]")
+    # ── /model all [model] — bulk set all agents ─────────────────────────
+    if tokens[0] == "all":
+        if len(tokens) == 2:
+            model_name = tokens[1]
+            for name in AGENT_CLASSES:
+                set_config(f"model.{name}", model_name)
+                agent_cfg = getattr(ctx.config.agents, name)
+                agent_cfg.model = model_name
+            console.print(f"  [green]all agents -> {model_name}[/green]")
+        else:
+            model = _interactive_model_select("Select model for all agents")
+            if model:
+                for name in AGENT_CLASSES:
+                    set_config(f"model.{name}", model)
+                    agent_cfg = getattr(ctx.config.agents, name)
+                    agent_cfg.model = model
+                console.print(f"\n  [green]all agents -> {model}[/green]")
         return
 
+    # ── /model <agent> (no model name) — interactive select for that agent
+    if len(tokens) == 1 and tokens[0] in AGENT_CLASSES:
+        agent_name = tokens[0]
+        model = _interactive_model_select(f"Select model for {icon_text(agent_name)} {agent_name}")
+        if model:
+            set_config(f"model.{agent_name}", model)
+            agent_cfg = getattr(ctx.config.agents, agent_name)
+            agent_cfg.model = model
+            console.print(f"\n  [green]{icon_text(agent_name)} {agent_name} -> {model}[/green]")
+        return
+
+    # ── /model <agent> <model> — direct set ──────────────────────────────
     if len(tokens) == 2 and tokens[0] in AGENT_CLASSES:
         agent_name, model_name = tokens
         if model_name.lower() == "default":
@@ -2008,6 +2183,7 @@ def _handle_model_command(cmd: str, ctx) -> None:
             console.print(f"  [green]{icon_text(agent_name)} {agent_name} -> {model_name}[/green]")
         return
 
+    # ── /model <model> — direct set default ─────────────────────────────
     model_name = arg
     ok, msg = set_config("default_model", model_name)
     if ok:
