@@ -1133,15 +1133,15 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _auto_continue_count = 0
                 _esc_event = asyncio.Event()
 
-                async def _esc_watcher():
+                async def _esc_watcher(ev: asyncio.Event):
                     loop = asyncio.get_running_loop()
-                    while not _esc_event.is_set():
+                    while not ev.is_set():
                         key = await loop.run_in_executor(None, _get_key)
                         if key == "esc":
-                            _esc_event.set()
+                            ev.set()
                             break
 
-                esc_task = asyncio.create_task(_esc_watcher())
+                esc_task = asyncio.create_task(_esc_watcher(_esc_event))
 
                 live = Live(
                     _build_stream_display(agent, "", ""),
