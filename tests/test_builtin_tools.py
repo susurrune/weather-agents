@@ -416,3 +416,77 @@ class TestFileSearchPathlib:
 
         result = await _file_search(str(tmp_path), "*.nonexistent")
         assert "No files" in result
+
+
+class TestGrepTool:
+    @pytest.mark.asyncio
+    async def test_grep_finds_text(self, tmp_path):
+        from weather_agents.tools.builtin import _grep
+
+        (tmp_path / "a.txt").write_text("hello world\nfoo bar\n", encoding="utf-8")
+        result = await _grep(str(tmp_path), "hello")
+        assert "hello world" in result
+
+    @pytest.mark.asyncio
+    async def test_grep_regex_mode(self, tmp_path):
+        from weather_agents.tools.builtin import _grep
+
+        (tmp_path / "a.txt").write_text("hello world\nfoo bar\n", encoding="utf-8")
+        result = await _grep(str(tmp_path), r"h.llo", regex=True)
+        assert "hello world" in result
+
+    @pytest.mark.asyncio
+    async def test_grep_ignore_case(self, tmp_path):
+        from weather_agents.tools.builtin import _grep
+
+        (tmp_path / "a.txt").write_text("Hello World\n", encoding="utf-8")
+        result = await _grep(str(tmp_path), "hello", ignore_case=True)
+        assert "Hello World" in result
+
+    @pytest.mark.asyncio
+    async def test_grep_invalid_regex(self, tmp_path):
+        from weather_agents.tools.builtin import _grep
+
+        result = await _grep(str(tmp_path), "[invalid", regex=True)
+        assert "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_grep_no_match(self, tmp_path):
+        from weather_agents.tools.builtin import _grep
+
+        (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+        result = await _grep(str(tmp_path), "nonexistent")
+        assert "No matches" in result
+
+    @pytest.mark.asyncio
+    async def test_grep_with_glob_filter(self, tmp_path):
+        from weather_agents.tools.builtin import _grep
+
+        (tmp_path / "a.py").write_text("TODO: fix me\n", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("TODO: also\n", encoding="utf-8")
+        result = await _grep(str(tmp_path), "TODO", glob="*.py")
+        assert "a.py" in result
+        assert "b.txt" not in result
+
+
+class TestGitTools:
+    @pytest.mark.asyncio
+    async def test_git_outside_repo(self, tmp_path):
+        from weather_agents.tools.builtin import _git_status
+
+        result = await _git_status(repo=str(tmp_path))
+        assert "not a git repository" in result
+
+    @pytest.mark.asyncio
+    async def test_git_add_refuses_all(self):
+        from weather_agents.tools.builtin import _git_add
+
+        result = await _git_add("-A")
+        assert "refusing" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_git_commit_empty_message(self):
+        from weather_agents.tools.builtin import _git_commit
+
+        result = await _git_commit("")
+        assert "cannot be empty" in result.lower()
