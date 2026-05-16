@@ -107,8 +107,6 @@ def _get_key() -> str:
             if ch2 == "Z":
                 return "shift_tab"
             return {"H": "up", "P": "down", "K": "left", "M": "right"}.get(ch2, ch2)
-        if ch == "\x1a":
-            raise EOFError
         if ch == "\x03":
             raise KeyboardInterrupt
         if ch == "\x1b":
@@ -177,8 +175,6 @@ def _get_key() -> str:
                 if seq.startswith("\x1bO") and seq[-1] in "PQ":
                     return "tab"
                 return "esc"
-            if ch == "\x1a":
-                raise EOFError
             if ch == "\x03":
                 raise KeyboardInterrupt
             if ch in ("\r", "\n"):
