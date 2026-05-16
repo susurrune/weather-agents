@@ -738,6 +738,15 @@ async def _chat_single(agent_name: str, message: str) -> None:
 async def _init_agent_lazy(agent, ctx) -> None:
     """Init an agent if not already initialized. Used for lazy startup."""
     if not agent._base_system_prompt:
+        # Ensure DB tables exist before we can create a session.
+        await agent.memory.init_db()
+        # Auto-create a session so _load_short_term returns only this
+        # session's messages — prevents cross-session memory pollution.
+        if not agent.memory.get_active_session():
+            await agent.memory.create_session()
+        # Now init the agent (system prompt, subscriptions, skills, etc).
+        # _load_short_term already ran in init_db; init() skips it because
+        # _loaded is now True.
         await agent.init()
         # Init MCP if configured (only on first agent init)
         if ctx.mcp is not None and ctx.mcp._server_configs and not ctx.mcp_status:

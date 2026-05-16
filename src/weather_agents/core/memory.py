@@ -45,6 +45,8 @@ class Memory:
         self._active_session: str | None = None
 
     async def init_db(self) -> None:
+        if self._db is not None:
+            return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(str(self._db_path))
         await self._db.execute("PRAGMA journal_mode=WAL")
@@ -148,11 +150,13 @@ class Memory:
                 (self.agent_name, self._active_session, self.config.short_term_limit),
             )
         else:
-            cursor = await self._db.execute(
-                "SELECT role, content, name, tool_call_id, tool_calls, reasoning_content FROM messages "
-                "WHERE agent = ? ORDER BY id DESC LIMIT ?",
-                (self.agent_name, self.config.short_term_limit),
-            )
+            # No session — start with a clean slate.  Loading messages from
+            # every prior session would present the LLM with a jumble of
+            # unrelated conversation fragments and cause the confusion
+            # described as "memory chaos".
+            self._loaded = True
+            self._prune_dangling_tool_calls()
+            return
         rows = await cursor.fetchall()
         for row in reversed(list(rows)):
             tool_calls = None
