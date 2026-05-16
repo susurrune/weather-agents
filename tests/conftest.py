@@ -38,6 +38,9 @@ def mock_llm():
             tool_calls=[],
             model="gpt-4o-mini",
             usage={"prompt_tokens": 10, "completion_tokens": 5},
+            # Set reasoning_content explicitly so Mock auto-attribute doesn't
+            # return a stub Mock object and end up serialized to the DB.
+            reasoning_content=None,
         )
     )
     llm.stream = AsyncMock()
@@ -47,10 +50,19 @@ def mock_llm():
 
 
 @pytest.fixture
-def app_config():
+def app_config(tmp_path):
+    """AppConfig with an isolated SQLite DB.
+
+    Without this override, every test run hit ``~/.weather-agents/memory.db``
+    — the user's real database — leaving session rows, mock-stringified
+    messages, and other artefacts that polluted production data. The
+    ``tmp_path`` fixture gives each test its own clean directory.
+    """
     from weather_agents.core.config import AppConfig
 
-    return AppConfig()
+    cfg = AppConfig()
+    cfg.memory.db_path = str(tmp_path / "test_memory.db")
+    return cfg
 
 
 @pytest.fixture

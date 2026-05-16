@@ -311,3 +311,106 @@ class TestSynthesizeDelegationSummary:
         out = _synthesize_delegation_summary([("fog", True), ("rain", False)])
         assert "Delegated: fog" in out
         assert "Failed: rain" in out
+
+
+class TestChatBindsContextVar:
+    """The non-streaming ``chat()`` entrypoint must bind the ContextVar.
+
+    Without this binding, the one-shot CLI path (``wa <agent> "msg"``)
+    leaves tool handlers (``use_skill``, ``list_skills``) with no agent
+    reference and they return "no active agent".
+    """
+
+    @pytest.mark.asyncio
+    async def test_chat_binds_call_agent(self, isolated_config, mock_llm, bus, tool_registry):
+        from weather_agents.agents.fog import FogAgent
+
+        seen: dict[str, object] = {}
+
+        async def _capture_complete(*args, **kwargs):
+            seen["agent"] = get_call_agent()
+            return Mock(content="ok", tool_calls=[], model="x", usage={}, reasoning_content=None)
+
+        mock_llm.complete = _capture_complete
+        agent = FogAgent(config=isolated_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent.init()
+        await agent.chat("hi")
+        assert seen["agent"] is agent
+        # Binding cleaned up after return.
+        assert get_call_agent() is None
+        await agent.close()
+
+
+class TestClearShortTermScope:
+    """``clear_short_term`` must NOT delete persisted rows belonging to other sessions."""
+
+    @pytest.mark.asyncio
+    async def test_clear_does_not_touch_other_sessions(self, tmp_path):
+        from weather_agents.core.config import MemoryConfig
+        from weather_agents.core.memory import Memory
+
+        cfg = MemoryConfig(db_path=str(tmp_path / "clr.db"), short_term_limit=50)
+        mem = Memory(cfg, "fog")
+        await mem.init_db()
+        try:
+            sid_a = await mem.create_session("A")
+            mem.add_message("user", "msg-in-A")
+            await mem._flush_pending()
+
+            sid_b = await mem.create_session("B")
+            mem.add_message("user", "msg-in-B")
+            await mem._flush_pending()
+
+            # Active session is B — clearing must leave A untouched.
+            await mem.clear_short_term()
+
+            ok = await mem.load_session(sid_a)
+            assert ok is True
+            user_msgs = [m for m in mem.short_term if m.role == "user"]
+            assert any("msg-in-A" in m.content for m in user_msgs), (
+                "clear_short_term silently destroyed session A's data"
+            )
+
+            # And session B's persisted rows ARE gone.
+            ok = await mem.load_session(sid_b)
+            assert ok is True
+            user_msgs_b = [m for m in mem.short_term if m.role == "user"]
+            assert not any("msg-in-B" in m.content for m in user_msgs_b)
+        finally:
+            await mem.close()
+
+
+class TestAutoCompactErrorIsRecoverable:
+    """A flaky summariser LLM call must not strand the user's input."""
+
+    @pytest.mark.asyncio
+    async def test_compact_failure_does_not_propagate_from_chat(
+        self, isolated_config, mock_llm, bus, tool_registry, monkeypatch
+    ):
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=isolated_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent.init()
+
+        # Make compact() blow up unconditionally.
+        async def _explode() -> str:
+            raise RuntimeError("summariser 503")
+
+        agent.compact = _explode  # type: ignore[method-assign]
+        # And force the threshold check to fire.
+        agent._should_auto_compact = lambda: True  # type: ignore[method-assign]
+
+        # chat() should complete normally despite the compact failure —
+        # logged, not raised.
+        resp = await agent.chat("anything")
+        assert resp == "test response"
+        await agent.close()
+
+
+class TestConftestIsolation:
+    """The ``app_config`` fixture must point at the per-test tmp dir, not
+    the user's real ``~/.weather-agents/memory.db``."""
+
+    def test_app_config_uses_tmp_path(self, app_config, tmp_path):
+        assert str(tmp_path) in app_config.memory.db_path
+        assert "~/.weather-agents" not in app_config.memory.db_path

@@ -477,11 +477,33 @@ class BaseAgent:
             on_status: Called with a status string when state changes
                        (e.g. "thinking...", "calling read_file...").
         """
+        # Bind active-agent ContextVar so tool handlers (use_skill,
+        # list_skills) can reach us even on the non-streaming path used by
+        # one-shot CLI invocations (``wa <agent> "msg"``). Without this
+        # the handlers see None and return "no active agent".
+        _token = _call_agent_var.set(self)
+        try:
+            return await self._chat_impl(message, on_status)
+        finally:
+            _call_agent_var.reset(_token)
+
+    async def _chat_impl(
+        self,
+        message: str,
+        on_status: Callable[[str], None] | None,
+    ) -> str:
         await self._set_state(AgentState.THINKING)
         self.memory.add_message("user", message)
 
+        # Auto-compact may fail (LLM transient error, etc.). Don't let that
+        # nuke the turn — log and proceed without compaction. The user's
+        # message is already persisted; we'd otherwise leave a dangling
+        # user turn with no response.
         if self._should_auto_compact():
-            await self.compact()
+            try:
+                await self.compact()
+            except Exception as exc:
+                _log.warning("auto_compact_failed: %s", exc)
 
         try:
             if on_status:
@@ -523,9 +545,15 @@ class BaseAgent:
         self.memory.add_message("user", message)
         assistant_stored = False
 
-        # Auto-compress when context gets too large
+        # Auto-compress when context gets too large. Wrap in try/except so a
+        # flaky summariser LLM call doesn't strand the user's already-
+        # persisted message with no response — without this guard a 5xx on
+        # the summariser appeared to users as a "dropped" turn.
         if self._should_auto_compact():
-            await self.compact()
+            try:
+                await self.compact()
+            except Exception as exc:
+                _log.warning("auto_compact_failed: %s", exc)
 
         # Track delegations that occurred this turn so we can synthesize a
         # short content line if the model ends the turn after only emitting
@@ -570,20 +598,22 @@ class BaseAgent:
                         streaming_reasoning = event.reasoning_content
 
                 if not tool_calls_received:
+                    final_content = round_content
+                    if not full_content.strip() and delegations:
+                        # Model returned no text but did delegate. Use the
+                        # synthesized summary as BOTH the displayed content
+                        # AND the persisted assistant content so memory and
+                        # the user's screen agree on what this turn produced.
+                        final_content = _synthesize_delegation_summary(delegations)
                     self.memory.add_message(
                         "assistant",
-                        round_content,
+                        final_content,
                         reasoning_content=streaming_reasoning,
                     )
                     assistant_stored = True
                     await self._set_state(AgentState.IDLE)
-                    if not full_content.strip() and delegations:
-                        # Model returned no text at all this turn but did
-                        # successfully delegate. Emit a synthesized line so
-                        # the REPL doesn't treat the turn as empty and
-                        # discard the entire delegation result from view.
-                        synth = _synthesize_delegation_summary(delegations)
-                        yield {"type": "content", "text": synth}
+                    if final_content and final_content != round_content:
+                        yield {"type": "content", "text": final_content}
                     yield {"type": "done"}
                     return
 
@@ -693,6 +723,10 @@ class BaseAgent:
             await self._set_state(AgentState.IDLE)
             if not full_content.strip() and delegations:
                 synth = _synthesize_delegation_summary(delegations)
+                # Persist the synthesized summary so memory matches what
+                # the user saw; otherwise the next turn's LLM sees only an
+                # orphaned tool result with no assistant follow-up.
+                self.memory.add_message("assistant", synth)
                 yield {"type": "content", "text": synth}
             yield {"type": "done"}
 

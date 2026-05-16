@@ -396,14 +396,35 @@ class Memory:
         }
 
     async def clear_short_term(self) -> None:
+        """Clear in-memory short-term and delete the persisted rows for the
+        *active* session only.
+
+        Previously this DELETE had no ``session_id`` filter and wiped every
+        saved session's messages for this agent — silent data loss when
+        users meant to clear the current conversation. If no session is
+        active, this falls back to the legacy behaviour but only for rows
+        with NULL session_id so saved sessions are preserved.
+        """
         system_msgs = [m for m in self.short_term if m.role == "system"]
         self.short_term = system_msgs
-        if self._db:
+        if not self._db:
+            return
+        if self._active_session is not None:
             await self._db.execute(
-                "DELETE FROM messages WHERE agent = ? AND role != 'system'",
+                "DELETE FROM messages WHERE agent = ? AND role != 'system' AND session_id = ?",
+                (self.agent_name, self._active_session),
+            )
+            # Reset the session's message_count so /list shows it correctly.
+            await self._db.execute(
+                "UPDATE sessions SET message_count = 0 WHERE id = ?",
+                (self._active_session,),
+            )
+        else:
+            await self._db.execute(
+                "DELETE FROM messages WHERE agent = ? AND role != 'system' AND session_id IS NULL",
                 (self.agent_name,),
             )
-            await self._db.commit()
+        await self._db.commit()
 
     # -- Working memory (task-scoped, persisted to SQLite) --
 
