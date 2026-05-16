@@ -138,16 +138,19 @@ class Memory:
     async def _load_short_term(self) -> None:
         if not self._db or self._loaded:
             return
+        # ORDER BY id DESC (not created_at): id is strictly monotonic even when
+        # multiple inserts land in the same second — avoids non-deterministic
+        # ordering that could place a tool message before its assistant.
         if self._active_session:
             cursor = await self._db.execute(
                 "SELECT role, content, name, tool_call_id, tool_calls, reasoning_content FROM messages "
-                "WHERE agent = ? AND session_id = ? ORDER BY created_at DESC LIMIT ?",
+                "WHERE agent = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
                 (self.agent_name, self._active_session, self.config.short_term_limit),
             )
         else:
             cursor = await self._db.execute(
                 "SELECT role, content, name, tool_call_id, tool_calls, reasoning_content FROM messages "
-                "WHERE agent = ? ORDER BY created_at DESC LIMIT ?",
+                "WHERE agent = ? ORDER BY id DESC LIMIT ?",
                 (self.agent_name, self.config.short_term_limit),
             )
         rows = await cursor.fetchall()
@@ -346,7 +349,7 @@ class Memory:
                 await self._db.execute(
                     "DELETE FROM messages WHERE id IN ("
                     "SELECT id FROM messages WHERE agent = ? AND role != 'system' "
-                    "ORDER BY created_at ASC LIMIT ?)",
+                    "ORDER BY id ASC LIMIT ?)",
                     (self.agent_name, excess),
                 )
                 await self._db.commit()
@@ -598,7 +601,7 @@ class Memory:
             return
         cursor = await self._db.execute(
             "SELECT content FROM messages WHERE agent = ? AND session_id = ? AND role = 'user' "
-            "ORDER BY created_at ASC LIMIT 1",
+            "ORDER BY id ASC LIMIT 1",
             (self.agent_name, self._active_session),
         )
         row = await cursor.fetchone()

@@ -478,6 +478,7 @@ class BaseAgent:
             return response.content
         except Exception as e:
             await self._set_state(AgentState.ERROR)
+            self._pop_last_user_message()
             self.memory._prune_dangling_tool_calls()
             error_msg = f"[{self.display_name}] Error: {e}"
             self.memory.add_message("assistant", error_msg)
