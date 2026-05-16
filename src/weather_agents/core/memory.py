@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,61 @@ from typing import Any
 import aiosqlite
 
 from weather_agents.core.config import MemoryConfig
+
+
+class _RetryDB:
+    """Wraps aiosqlite connection with automatic retry on SQLITE_BUSY.
+
+    Multiple ``wa`` instances share the same SQLite file.  WAL mode allows
+    concurrent reads but writes still serialise — when two processes write
+    simultaneously one gets ``database is locked``.  SQLite's built-in
+    ``busy_timeout`` handles retry at the C level; this wrapper adds a
+    Python-level safety net so that even if the C handler fails, we retry
+    gracefully instead of crashing the interactive session.
+    """
+
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        object.__setattr__(self, "_db", db)
+
+    async def execute(self, sql: str, parameters: Any = None) -> Any:
+        for attempt in range(5):
+            try:
+                if parameters is not None:
+                    return await self._db.execute(sql, parameters)
+                return await self._db.execute(sql)
+            except sqlite3.OperationalError as e:
+                if "database is locked" not in str(e):
+                    raise
+                if attempt < 4:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                else:
+                    raise
+
+    async def executemany(self, sql: str, parameters: Any) -> None:
+        await self._db.executemany(sql, parameters)
+
+    async def commit(self) -> None:
+        for attempt in range(5):
+            try:
+                await self._db.commit()
+                return
+            except sqlite3.OperationalError as e:
+                if "database is locked" not in str(e):
+                    raise
+                if attempt < 4:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                else:
+                    raise
+
+    async def close(self) -> None:
+        await self._db.close()
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate undecorated attributes (Cursor returns, etc.) directly."""
+        return getattr(self._db, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._db, name, value)
 
 
 @dataclass
@@ -39,7 +95,7 @@ class Memory:
         self.short_term: list[Message] = []
         self.working: dict[str, Any] = {}
         self._db_path = Path(config.db_path).expanduser()
-        self._db: aiosqlite.Connection | None = None
+        self._db: _RetryDB | None = None
         self._loaded = False
         self._pending_persists: set[asyncio.Task] = set()
         self._active_session: str | None = None
@@ -48,10 +104,11 @@ class Memory:
         if self._db is not None:
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(str(self._db_path))
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA busy_timeout=5000")
-        await self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
+        raw = await aiosqlite.connect(str(self._db_path))
+        await raw.execute("PRAGMA journal_mode=WAL")
+        await raw.execute("PRAGMA busy_timeout=5000")
+        await raw.execute("PRAGMA auto_vacuum=INCREMENTAL")
+        self._db = _RetryDB(raw)
         await self._db.execute(
             """
             CREATE TABLE IF NOT EXISTS memories (
