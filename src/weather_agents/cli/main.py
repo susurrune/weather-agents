@@ -574,19 +574,44 @@ def _place_ime_cursor(col: int) -> None:
 INTERACTIVE_MODE: str = "auto"  # "auto" or "plan"
 
 
-def _should_auto_continue(text: str) -> bool:
-    """Check if the AI response signals more work — auto-continue."""
-    last_lines = [ln for ln in text.strip().split("\n") if ln.strip()][-3:]
-    # ASCII keywords need word boundaries to avoid false positives (e.g. "next" in "context")
-    ascii_kw = re.compile(r"\b(?:continue|next|remaining|ongoing)\b", re.IGNORECASE)
-    # CJK keywords: substring matching is fine at character granularity
-    cjk_kws = ["继续", "接下来", "下一个", "挨个"]
-    for line in last_lines:
-        if ascii_kw.search(line):
-            return True
-        if any(kw in line for kw in cjk_kws):
-            return True
-    return False
+# Combined auto-continue signal: CJK + English patterns that indicate
+# the model plans more work.  Order matters for fast short-circuit.
+_AUTO_CONTINUE = re.compile(
+    r"(?:接下来|下一步|下面我|然后我|接着|还需要|继续|挨个|"
+    r"next[,:]\s*(?:I'll|let me|step|we|I will)|"
+    r"let me\s(?:now|continue|proceed|handle|take|work)|"
+    r"I'll\s(?:now|start|begin|go|handle|take|work|need)|"
+    r"接下来|剩下|现在[就我]|先[把给让]|"
+    r"\b(?:continue|next)\b|"
+    r"remaining|ongoing|further|additionally|subsequently|"
+    r"now[,:]\s*(?:let|I'll|I will|we'll|the))"
+)
+
+# Auto-stop signal: explicit "done" markers trump auto-continue
+_AUTO_STOP = re.compile(
+    r"(?:完成了|全部完成|以上就|都做好了|已经完成|到此结束|"
+    r"all done|task complete|finished|everything is done)",
+    re.IGNORECASE,
+)
+
+
+def _should_auto_continue(text: str, had_tool_calls: bool = False) -> bool:
+    """Check if the AI response signals more work — auto-continue.
+
+    1. Explicit "done" markers → stop (strongest signal).
+    2. Tool calls → continue (the model took action, likely more to come).
+    3. Text pattern match → continue if planning/signalling more steps.
+    """
+    # Only inspect the tail — the last paragraph where forward-looking
+    # language actually lives.
+    last_lines = text.strip().split("\n")
+    tail = "\n".join(last_lines[-6:]) if len(last_lines) > 6 else "\n".join(last_lines)
+
+    if _AUTO_STOP.search(tail):
+        return False
+    if had_tool_calls:
+        return True
+    return bool(_AUTO_CONTINUE.search(tail))
 
 
 # -- Chat -------------------------------------------------------------------
@@ -1122,8 +1147,13 @@ async def _interactive(agent_name: str | None = None) -> None:
                     agent._pop_last_user_message()
                     continue
 
+                # Plan confirmed: remove the [PLAN] user message so it
+                # doesn't appear twice when chat_stream adds inp again.
+                agent._pop_last_user_message()
+
             # --- Streaming chat with tool-call support ---
             # Inner loop: allows choice-menu re-entry with a new input
+            _auto_continue_count = 0
             while True:
                 await _init_agent_lazy(agent, ctx)
                 t0 = time.monotonic()
@@ -1132,7 +1162,6 @@ async def _interactive(agent_name: str | None = None) -> None:
                 status_text = "Thinking..."
                 activities: list[dict] = []
                 _empty_retried = False
-                _auto_continue_count = 0
                 _esc_event = asyncio.Event()
 
                 async def _esc_watcher(ev: asyncio.Event):
@@ -1219,15 +1248,19 @@ async def _interactive(agent_name: str | None = None) -> None:
                     break  # Exit inner loop, back to input
 
                 # — Auto mode: continue if the AI signals more work —
+                had_tools = any(a["status"] == "done" for a in activities)
                 if (
                     INTERACTIVE_MODE == "auto"
                     and not interrupted
-                    and _should_auto_continue(md_content)
-                    and _auto_continue_count < 3
+                    and _should_auto_continue(md_content, had_tool_calls=had_tools)
+                    and _auto_continue_count < 10
                 ):
                     _auto_continue_count += 1
                     inp = "请继续完成"
-                    console.print(f"  [dim]⋯ auto-continue ({_auto_continue_count}/3)[/dim]")
+                    console.print(
+                        f"  [dim]⋯ auto-continue ({_auto_continue_count}/10)[/dim]"
+                        + (" [tools]" if had_tools else "")
+                    )
                     continue  # Restart streaming
 
                 # — Choice menu: detect numbered options and show interactive popup —

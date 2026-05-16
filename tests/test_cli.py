@@ -954,11 +954,11 @@ class TestShouldAutoContinue:
 
         assert not _should_auto_continue("The task is complete. All done.")
 
-    def test_only_last_three_lines_checked(self):
+    def test_only_recent_tail_checked(self):
         from weather_agents.cli.main import _should_auto_continue
 
-        # The last 3 non-empty lines don't contain any keyword
-        text = "继续\nfirst line\nsecond line\nThis is the final answer."
+        # Keyword buried 7+ lines back should not trigger (only last ~6 lines inspected)
+        text = "继续\nline1\nline2\nline3\nline4\nline5\nline6\nThis is the final answer."
         assert not _should_auto_continue(text)
 
     def test_ongoing_keyword(self):
