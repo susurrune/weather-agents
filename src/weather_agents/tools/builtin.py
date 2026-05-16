@@ -426,20 +426,73 @@ async def _code_search(
 
 
 _BINARY_EXTENSIONS = {
-    ".pyc", ".pyo", ".so", ".dll", ".exe", ".bin", ".dat", ".db",
-    ".sqlite", ".sqlite3", ".ico", ".png", ".jpg", ".jpeg", ".gif",
-    ".bmp", ".svgz", ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".o", ".a", ".lib", ".class", ".jar", ".war",
+    ".pyc",
+    ".pyo",
+    ".so",
+    ".dll",
+    ".exe",
+    ".bin",
+    ".dat",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".ico",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".svgz",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".otf",
+    ".mp3",
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".mkv",
+    ".wav",
+    ".flac",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".7z",
+    ".rar",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".o",
+    ".a",
+    ".lib",
+    ".class",
+    ".jar",
+    ".war",
 }
 
 _SKIP_DIRS_GREP = {
-    ".git", "node_modules", ".venv", "__pycache__",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    "dist", "build", ".next", "target", "vendor",
-    ".tox", ".eggs", ".cache",
+    ".git",
+    "node_modules",
+    ".venv",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    ".next",
+    "target",
+    "vendor",
+    ".tox",
+    ".eggs",
+    ".cache",
 }
 
 
@@ -480,6 +533,7 @@ async def _grep(
     glob_pattern: str | None = None
     if glob:
         from fnmatch import translate as _fm_translate
+
         glob_pattern = _fm_translate(glob) if glob else None
 
     matches: list[str] = []
@@ -496,13 +550,16 @@ async def _grep(
         # Glob filter
         if glob_pattern:
             import re as _re2
+
             if not _re2.match(glob_pattern, fp.name):
                 continue
 
         files_scanned += 1
         if files_scanned > _MAX_GREP_FILES:
             out = "\n".join(matches) if matches else "No matches found within limit."
-            return _truncate(out, _MAX_SEARCH_OUTPUT, f"grep results (stopped after {_MAX_GREP_FILES} files)")
+            return _truncate(
+                out, _MAX_SEARCH_OUTPUT, f"grep results (stopped after {_MAX_GREP_FILES} files)"
+            )
 
         try:
             with fp.open(encoding="utf-8", errors="ignore") as fh:
@@ -522,14 +579,16 @@ async def _grep(
                     end = min(len(lines), i + max(ctx, ctx_after) + 1)
                     for j in range(start, end):
                         prefix = ":" if i == j else "-"
-                        matches.append(
-                            f"{fp}:{j + 1}:{prefix}:{lines[j].rstrip()}"
-                        )
+                        matches.append(f"{fp}:{j + 1}:{prefix}:{lines[j].rstrip()}")
                     matches.append("--")
                 else:
                     matches.append(f"{fp}:{i + 1}:{line.rstrip()}")
                 if len(matches) >= _MAX_GREP_MATCHES:
-                    return _truncate("\n".join(matches), _MAX_SEARCH_OUTPUT, f"grep matches ({_MAX_GREP_MATCHES}+ found)")
+                    return _truncate(
+                        "\n".join(matches),
+                        _MAX_SEARCH_OUTPUT,
+                        f"grep matches ({_MAX_GREP_MATCHES}+ found)",
+                    )
 
     if not matches:
         return f"No matches for '{pattern}' in {directory} (scanned {files_scanned} files)"
@@ -621,7 +680,9 @@ async def _run_git_command(args: list[str], cwd: str = ".") -> str:
     # Verify this is inside a git repo
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "--git-dir",
+            "git",
+            "rev-parse",
+            "--git-dir",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=work_dir,
@@ -636,15 +697,14 @@ async def _run_git_command(args: list[str], cwd: str = ".") -> str:
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", *args,
+            "git",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=work_dir,
         )
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=30
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=30)
         except TimeoutError:
             proc.kill()
             await proc.wait()
@@ -827,9 +887,7 @@ async def _shell_exec(command: str, timeout: int = 30, cwd: str = "", **kwargs) 
             cwd=work_dir,
         )
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             await proc.wait()
@@ -1172,8 +1230,12 @@ def register_builtin_tools() -> None:
             name="grep",
             description="Search text/regex in ALL text files (no hardcoded extension limit). Supports glob, regex, ignore_case, context lines.",
             parameters=[
-                ToolParameter(name="directory", type="string", description="Directory to search in"),
-                ToolParameter(name="pattern", type="string", description="Text or regex pattern to search for"),
+                ToolParameter(
+                    name="directory", type="string", description="Directory to search in"
+                ),
+                ToolParameter(
+                    name="pattern", type="string", description="Text or regex pattern to search for"
+                ),
                 ToolParameter(
                     name="glob",
                     type="string",

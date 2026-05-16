@@ -29,14 +29,12 @@ def _build_shared_context(calling_agent: BaseAgent | None, context: str) -> str:
         non_system = [m for m in recent if m.role != "system"]
         if non_system:
             ctx_msgs = non_system[-4:]  # last 2 exchanges
-            msg_text = "\n".join(
-                f"[{m.role}] {(m.content or '')[:500]}"
-                for m in ctx_msgs
-            )
+            msg_text = "\n".join(f"[{m.role}] {(m.content or '')[:500]}" for m in ctx_msgs)
             if msg_text:
                 parts.append(f"Calling agent context:\n{msg_text}")
 
     return "\n\n".join(parts)
+
 
 _log = get_logger("delegate")
 

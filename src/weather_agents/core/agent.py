@@ -153,7 +153,7 @@ class BaseAgent:
                 "\n\n## Behavior\n"
                 '1. Execute tools immediately — no "I will..." or "Let me..." narration before tool calls. Just call them.\n'
                 "2. After completing work: give a 1-2 sentence concise report, no log-style verbosity.\n"
-                '3. Do not use decorative separator lines (---, ***, ___, etc) — the interface handles visual separation.\n'
+                "3. Do not use decorative separator lines (---, ***, ___, etc) — the interface handles visual separation.\n"
                 "4. No emoji in generated web pages — use SVG icons, CSS shapes, or Unicode symbols instead.\n"
                 "5. Proportional planning: for simple tasks (stop server, show status, answer a question) — just do it directly. "
                 "Only break work into numbered steps when the task genuinely needs 3+ distinct actions. "

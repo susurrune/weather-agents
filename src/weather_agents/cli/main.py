@@ -606,7 +606,9 @@ _AUTO_STOP = re.compile(
 )
 
 
-def _should_auto_continue(text: str, had_tool_calls: bool = False, had_errors: bool = False) -> bool:
+def _should_auto_continue(
+    text: str, had_tool_calls: bool = False, had_errors: bool = False
+) -> bool:
     """Check if the AI response signals more work — auto-continue.
 
     1. Explicit "done" markers → stop (strongest signal).
@@ -1367,7 +1369,9 @@ async def _interactive(agent_name: str | None = None) -> None:
                 if (
                     INTERACTIVE_MODE == "auto"
                     and not interrupted
-                    and _should_auto_continue(md_content, had_tool_calls=had_tools, had_errors=had_errors)
+                    and _should_auto_continue(
+                        md_content, had_tool_calls=had_tools, had_errors=had_errors
+                    )
                 ):
                     # Parse plan from the first substantive response
                     if not _plan_steps and md_content:
@@ -1381,17 +1385,25 @@ async def _interactive(agent_name: str | None = None) -> None:
                                 if i in _plan_completed:
                                     continue
                                 step_words = {w.lower() for w in re.findall(r"\w{3,}", step)}
-                                label_words = {w.lower() for w in re.findall(r"\w{3,}", label_lower)}
+                                label_words = {
+                                    w.lower() for w in re.findall(r"\w{3,}", label_lower)
+                                }
                                 if step_words & label_words:
                                     _plan_completed.add(i)
 
                     # Show plan checklist
                     if _plan_steps:
                         current_idx = (
-                            next((i for i in range(len(_plan_steps)) if i not in _plan_completed), None)
-                            if _plan_completed else 0
+                            next(
+                                (i for i in range(len(_plan_steps)) if i not in _plan_completed),
+                                None,
+                            )
+                            if _plan_completed
+                            else 0
                         )
-                        checklist = _render_plan_checklist(_plan_steps, _plan_completed, current_idx)
+                        checklist = _render_plan_checklist(
+                            _plan_steps, _plan_completed, current_idx
+                        )
                         console.print(checklist)
 
                     inp = "请继续完成"

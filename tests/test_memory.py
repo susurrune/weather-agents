@@ -330,7 +330,9 @@ class TestDanglingToolCallPruning:
             Message(
                 role="assistant",
                 content="",
-                tool_calls=[{"id": "call_X", "function": {"name": "write_file", "arguments": "{}"}}],
+                tool_calls=[
+                    {"id": "call_X", "function": {"name": "write_file", "arguments": "{}"}}
+                ],
             ),
             # No tool response for the second call_X → second assistant should be pruned
             Message(role="user", content="next"),
