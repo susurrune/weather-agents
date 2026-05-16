@@ -209,7 +209,9 @@ async def run_voice_server(
             emotion=cfg.tts.emotion,
         )
 
-    server = VoiceServer(agent, ctx, host=host, port=port, tts_engine=tts_engine, ssl_context=ssl_context)
+    server = VoiceServer(
+        agent, ctx, host=host, port=port, tts_engine=tts_engine, ssl_context=ssl_context
+    )
     try:
         await server.run()
     finally:

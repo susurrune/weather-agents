@@ -86,15 +86,15 @@ def ensure_self_signed_cert(ips: list[str]) -> tuple[str, str]:
     os.chmod(key_path, 0o600)
 
     # Build self-signed certificate with SAN for each IP
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, "CN"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Weather Agents"),
-        x509.NameAttribute(NameOID.COMMON_NAME, "voice-server"),
-    ])
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "CN"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Weather Agents"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "voice-server"),
+        ]
+    )
 
-    san = x509.SubjectAlternativeName([
-        x509.IPAddress(ipaddress.ip_address(ip)) for ip in ips
-    ])
+    san = x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(ip)) for ip in ips])
 
     now = datetime.datetime.now()
     cert = (

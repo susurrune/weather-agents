@@ -311,9 +311,7 @@ class DoubaoTTS:
         if frame.get("event") != EVENT_CONNECTION_STARTED:
             raise RuntimeError(f"TTS unexpected event {frame.get('event')} after StartConnection")
 
-    async def _start_session(
-        self, ws: ClientConnection, session_id: str, text: str
-    ) -> None:
+    async def _start_session(self, ws: ClientConnection, session_id: str, text: str) -> None:
         """Send StartSession with TTS params."""
         payload = self._make_session_payload(text)
         await ws.send(

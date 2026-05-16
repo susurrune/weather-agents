@@ -2446,7 +2446,9 @@ async def _run_task(goal: str, agents=None) -> None:
 
 
 async def _run_voice_server(
-    host: str, port: int, agent_name: str,
+    host: str,
+    port: int,
+    agent_name: str,
     cert_file: str | None = None,
     key_file: str | None = None,
 ) -> None:
@@ -2466,12 +2468,19 @@ async def _run_voice_server(
     with contextlib.suppress(Exception):
         subprocess.run(
             [
-                "netsh", "advfirewall", "firewall", "add", "rule",
+                "netsh",
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
                 f"name=WA Voice ({port})",
-                "dir=in", "action=allow", "protocol=TCP",
+                "dir=in",
+                "action=allow",
+                "protocol=TCP",
                 f"localport={port}",
             ],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
 
     # Build SSL context if cert/key provided or auto-generate
@@ -2498,20 +2507,25 @@ async def _run_voice_server(
     with contextlib.suppress(Exception):
         r = subprocess.run(
             ["netsh", "advfirewall", "firewall", "show", "rule", f"name=WA Voice ({port})"],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
         stdout = r.stdout.decode("gbk", errors="replace")
         if "No rules" in stdout or "没有匹配" in stdout:
             firewall_hint = (
                 f"  ⚠ 防火墙未放行 {port} 端口，手机无法连接。"
-                f" 请以管理员身份运行: netsh advfirewall firewall add rule name=\"WA Voice\" dir=in action=allow protocol=TCP localport={port}"
+                f' 请以管理员身份运行: netsh advfirewall firewall add rule name="WA Voice" dir=in action=allow protocol=TCP localport={port}'
             )
 
     panel_text = Text().append(f"{display} · 语音对话", style=f"bold {color}")
-    panel_text.append("\n  ", style="dim").append(f"http://127.0.0.1:{port}", style="cyan").append("  (本机)", style="dim")
+    panel_text.append("\n  ", style="dim").append(f"http://127.0.0.1:{port}", style="cyan").append(
+        "  (本机)", style="dim"
+    )
     if is_https:
         for lan_ip in all_ips:
-            panel_text.append(f"\n  https://{lan_ip}:{port}", style="cyan").append("  (手机 HTTPS · 有安全警告点继续)", style="green")
+            panel_text.append(f"\n  https://{lan_ip}:{port}", style="cyan").append(
+                "  (手机 HTTPS · 有安全警告点继续)", style="green"
+            )
     panel_text.append(f"\n  TTS: {tts_status}", style="dim")
     if firewall_hint:
         panel_text.append(firewall_hint, style="yellow")
