@@ -42,7 +42,7 @@ class DoubaoTTS:
         access_token: str | None = None,
         api_key: str | None = None,
         resource_id: str = "seed-tts-2.0",
-        voice_type: str = "zh_female_vv_uranus_bigtts",
+        voice_type: str = "zh_female_sajiaoxuemei_uranus_bigtts",
         encoding: str = "mp3",
         speed_ratio: float = 1.0,
         volume_ratio: float = 1.0,

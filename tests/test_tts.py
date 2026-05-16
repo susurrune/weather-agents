@@ -54,7 +54,7 @@ def test_default_params():
     """Default params match V3 API spec."""
     tts = DoubaoTTS(api_key="k")
     assert tts.resource_id == "seed-tts-2.0"
-    assert tts.voice_type == "zh_female_vv_uranus_bigtts"
+    assert tts.voice_type == "zh_female_sajiaoxuemei_uranus_bigtts"
     assert tts.encoding == "mp3"
 
 
