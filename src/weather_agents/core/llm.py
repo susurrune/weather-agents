@@ -313,7 +313,9 @@ class LLMClient:
         overrides: dict | None = None,
     ) -> LLMResponse:
         self._check_budget()
-        model = overrides.get("model") if overrides and overrides.get("model") else self._get_model(agent_name)
+        ov = overrides or {}
+        raw_model = ov.get("model")
+        model: str = raw_model if isinstance(raw_model, str) else self._get_model(agent_name)
 
         fallback_models = [m for m in _FALLBACK_CHAINS.get(model, []) if self._has_key_for_model(m)]
         models_to_try = [model] + fallback_models
@@ -578,7 +580,8 @@ class LLMClient:
         """
         self._check_budget()
         ov = overrides or {}
-        model = ov.get("model") or self._get_model(agent_name)
+        raw_model = ov.get("model")
+        model: str = raw_model if isinstance(raw_model, str) else self._get_model(agent_name)
         provider, _stripped = _split_provider(model)
 
         stream_kwargs: dict[str, Any] = {

@@ -7,7 +7,6 @@ import ipaddress
 import os
 import re as _re
 import shlex
-import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -632,7 +631,7 @@ async def _run_git_command(args: list[str], cwd: str = ".") -> str:
             return f"Error: not a git repository: {work_dir}"
     except FileNotFoundError:
         return "Error: git not found. Is git installed?"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "Error: git rev-parse timed out"
 
     try:
@@ -646,7 +645,7 @@ async def _run_git_command(args: list[str], cwd: str = ".") -> str:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(), timeout=30
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return "Error: git command timed out (30s)"
@@ -831,7 +830,7 @@ async def _shell_exec(command: str, timeout: int = 30, cwd: str = "", **kwargs) 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return f"Command timed out after {timeout}s"

@@ -1,7 +1,5 @@
 """Tests for skill system including config overrides."""
 
-import pytest
-
 
 class TestSkillConfigOverrides:
     def test_skill_supports_model_override(self):
