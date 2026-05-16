@@ -47,7 +47,10 @@ AGENT_SPECIALTIES: dict[str, str] = {
     "sunshine": "emotional support / thoughtful conversation / bilingual companionship / creative insight",
 }
 
-_MAX_RESULT_CHARS = 8000
+# Cap delegate result size injected into the caller's context. Lowered from
+# 8000 so that long delegated outputs don't dominate the caller's short-term
+# memory and cause the caller's next reply to mimic the delegate's voice.
+_MAX_RESULT_CHARS = 4000
 
 
 def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
@@ -80,10 +83,12 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
         try:
             await target.init()
 
-            # Build shared context from the calling agent
-            from weather_agents.core.agent import _call_agent
+            # Build shared context from the calling agent. Read via ContextVar
+            # (not a module global) so concurrent delegations from different
+            # callers don't clobber each other.
+            from weather_agents.core.agent import get_call_agent
 
-            shared_ctx = _build_shared_context(_call_agent, context)
+            shared_ctx = _build_shared_context(get_call_agent(), context)
 
             task_obj = Task(
                 id=f"dlg-{id(task) & 0xFFFF:04x}",
@@ -142,7 +147,19 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
                 },
             )
 
-            return f"{header}\n\n{content}"
+            # Frame the result so the calling LLM treats it as third-party
+            # data, not its own voice. Without explicit delimiters the
+            # caller tends to mimic the delegate's tone/phrasing on its
+            # next turn (observed: rain echoing fog/sunshine after a
+            # delegation).
+            return (
+                f"<delegated_response from='{target.display_name}'>\n"
+                f"{header}\n\n{content}\n"
+                f"</delegated_response>\n"
+                f"[Hint: above is {target.display_name}'s reply. "
+                f"Synthesize a brief reply in YOUR OWN voice; do not quote or "
+                f"continue their text verbatim.]"
+            )
 
         except Exception as exc:
             _log.exception("delegation_error: %s", exc)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -20,9 +21,19 @@ from weather_agents.core.tool import Tool, ToolRegistry
 
 _log = get_logger("agent")
 
-# Set by chat_stream() each call — gives tool handlers (use_skill, list_skills)
-# a way to reach the agent that is currently processing.
-_call_agent: BaseAgent | None = None
+# ContextVar (not module global): each chat_stream/execute_task call binds the
+# active agent only within its own async context. A module global would be
+# clobbered by concurrent calls (e.g. asyncio.gather across agents) and leak
+# one agent's identity into another's tool handlers — the root of cross-agent
+# voice contamination in delegation.
+_call_agent_var: contextvars.ContextVar[BaseAgent | None] = contextvars.ContextVar(
+    "_call_agent", default=None
+)
+
+
+def get_call_agent() -> BaseAgent | None:
+    """Return the agent that owns the current async context, if any."""
+    return _call_agent_var.get()
 
 
 class AgentState(StrEnum):
@@ -227,6 +238,14 @@ class BaseAgent:
         if self._base_system_prompt:
             return
         await self.memory.init_db()
+        # Always own a session — applies to delegate targets too (delegate.py
+        # calls only target.init(), not the REPL's lazy-init). Without a
+        # session_id every persisted message lands in a global "NULL session"
+        # bucket and _load_short_term can resurrect unrelated past turns from
+        # any prior process, producing the cross-session memory chaos users
+        # see ("之前你说了几次…", fragments from unrelated tasks).
+        if self.memory.get_active_session() is None:
+            await self.memory.create_session()
         self._base_system_prompt = self._resolve_system_prompt()
         self._base_system_prompt = self._inject_workspace_info(self._base_system_prompt)
         self._base_system_prompt = self._inject_behavior_rules(self._base_system_prompt)
@@ -256,7 +275,7 @@ class BaseAgent:
         use_skill(name) to activate one.  The system prompt is rebuilt only
         on activation — no token cost for inactive skills.
 
-        Registered once globally; _call_agent (set by chat_stream) ensures
+        Registered once globally; the ContextVar set by chat_stream ensures
         the handler reaches the agent that made the call.
         """
         if self.tool_registry.get("use_skill"):
@@ -265,7 +284,7 @@ class BaseAgent:
         from weather_agents.core.tool import ToolParameter
 
         async def _use(name: str) -> str:
-            agent = _call_agent
+            agent = get_call_agent()
             if agent is None:
                 return "Error: no active agent"
             if agent.activate_skill(name):
@@ -275,7 +294,7 @@ class BaseAgent:
             return f"✗ Skill '{name}' not found. Call list_skills to see available options."
 
         async def _list() -> str:
-            agent = _call_agent
+            agent = get_call_agent()
             if agent is None:
                 return "Error: no active agent"
             skills = agent.get_available_skills()
@@ -489,8 +508,17 @@ class BaseAgent:
 
         Yields: {"type": "content", "text": "..."} | {"type": "tool_status", "label": "..."} | {"type": "done"}
         """
-        global _call_agent
-        _call_agent = self
+        # Bind this agent as the call-context owner. Reset on exit so a
+        # delegate target restored after delegation cannot leak its identity
+        # back into its caller's context.
+        _token = _call_agent_var.set(self)
+        try:
+            async for ev in self._chat_stream_impl(message):
+                yield ev
+        finally:
+            _call_agent_var.reset(_token)
+
+    async def _chat_stream_impl(self, message: str) -> AsyncIterator[dict]:
         await self._set_state(AgentState.THINKING)
         self.memory.add_message("user", message)
         assistant_stored = False
@@ -498,6 +526,13 @@ class BaseAgent:
         # Auto-compress when context gets too large
         if self._should_auto_compact():
             await self.compact()
+
+        # Track delegations that occurred this turn so we can synthesize a
+        # short content line if the model ends the turn after only emitting
+        # delegate_to tool calls (no plain text). Without this the REPL's
+        # "empty response, retrying..." path fires even though work
+        # actually happened.
+        delegations: list[tuple[str, bool]] = []  # (target_agent, success)
 
         try:
             full_content = ""
@@ -542,6 +577,13 @@ class BaseAgent:
                     )
                     assistant_stored = True
                     await self._set_state(AgentState.IDLE)
+                    if not full_content.strip() and delegations:
+                        # Model returned no text at all this turn but did
+                        # successfully delegate. Emit a synthesized line so
+                        # the REPL doesn't treat the turn as empty and
+                        # discard the entire delegation result from view.
+                        synth = _synthesize_delegation_summary(delegations)
+                        yield {"type": "content", "text": synth}
                     yield {"type": "done"}
                     return
 
@@ -590,7 +632,7 @@ class BaseAgent:
                     tool_label = (
                         _tool_status_label(tool_name, tool_args)
                         if tool_args
-                        else f"{tool_name} (bad args)"
+                        else f"{tool_name} (unparseable args)"
                     )
                     yield {"type": "tool_status", "label": tool_label}
                     tool_prep.append(
@@ -639,10 +681,19 @@ class BaseAgent:
                     self.memory.add_message("tool", result, name=_tool_name, tool_call_id=tc["id"])
                     label = next(p["tool_label"] for p in tool_prep if p["tc"] is tc)
                     yield {"type": "tool_done", "label": label, "success": success}
+                    if _tool_name == "delegate_to":
+                        # Recover the target agent name from the parsed args
+                        # so we can report which sub-agent ran on this turn.
+                        prep = next(p for p in tool_prep if p["tc"] is tc)
+                        target = (prep.get("tool_args") or {}).get("agent", "?")
+                        delegations.append((target, success))
             # Max iterations reached
             if not assistant_stored:
                 self._pop_last_user_message()
             await self._set_state(AgentState.IDLE)
+            if not full_content.strip() and delegations:
+                synth = _synthesize_delegation_summary(delegations)
+                yield {"type": "content", "text": synth}
             yield {"type": "done"}
 
         except Exception as e:
@@ -670,11 +721,17 @@ class BaseAgent:
                 self.memory.short_term.pop(i)
                 break
 
-    async def compact(self, keep_recent: int = 8) -> str:
+    async def compact(self, keep_recent: int = 12) -> str:
         """Compress conversation context by summarising older messages.
 
-        Keeps system prompt intact, replaces old messages with a summary,
-        and retains the most recent *keep_recent* messages.
+        Keeps system prompt intact, replaces old messages with a terse
+        bulleted digest inserted as a *system* note, and retains the most
+        recent *keep_recent* messages verbatim.
+
+        The digest is a system message (not a fake user/assistant exchange)
+        so the model treats it as background context and does NOT continue
+        or re-narrate it on the next turn — the root cause of the "之前你说
+        了几次…" rambling observed earlier.
         """
         system_msgs = [m for m in self.memory.short_term if m.role == "system"]
         non_system = [m for m in self.memory.short_term if m.role != "system"]
@@ -684,6 +741,34 @@ class BaseAgent:
 
         to_summarize = non_system[:-keep_recent]
         recent = non_system[-keep_recent:]
+
+        # Extract user directives verbatim — these MUST survive compaction.
+        # Heuristic: imperative/negative rules and short user messages with
+        # constraint keywords. Lossy but biased toward keeping rules.
+        directive_keywords = (
+            "don't",
+            "do not",
+            "never",
+            "always",
+            "must",
+            "no ",
+            "不要",
+            "不准",
+            "禁止",
+            "必须",
+            "一定",
+            "记住",
+        )
+        directives: list[str] = []
+        for m in to_summarize:
+            if m.role != "user":
+                continue
+            content = (m.content or "").strip()
+            if not content or len(content) > 300:
+                continue
+            lower = content.lower()
+            if any(k in lower for k in directive_keywords):
+                directives.append(content)
 
         text = ""
         for m in to_summarize:
@@ -699,28 +784,39 @@ class BaseAgent:
                 {
                     "role": "user",
                     "content": (
-                        "Summarise this conversation into a single paragraph (<500 chars). "
-                        "Keep all key facts, decisions, code snippets, file paths, and context:\n\n"
-                        + text
+                        "Produce a TERSE factual digest of the conversation below. "
+                        "Strict format rules:\n"
+                        "- Output bullet points only (one fact per line, prefix '- ').\n"
+                        "- No narrative, no 'previously you', no commentary, no apology.\n"
+                        "- Each bullet ≤ 80 chars: a single fact, decision, file path, or constraint.\n"
+                        "- Preserve every user directive (don't / never / 必须 / 禁止 / 记住) verbatim in quotes.\n"
+                        "- Maximum 12 bullets total. Drop trivial chit-chat.\n\n" + text
                     ),
                 }
             ],
             agent_name=self.name,
             overrides=self.get_skill_config_overrides() or None,
         )
-        summary = resp.content.strip()[:600]
+        summary = resp.content.strip()[:800]
+
+        digest_parts = [
+            f"[Earlier-context digest — {len(to_summarize)} messages compressed. "
+            "Reference only. Do NOT acknowledge, continue, or re-narrate this digest.]",
+            summary,
+        ]
+        if directives:
+            digest_parts.append("Verbatim user directives to obey:")
+            digest_parts.extend(f'  - "{d}"' for d in directives[-8:])
 
         self.memory.short_term = system_msgs.copy()
-        self.memory.add_message(
-            "user",
-            f"[Context compressed: {len(to_summarize)} earlier messages summarised]\n\n{summary}",
-        )
-        self.memory.add_message("assistant", "Got it, continuing with full context.")
+        # System-role insertion: persistence layer skips system rows, so this
+        # stays purely in-process and never bleeds into other sessions.
+        self.memory.add_message("system", "\n".join(digest_parts))
         for m in recent:
             self.memory.short_term.append(m)
         self.memory.prune_tool_messages()
 
-        return f"compressed {len(to_summarize)} messages ({len(summary)} char summary)"
+        return f"compressed {len(to_summarize)} messages ({len(summary)} char digest)"
 
     def context_usage(self) -> dict:
         """Return current context usage stats for display."""
@@ -745,8 +841,13 @@ class BaseAgent:
 
         model = self.llm._get_model(self.name)
         max_ctx = get_model_context_window(model)
-        # Trigger auto-compact at 75% of context window
-        return int(usage["estimated_tokens"]) > max_ctx * 0.75
+        # Trigger auto-compact at 92% of the context window. Lower
+        # thresholds (was 75%) fired in normal-sized sessions and caused
+        # users to see digest fragments surfacing mid-conversation. Now
+        # auto-compact is a hard-near-limit safety net, not a routine
+        # background operation; users can still trigger it explicitly via
+        # /compact when they want it.
+        return int(usage["estimated_tokens"]) > max_ctx * 0.92
 
     def _active_tool_names(self) -> list[str]:
         """All tool names available to this agent (registry tools + active skill tools)."""
@@ -815,7 +916,7 @@ class BaseAgent:
                     tool_label = (
                         _tool_status_label(tool_name, tool_args)
                         if tool_args
-                        else f"{tool_name} (bad args)"
+                        else f"{tool_name} (unparseable args)"
                     )
 
                     self.bus.add_event(
@@ -877,6 +978,21 @@ class BaseAgent:
         on_status: Callable[[str], None] | None = None,
     ) -> TaskResult:
         """Execute a specific task using agent specialty."""
+        # Rebind the active-agent ContextVar so tool handlers called from
+        # this agent's _llm_loop see *this* agent — not whichever caller
+        # invoked us via delegate_to. Reset on return so the caller's
+        # context is restored even if execute_task raises.
+        _token = _call_agent_var.set(self)
+        try:
+            return await self._execute_task_impl(task, on_status)
+        finally:
+            _call_agent_var.reset(_token)
+
+    async def _execute_task_impl(
+        self,
+        task: Task,
+        on_status: Callable[[str], None] | None,
+    ) -> TaskResult:
         await self._set_state(AgentState.THINKING)
         task.status = "in_progress"
         self.memory.set_working("current_task", task)
@@ -1107,3 +1223,23 @@ def _tool_status_label(name: str, args: dict) -> str:
     if len(label) > 60:
         label = label[:57] + "..."
     return label
+
+
+def _synthesize_delegation_summary(delegations: list[tuple[str, bool]]) -> str:
+    """Build a short fallback line shown when a turn ends with delegate_to
+    calls but no plain text from the model.
+
+    Keeps the REPL's "empty response" guard from firing while making it
+    clear to the user that work happened — without leaking the target
+    agent's full response into the caller's voice.
+    """
+    if not delegations:
+        return ""
+    ok = [name for name, success in delegations if success]
+    failed = [name for name, success in delegations if not success]
+    parts: list[str] = []
+    if ok:
+        parts.append("Delegated: " + ", ".join(ok))
+    if failed:
+        parts.append("Failed: " + ", ".join(failed))
+    return "[" + " | ".join(parts) + "]"
