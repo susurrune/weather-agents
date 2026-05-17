@@ -413,14 +413,13 @@ let ws = null;
 let isListening = false;
 let isSpeaking = false;
 let isWaitingResponse = false;
-let reconnectTimer = null;
 let audioCtx = null;
 let pendingAudioB64 = '';
 let serverTtsPending = false;
 let lastFullText = '';
 let currentAudioSource = null;
 let serverTtsTimeoutId = null;
-let currentAgent = { name: 'sunshine', display_name: '晴', emoji: '*', specialty: '情感陪伴' };
+let currentAgent = { name: 'fair', display_name: '晴', emoji: '*', specialty: '情感陪伴' };
 let agentList = [];
 
 const UI = {
@@ -468,7 +467,6 @@ function connect() {
     UI.reconnectBar.classList.remove('show');
     UI.connInfo.textContent = '已连接';
     ws.send(JSON.stringify({type: 'list_agents'}));
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   };
 
   ws.onmessage = (e) => {
@@ -483,9 +481,7 @@ function connect() {
     UI.connInfo.textContent = '已断开';
     isWaitingResponse = false;
     stopListening(true);
-    if (!reconnectTimer) {
-      UI.reconnectBar.classList.add('show');
-    }
+    UI.reconnectBar.classList.add('show');
   };
 
   ws.onerror = () => { ws.close(); };
@@ -996,7 +992,7 @@ window.addEventListener('online', () => {
 
 // Periodic reconnect check
 setInterval(() => {
-  if ((!ws || ws.readyState !== WebSocket.OPEN) && !reconnectTimer) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
     UI.reconnectBar.classList.add('show');
   }
 }, 5000);

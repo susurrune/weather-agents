@@ -18,7 +18,7 @@ from weather_agents.web.server import VoiceServer, _strip_markdown
 @pytest.fixture
 def mock_agent():
     agent = MagicMock()
-    agent.name = "sunshine"
+    agent.name = "fair"
     agent.display_name = "晴"
     agent.memory.get_active_session.return_value = None
     agent.memory.create_session = AsyncMock()
@@ -35,9 +35,7 @@ def mock_ctx():
 
 @pytest.fixture
 def voice_server(mock_agent, mock_ctx):
-    return VoiceServer(
-        {"sunshine": mock_agent}, mock_ctx, agent_name="sunshine", host="127.0.0.1", port=0
-    )
+    return VoiceServer({"fair": mock_agent}, mock_ctx, agent_name="fair", host="127.0.0.1", port=0)
 
 
 @pytest.fixture
@@ -64,7 +62,7 @@ async def test_health_endpoint(voice_server):
     assert resp.status == 200
     body = json.loads(resp.body)
     assert body["status"] == "ok"
-    assert body["agent"] == "sunshine"
+    assert body["agent"] == "fair"
 
 
 @pytest.mark.asyncio

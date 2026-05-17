@@ -17,7 +17,7 @@ AGENT_COLOR_MAP: dict[str, str] = {
     "frost": "cyan",
     "snow": "bright_white",
     "dew": "green",
-    "sunshine": "#FFD700",
+    "fair": "#FFD700",
 }
 
 
@@ -34,5 +34,5 @@ def icon_text(name: str) -> str:
         "frost": "+",
         "snow": "·",
         "dew": ",",
-        "sunshine": "*",
+        "fair": "*",
     }.get(name, name)

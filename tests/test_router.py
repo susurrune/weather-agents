@@ -84,25 +84,25 @@ def test_two_inline_items_still_not_orchestrate() -> None:
 
 class TestPickAgent:
     def test_security_keyword_picks_frost(self) -> None:
-        available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+        available = {"fog", "rain", "frost", "snow", "dew", "fair"}
         assert pick_agent_for_goal("帮我做安全审查", available) == "frost"
 
     def test_research_keyword_picks_fog(self) -> None:
-        available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+        available = {"fog", "rain", "frost", "snow", "dew", "fair"}
         assert pick_agent_for_goal("搜一下最新的 React 文档", available) == "fog"
 
-    def test_greeting_picks_sunshine(self) -> None:
-        available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
-        assert pick_agent_for_goal("你好啊", available) == "sunshine"
+    def test_greeting_picks_fair(self) -> None:
+        available = {"fog", "rain", "frost", "snow", "dew", "fair"}
+        assert pick_agent_for_goal("你好啊", available) == "fair"
 
     def test_falls_back_to_rain(self) -> None:
-        available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+        available = {"fog", "rain", "frost", "snow", "dew", "fair"}
         assert pick_agent_for_goal("处理这个东西", available) == "rain"
 
     def test_binary_search_picks_rain_not_fog(self) -> None:
         # Regression: "二分查找" contains the substring "找" which used to land
         # in fog's bucket. Code-generation phrasing must route to rain.
-        available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+        available = {"fog", "rain", "frost", "snow", "dew", "fair"}
         assert pick_agent_for_goal("帮我写一个二分查找", available) == "rain"
         assert pick_agent_for_goal("实现一个排序函数", available) == "rain"
 

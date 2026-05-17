@@ -21,8 +21,8 @@ from weather_agents.core.tool import ToolRegistry
 
 
 class TestAgentMetadata:
-    def test_all_five_agents_registered(self):
-        assert set(AGENT_CLASSES.keys()) == {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+    def test_all_agents_registered(self):
+        assert set(AGENT_CLASSES.keys()) == {"fog", "rain", "frost", "snow", "dew", "fair"}
 
     def test_all_have_emojis(self):
         for name in AGENT_CLASSES:
@@ -272,4 +272,4 @@ class TestCreateSystemContext:
 
             ctx = create_system_context()
             assert len(ctx.agent_map) == 6
-            assert set(ctx.agent_map.keys()) == {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+            assert set(ctx.agent_map.keys()) == {"fog", "rain", "frost", "snow", "dew", "fair"}

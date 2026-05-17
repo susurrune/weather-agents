@@ -122,7 +122,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/frost", "switch to Frost"),
     ("/snow", "switch to Snow"),
     ("/dew", "switch to Dew"),
-    ("/sunshine", "switch to Sunshine (晴)"),
+    ("/fair", "switch to Fair (晴)"),
     ("/version", "version info"),
     ("/quit", "exit chat"),
     ("/exit", "exit chat"),
@@ -276,7 +276,7 @@ AGENT_SPINNERS: dict[str, str] = {
     "frost": "star",
     "snow": "dots2",
     "dew": "bounce",
-    "sunshine": "moon",
+    "fair": "arc",
 }
 
 
@@ -1626,7 +1626,7 @@ def _print_welcome(model: str, workspace_path: str = "") -> None:
         "frost": "review",
         "snow": "planning",
         "dew": "devops",
-        "sunshine": "companion",
+        "fair": "companion",
     }
     art = _build_welcome_art()
 
@@ -1721,7 +1721,7 @@ def _print_help(ctx) -> None:
             _h("Agent 切换", "Agents"),
             [
                 (
-                    "/fog  /rain  /frost  /snow  /dew  /sunshine",
+                    "/fog  /rain  /frost  /snow  /dew  /fair",
                     _h("切换当前 Agent", "switch active agent"),
                 ),
                 ("/task <goal>", _h("多 Agent 编排", "multi-agent orchestration")),
@@ -2735,7 +2735,7 @@ async def _run_voice_server(
 
 @app.command()
 def chat(
-    agent: str = typer.Argument("fog", help="Agent name (fog/rain/frost/snow/dew/sunshine)"),
+    agent: str = typer.Argument("fog", help="Agent name (fog/rain/frost/snow/dew/fair)"),
     message: str | None = typer.Argument(None, help="Message (omit for interactive mode)"),
     new: bool = typer.Option(
         False,
@@ -2794,7 +2794,7 @@ def voice(
         help="Listen port",
     ),
     agent: str = typer.Option(
-        "sunshine",
+        "fair",
         "--agent",
         "-a",
         help="Agent to use for voice chat",
@@ -2822,6 +2822,9 @@ def voice(
         return
     if (cert_file is None) != (key_file is None):
         raise typer.BadParameter("--cert-file and --key-file must be used together")
+    if agent not in AGENT_CLASSES:
+        names = ", ".join(AGENT_CLASSES)
+        raise typer.BadParameter(f"unknown agent '{agent}'; available: {names}")
     asyncio.run(_run_voice_server(host, port, agent, cert_file, key_file))
 
 

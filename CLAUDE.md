@@ -2,7 +2,7 @@
 
 ## 项目身份
 Python 3.11+ 多智能体 CLI；LiteLLM + Typer + Rich + aiosqlite。
-六个 agent：fog（研究）/ rain（生成）/ frost（审查）/ snow（编排）/ dew（运维）/ sunshine（陪伴）。
+六个 agent：fog（研究）/ rain（生成）/ frost（审查）/ snow（编排）/ dew（运维）/ fair（晴/陪伴）。
 入口：`src/weather_agents/cli/main.py`；核心：`src/weather_agents/core/`。
 
 ## 命令

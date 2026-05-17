@@ -168,18 +168,22 @@ class DoubaoTTS:
 
             buffer = ""
             async for raw_chunk in resp.aiter_text():
-                buffer += raw_chunk
-                for b64 in self._parse_stream_lines(buffer):
-                    if b64 is None:
-                        return
-                    yield b64
-                # Keep any partial last line in the buffer
-                _, _, remainder = buffer.rpartition("\n")
-                buffer = remainder
+                lines = (buffer + raw_chunk).split("\n")
+                # All complete lines get parsed; the last element is the
+                # incomplete trailing line (or empty if ended with \n).
+                buffer = lines.pop()
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    for b64 in self._parse_stream_lines(stripped + "\n"):
+                        if b64 is None:
+                            return
+                        yield b64
 
             # Flush any remaining content after the stream ends
             if buffer.strip():
-                for b64 in self._parse_stream_lines(buffer + "\n"):
+                for b64 in self._parse_stream_lines(buffer.strip() + "\n"):
                     if b64 is None:
                         return
                     yield b64

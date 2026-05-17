@@ -559,7 +559,8 @@ class BaseAgent:
         try:
             return await self._chat_impl(message, on_status)
         finally:
-            _call_agent_var.reset(_token)
+            with contextlib.suppress(ValueError):
+                _call_agent_var.reset(_token)
 
     async def _chat_impl(
         self,
@@ -612,6 +613,14 @@ class BaseAgent:
         try:
             async for ev in self._chat_stream_impl(message):
                 yield ev
+        except BaseException:
+            # If _chat_stream_impl crashed before persisting the assistant
+            # response, remove the dangling user message so memory stays
+            # consistent — every user message should have a matching
+            # assistant response or be cleaned up.
+            if self.memory.short_term and self.memory.short_term[-1].role == "user":
+                self._pop_last_user_message()
+            raise
         finally:
             with contextlib.suppress(ValueError):
                 _call_agent_var.reset(_token)
@@ -663,9 +672,9 @@ class BaseAgent:
                         tool_calls_received.append(event.tool_call)
                     elif event.type == "error":
                         yield {"type": "content", "text": f"\n[Error: {event.text}]"}
-                        await self._set_state(AgentState.ERROR)
                         if not assistant_stored:
                             self._pop_last_user_message()
+                        await self._set_state(AgentState.IDLE)
                         return
                     elif event.type == "reasoning" and event.text:
                         yield {"type": "reasoning", "text": event.text}
@@ -844,7 +853,13 @@ class BaseAgent:
         or re-narrate it on the next turn — the root cause of the "之前你说
         了几次…" rambling observed earlier.
         """
-        system_msgs = [m for m in self.memory.short_term if m.role == "system"]
+        # Keep only true system prompts — exclude previous compaction digests
+        # so they don't accumulate into an ever-growing stack of summaries.
+        system_msgs = [
+            m
+            for m in self.memory.short_term
+            if m.role == "system" and not (m.content or "").startswith("[Earlier-context digest")
+        ]
         non_system = [m for m in self.memory.short_term if m.role != "system"]
 
         if len(non_system) <= keep_recent + 4:
@@ -1271,7 +1286,8 @@ class BaseAgent:
         try:
             return await self._execute_task_impl(task, on_status)
         finally:
-            _call_agent_var.reset(_token)
+            with contextlib.suppress(ValueError):
+                _call_agent_var.reset(_token)
 
     async def _execute_task_impl(
         self,

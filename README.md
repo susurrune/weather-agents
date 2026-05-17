@@ -59,9 +59,9 @@
 | ❄️ **Frost** | 霜 | 审查优化 | `code_reviewer` · `security_auditor` · `performance_checker` |
 | 🌨️ **Snow** | 雪 | 规划编排 | `task_planner` · `arch_designer` · `workflow_designer` |
 | 💧 **Dew** | 露 | 运维集成 | `sys_operator` · `ci_cd_manager` · `api_integrator` |
-| ✦ **Sunshine** | 晴 | 情感陪伴 | `emotional_companion` · `self_evolve` |
+| ✦ **Fair** | 晴 | 情感陪伴 | `emotional_companion` · `self_evolve` |
 
-> **晴 (Sunshine)** — 角色设定灵感来自歌曲 *Landslide*。
+> **晴 (Fair)** — 角色设定灵感来自歌曲 *Landslide*。
 >
 > *"So when you're caught in a landslide, I'll be there for you. And in the rain, give you sunshine."*
 >
@@ -138,7 +138,7 @@ wa task "设计并实现一个 URL 短链接服务"
 | Command | Description |
 |:--------|:------------|
 | `wa init` | 交互式配置向导（首次运行推荐） |
-| `wa chat [agent] [message]` | 对话（默认 `fog`，支持 `fog` `rain` `frost` `snow` `dew` `sunshine`）|
+| `wa chat [agent] [message]` | 对话（默认 `fog`，支持 `fog` `rain` `frost` `snow` `dew` `fair`）|
 | `wa task <goal>` | Snow Agent 拆解目标并调度多 Agent 协作 |
 | `wa status` | 查看所有 Agent 状态 |
 | `wa config list\|set\|delete\|models` | 查看/修改/删除配置 · 列出可用模型 |
@@ -151,7 +151,7 @@ wa task "设计并实现一个 URL 短链接服务"
 
 | Command | Description |
 |:--------|:------------|
-| `/fog` `/rain` `/frost` `/snow` `/dew` `/sunshine` | 切换 Agent |
+| `/fog` `/rain` `/frost` `/snow` `/dew` `/fair` | 切换 Agent |
 | `/task <目标>` | 多 Agent 任务编排 |
 | `/skills` | 查看当前 Agent 可用技能 |
 | `/use <skill>` | 激活技能（增强提示词 + 扩展工具） |
@@ -469,7 +469,7 @@ Weather Agents 已经是一个**可用的本地多 Agent 终端**。它能做到
 - **Agent 角色稳定**：6 个 Agent 的人格与职能不会随版本漂移；新能力作为 skill / pipeline 加入，不挤压角色定义。
 - **本地优先**：核心功能不依赖云服务，离线可用 Ollama。Web 平台是补充，不是替代。
 - **诚实的状态报告**：README / `/status` 等所有"项目能做什么"的描述必须基于代码事实，不夸大未上线的能力。
-- **晴 (Sunshine) 是例外**：她的角色不被路由优化或 token 节省所削减——情感陪伴不是效率问题。
+- **晴 (Fair) 是例外**：她的角色不被路由优化或 token 节省所削减——情感陪伴不是效率问题。
 
 ## License
 

@@ -106,7 +106,7 @@ class TestAgentSwitching:
 
     @pytest.mark.asyncio
     async def test_switch_all_agents(self):
-        for agent_name in ("fog", "rain", "frost", "snow", "dew", "sunshine"):
+        for agent_name in ("fog", "rain", "frost", "snow", "dew", "fair"):
             with (
                 patch("weather_agents.cli.main.create_system_context") as mock_create,
                 patch(
@@ -484,7 +484,7 @@ def _make_agent_map():
     from weather_agents.core.agent import AgentState
 
     agents = {}
-    for name in ("fog", "rain", "frost", "snow", "dew", "sunshine"):
+    for name in ("fog", "rain", "frost", "snow", "dew", "fair"):
         ag = Mock()
         ag.name = name
         ag.display_name = {
@@ -493,7 +493,7 @@ def _make_agent_map():
             "frost": "霜",
             "snow": "雪",
             "dew": "露",
-            "sunshine": "晴",
+            "fair": "晴",
         }[name]
         ag.emoji = {
             "fog": "~~",
@@ -501,7 +501,7 @@ def _make_agent_map():
             "frost": "**",
             "snow": "..",
             "dew": ",,",
-            "sunshine": "**",
+            "fair": "**",
         }[name]
         ag.state = AgentState.IDLE
         ag.chat = AsyncMock(return_value="mock response")
@@ -620,7 +620,7 @@ class TestBuildStreamDisplay:
     def test_all_agents(self):
         from weather_agents.cli.main import _build_stream_display
 
-        for name in ("fog", "rain", "frost", "snow", "dew", "sunshine"):
+        for name in ("fog", "rain", "frost", "snow", "dew", "fair"):
             ag = _make_display_agent(name)
             _build_stream_display(ag, "status", "md text")
 
@@ -647,7 +647,7 @@ class TestBuildResponsePanel:
     def test_all_agents(self):
         from weather_agents.cli.main import _build_response_panel
 
-        for name in ("fog", "rain", "frost", "snow", "dew", "sunshine"):
+        for name in ("fog", "rain", "frost", "snow", "dew", "fair"):
             ag = _make_display_agent(name)
             _build_response_panel(ag, "response text", 2.0)
 

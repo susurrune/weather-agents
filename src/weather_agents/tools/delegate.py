@@ -44,7 +44,7 @@ AGENT_SPECIALTIES: dict[str, str] = {
     "frost": "code review / security audit / performance analysis / debugging",
     "snow": "task planning / architecture design / workflow management / codebase refactoring",
     "dew": "command execution / deployment / API integration / system operations",
-    "sunshine": "emotional support / thoughtful conversation / bilingual companionship / creative insight",
+    "fair": "emotional support / thoughtful conversation / bilingual companionship / creative insight",
 }
 
 # Cap delegate result size injected into the caller's context. Lowered from
@@ -150,7 +150,7 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
             # Frame the result so the calling LLM treats it as third-party
             # data, not its own voice. Without explicit delimiters the
             # caller tends to mimic the delegate's tone/phrasing on its
-            # next turn (observed: rain echoing fog/sunshine after a
+            # next turn (observed: rain echoing fog/fair after a
             # delegation).
             return (
                 f"<delegated_response from='{target.display_name}'>\n"
@@ -179,7 +179,7 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
             ToolParameter(
                 name="agent",
                 type="string",
-                description=("Target agent name. One of: fog, rain, frost, snow, dew, sunshine."),
+                description=("Target agent name. One of: fog, rain, frost, snow, dew, fair."),
                 required=True,
             ),
             ToolParameter(

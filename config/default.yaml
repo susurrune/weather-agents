@@ -17,20 +17,20 @@ llm:
 agents:
   fog:
     model: null
-    specialty: "探索研究"
+    specialty: "探索洞察"
   rain:
     model: null
-    specialty: "生成创造"
+    specialty: "创造产出"
   frost:
     model: null
-    specialty: "审查优化"
+    specialty: "精炼品质"
   snow:
     model: null
-    specialty: "规划编排"
+    specialty: "架构规划"
   dew:
     model: null
-    specialty: "运维集成"
-  sunshine:
+    specialty: "可靠守护"
+  fair:
     model: null
     specialty: "情感陪伴"
 

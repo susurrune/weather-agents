@@ -210,7 +210,7 @@ def pick_agent_for_goal(goal: str, available: set[str]) -> str:
             ),
         ),
         (
-            "sunshine",
+            "fair",
             ("陪我", "聊天", "心情", "难过", "开心", "孤独", "倾诉", "你好", "hi", "hello", "嗨"),
         ),
     ]

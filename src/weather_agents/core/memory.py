@@ -466,22 +466,25 @@ class Memory:
                     (session_id,),
                 )
             await self._db.commit()
-            # Auto-prune old messages beyond max_persisted_messages
+            # Auto-prune old messages beyond max_persisted_messages — scoped
+            # to the current session so pruning doesn't delete history from
+            # other sessions (observed in multi-session voice usage).
             max_persisted = getattr(self.config, "max_persisted_messages", 1000)
-            cursor = await self._db.execute(
-                "SELECT COUNT(*) FROM messages WHERE agent = ? AND role != 'system'",
-                (self.agent_name,),
-            )
-            row = await cursor.fetchone()
-            if row and row[0] > max_persisted:
-                excess = row[0] - max_persisted
-                await self._db.execute(
-                    "DELETE FROM messages WHERE id IN ("
-                    "SELECT id FROM messages WHERE agent = ? AND role != 'system' "
-                    "ORDER BY id ASC LIMIT ?)",
-                    (self.agent_name, excess),
+            if session_id and max_persisted > 0:
+                cursor = await self._db.execute(
+                    "SELECT COUNT(*) FROM messages WHERE agent = ? AND session_id = ? AND role != 'system'",
+                    (self.agent_name, session_id),
                 )
-                await self._db.commit()
+                row = await cursor.fetchone()
+                if row and row[0] > max_persisted:
+                    excess = row[0] - max_persisted
+                    await self._db.execute(
+                        "DELETE FROM messages WHERE id IN ("
+                        "SELECT id FROM messages WHERE agent = ? AND session_id = ? AND role != 'system' "
+                        "ORDER BY id ASC LIMIT ?)",
+                        (self.agent_name, session_id, excess),
+                    )
+                    await self._db.commit()
         except Exception as e:
             from weather_agents.core.logger import get_logger
 
@@ -945,8 +948,6 @@ class Memory:
         if self._active_session == session_id:
             self._active_session = None
             self.short_term = [m for m in self.short_term if m.role == "system"]
-            self._loaded = False
-            await self._load_short_term()
         return True
 
     async def update_session_preview(self) -> None:

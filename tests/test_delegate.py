@@ -32,7 +32,7 @@ def agent_map():
         "frost": _make_agent("frost", "霜", "**"),
         "snow": _make_agent("snow", "雪", ".."),
         "dew": _make_agent("dew", "露", ",,"),
-        "sunshine": _make_agent("sunshine", "晴", "**"),
+        "fair": _make_agent("fair", "晴", "**"),
     }
 
 
@@ -188,7 +188,7 @@ class TestDelegateNestingGuard:
 
 class TestAgentSpecialties:
     def test_all_agents_have_specialties(self):
-        expected = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+        expected = {"fog", "rain", "frost", "snow", "dew", "fair"}
         assert set(AGENT_SPECIALTIES.keys()) == expected
 
     def test_specialties_are_nonempty(self):

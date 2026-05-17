@@ -78,7 +78,7 @@ class TestBaseAgent:
 
         agent = DewAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
         assert "露" in agent.system_prompt
-        assert "运维" in agent.specialty
+        assert "守护" in agent.specialty
         await agent.close()
 
     def test_all_agent_classes_have_required_attrs(self):

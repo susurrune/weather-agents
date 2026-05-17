@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import ssl
@@ -43,7 +44,7 @@ class VoiceServer:
         agent_map: dict[str, BaseAgent],
         system_ctx: SystemContext,
         *,
-        agent_name: str = "sunshine",
+        agent_name: str = "fair",
         host: str = "0.0.0.0",
         port: int = 8765,
         tts_engine: DoubaoTTS | None = None,
@@ -117,6 +118,11 @@ class VoiceServer:
         # Each voice connection gets its own session for isolation.
         await self.agent.memory.create_session()
         session_id = self.agent.memory.get_active_session()
+        # Track all sessions created during this WS lifecycle so they
+        # are reliably cleaned up on every exit path.
+        _open_sessions: list[tuple[str, str]] = (
+            [(self._current_agent_name, session_id)] if session_id else []
+        )
 
         _log.info("voice_ws_open session=%s", session_id)
 
@@ -164,6 +170,9 @@ class VoiceServer:
                         if self._switch_agent(name):
                             await self.agent.init()
                             await self.agent.memory.create_session()
+                            new_sid = self.agent.memory.get_active_session()
+                            if new_sid:
+                                _open_sessions.append((self._current_agent_name, new_sid))
                             await ws.send_json(
                                 {
                                     "type": "agent_switched",
@@ -171,7 +180,7 @@ class VoiceServer:
                                     "display_name": self.agent.display_name,
                                     "emoji": self.agent.emoji,
                                     "specialty": self.agent.specialty,
-                                    "session_id": self.agent.memory.get_active_session(),
+                                    "session_id": new_sid,
                                 }
                             )
                         else:
@@ -184,7 +193,12 @@ class VoiceServer:
         except asyncio.CancelledError:
             pass
         finally:
-            _log.info("voice_ws_close session=%s", session_id)
+            _log.info("voice_ws_close sessions=%s", [s for _, s in _open_sessions])
+            for agent_name, sid in _open_sessions:
+                agent = self._agent_map.get(agent_name)
+                if agent:
+                    with contextlib.suppress(Exception):
+                        await agent.memory.delete_session(sid)
 
         return ws
 
@@ -280,7 +294,7 @@ async def run_voice_server(
     *,
     host: str = "0.0.0.0",
     port: int = 8765,
-    agent_name: str = "sunshine",
+    agent_name: str = "fair",
     ssl_context: ssl.SSLContext | None = None,
 ) -> None:
     """Create system context, init the target agent, and start the voice server."""

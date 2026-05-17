@@ -30,7 +30,7 @@ Weather Agents 是一个天气主题的多智能体 AI 编排框架，包含 **6
 | 霜 Frost | `+` | 审查优化 |
 | 雪 Snow | `·` | 规划编排 |
 | 露 Dew | `,` | 运维集成 |
-| 晴 Sunshine | `*` | 情感陪伴 |
+| 晴 Fair | `*` | 情感陪伴 |
 
 **技术栈**: Python 3.11+, LiteLLM, Rich (CLI), Typer, aiosqlite, httpx, pyyaml
 
@@ -50,7 +50,7 @@ Weather Agents 是一个天气主题的多智能体 AI 编排框架，包含 **6
 │ fog/rain/  │ read_file │ code_     │ 动态加载 .py   │
 │ frost/     │ write_    │ reviewer  │ 文件注入工具    │
 │ snow/dew/  │ shell_    │ web_      │                │
-│ sunshine   │ http_     │ research  │                │
+│ fair       │ http_     │ research  │                │
 ├────────────┴───────────┴───────────┴────────────────┤
 │                  Core 基础设施                        │
 │  Config · Bus · Memory · Cache · MCP · Workspace    │
@@ -77,7 +77,7 @@ Weather Agents 是一个天气主题的多智能体 AI 编排框架，包含 **6
 - **load_config()**: 默认配置 → 用户覆盖 → 环境变量，2 秒 TTL 缓存
 - **set_config() / delete_config()**: 运行时配置修改并持久化到 `~/.weather-agents/config.yaml`
 - **模型目录**: `models.yaml` 提供可用模型列表，含 context_window、定价、fallback 链
-- **AGENT_NAMES**: 单一真相来源 `("fog", "rain", "frost", "snow", "dew", "sunshine")`
+- **AGENT_NAMES**: 单一真相来源 `("fog", "rain", "frost", "snow", "dew", "fair")`
 
 ### 3.2 agent.py — Agent 基类
 
@@ -166,7 +166,7 @@ Weather Agents 是一个天气主题的多智能体 AI 编排框架，包含 **6
 - **工具**: 全部内置工具 + delegate_to
 - **技能**: sys_operator, ci_cd_manager, api_integrator, self_evolve
 
-### 4.6 Sunshine (晴) — 情感陪伴
+### 4.6 Fair (晴) — 情感陪伴
 
 - **专长**: 温暖倾听、情感支持、深度对话、创意灵感
 - **提示词风格**: 诗歌化、双语（中英）、美学导向
@@ -197,7 +197,7 @@ wa memory status                # 记忆状态
 | `/help` | 显示帮助 |
 | `/clear` | 清屏 |
 | `/quit` / `/exit` | 退出 |
-| `/fog` / `/rain` / `/frost` / `/snow` / `/dew` / `/sunshine` | 切换 Agent |
+| `/fog` / `/rain` / `/frost` / `/snow` / `/dew` / `/fair` | 切换 Agent |
 | `/task <goal>` | 多 Agent 编排 |
 | `/model` | 查看/设置模型 |
 | `/apikey set <prov> <key>` | 添加 API key |
@@ -312,7 +312,7 @@ OpenAI, Anthropic, DeepSeek, Google/Gemini, Ollama (本地)
 | sys_operator | Dew | 系统操作 |
 | ci_cd_manager | Dew | CI/CD 管理 |
 | api_integrator | Dew | API 集成 |
-| emotional_companion | Sunshine | 情感陪伴 |
+| emotional_companion | Fair | 情感陪伴 |
 | self_evolve | 全部 | 自我进化 |
 
 ---
@@ -382,7 +382,7 @@ OpenAI, Anthropic, DeepSeek, Google/Gemini, Ollama (本地)
 
 **影响**: 仅影响 Plan 模式（`INTERACTIVE_MODE == "plan"`）。
 
-### Bug 2: Sunshine 颜色 "gold" 无效 (已修复 — 此前会话)
+### Bug 2: Fair 颜色 "gold" 无效 (已修复 — 此前会话)
 
 **位置**: `src/weather_agents/core/icons.py`
 

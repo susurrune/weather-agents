@@ -13,7 +13,7 @@ import yaml
 USER_CONFIG_DIR = Path.home() / ".weather-agents"
 
 # All agent names — single source of truth for config iteration and validation.
-AGENT_NAMES = ("fog", "rain", "frost", "snow", "dew", "sunshine")
+AGENT_NAMES = ("fog", "rain", "frost", "snow", "dew", "fair")
 
 
 def _find_config_dir() -> Path:
@@ -137,9 +137,7 @@ class AgentConfigs:
     frost: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(specialty="审查优化"))
     snow: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(specialty="规划编排"))
     dew: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(specialty="运维集成"))
-    sunshine: AgentModelConfig = field(
-        default_factory=lambda: AgentModelConfig(specialty="情感陪伴")
-    )
+    fair: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(specialty="情感陪伴"))
 
 
 @dataclass
@@ -469,7 +467,7 @@ def set_config(key: str, value: str) -> tuple[bool, str]:
 
     Supported keys:
       default_model, temperature, max_tokens, timeout
-      model.<agent>      (fog/rain/frost/snow/dew/sunshine)
+      model.<agent>      (fog/rain/frost/snow/dew/fair)
       api_key.<provider> (openai/anthropic/deepseek/google)
     """
     parts = key.split(".")
