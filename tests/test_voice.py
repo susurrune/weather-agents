@@ -35,7 +35,9 @@ def mock_ctx():
 
 @pytest.fixture
 def voice_server(mock_agent, mock_ctx):
-    return VoiceServer(mock_agent, mock_ctx, host="127.0.0.1", port=0)
+    return VoiceServer(
+        {"sunshine": mock_agent}, mock_ctx, agent_name="sunshine", host="127.0.0.1", port=0
+    )
 
 
 @pytest.fixture

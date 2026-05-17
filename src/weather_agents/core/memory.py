@@ -208,10 +208,9 @@ class Memory:
                 (self.agent_name, self._active_session, self.config.short_term_limit),
             )
         else:
-            # No session — start with a clean slate.  Loading messages from
-            # every prior session would present the LLM with a jumble of
-            # unrelated conversation fragments and cause the confusion
-            # described as "memory chaos".
+            # No session — start with a clean slate to avoid cross-session
+            # leakage between processes. Callers wanting continuity should
+            # explicitly call ``resume_latest_session()``.
             self._loaded = True
             self._prune_dangling_tool_calls()
             return
@@ -637,6 +636,30 @@ class Memory:
             }
             for r in rows
         ]
+
+    async def resume_latest_session(self) -> str | None:
+        """Activate this agent's most recently updated session, if any.
+
+        CLI entry points call this to restore continuity across `wa chat`
+        invocations. Without it, every fresh process starts amnesic — which
+        produced the "memory chaos" complaint where users felt their agents
+        forgot everything between turns.
+        """
+        if not self._db or self._active_session:
+            return self._active_session
+        cursor = await self._db.execute(
+            "SELECT id FROM sessions WHERE agent = ? ORDER BY updated_at DESC LIMIT 1",
+            (self.agent_name,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        self._active_session = row[0]
+        self._loaded = False
+        # short_term might already hold a system prompt — keep it, reload the rest.
+        self.short_term = [m for m in self.short_term if m.role == "system"]
+        await self._load_short_term()
+        return self._active_session
 
     async def load_session(self, session_id: str) -> bool:
         if not self._db:

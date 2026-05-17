@@ -178,7 +178,15 @@ async def orchestrate_task(
     if snow is None:
         return [], [], "Snow agent not available"
 
-    tasks = await snow.orchestrate(goal)  # type: ignore[attr-defined]
+    # Try pipeline match first — skips Snow's decomposition LLM call entirely
+    # (~2-3k tokens saved) when the goal matches a known collaboration shape.
+    from weather_agents.core.pipelines import build_tasks_from_pipeline, match_pipeline
+
+    matched = match_pipeline(goal)
+    if matched is not None:
+        tasks: list[Any] = build_tasks_from_pipeline(matched, goal)
+    else:
+        tasks = await snow.orchestrate(goal)  # type: ignore[attr-defined]
 
     # Build dependency graph and execute in topological order
     completed: set[str] = set()
@@ -232,15 +240,19 @@ async def orchestrate_task(
         for t in ready:
             pending.remove(t)
 
-    # Generate summary
-    if results:
+    # Generate summary. Skip the LLM call when there's only one result — the
+    # result IS the answer; asking Snow to "summarize" one item burns ~1-2k
+    # tokens to paraphrase. Multi-result paths still get a real summary.
+    if not results:
+        summary = "没有需要执行的任务。"
+    elif len(results) == 1:
+        summary = results[0].content
+    else:
         tpl = summary_prompt_template or "请汇总以下所有子任务的执行结果：\n\n"
         summary_prompt = tpl
         for r in results:
             status = "成功" if r.success else "失败"
             summary_prompt += f"## 任务 {r.id} ({r.agent}) - {status}\n{r.content[:300]}\n\n"
         summary = await snow.chat(summary_prompt)
-    else:
-        summary = "没有需要执行的任务。"
 
     return tasks, results, summary

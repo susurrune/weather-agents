@@ -174,7 +174,7 @@ class TTSConfig:
     api_key: str = ""
     app_id: str = ""
     resource_id: str = "seed-tts-2.0"
-    voice_type: str = "zh_female_cancan_mars_bigtts"
+    voice_type: str = "zh_female_sajiaoxuemei_uranus_bigtts"
     encoding: str = "mp3"
     sample_rate: int = 24000
     speed_ratio: float = 1.0
@@ -205,6 +205,13 @@ class MCPConfig:
 
 
 @dataclass
+class CLIConfig:
+    # Persisted interactive-mode pick (default | plan | auto). Read by
+    # cli.mode.ModeController on startup; written when the user toggles.
+    interactive_mode: str = "default"
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     agents: AgentConfigs = field(default_factory=AgentConfigs)
@@ -215,6 +222,7 @@ class AppConfig:
     tts: TTSConfig = field(default_factory=TTSConfig)
     plugins: PluginConfig = field(default_factory=PluginConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    cli: CLIConfig = field(default_factory=CLIConfig)
 
 
 # ── Load / Save helpers ────────────────────────────────────────────────────
@@ -402,6 +410,10 @@ def _load_config_uncached() -> AppConfig:
         cfg.memory.max_persisted_messages = mem.get(
             "max_persisted_messages", cfg.memory.max_persisted_messages
         )
+
+    # CLI (interactive mode persisted across sessions)
+    if cli_cfg := merged.get("cli"):
+        cfg.cli.interactive_mode = cli_cfg.get("interactive_mode", cfg.cli.interactive_mode)
 
     # MCP (with env var resolution — only for enabled servers)
     if (mcp := merged.get("mcp")) and (servers := mcp.get("servers")):

@@ -32,8 +32,10 @@ else:
     import tty as _tty
 
 from weather_agents import __version__
+from weather_agents.cli.mode import InteractiveMode, ModeController
 from weather_agents.core.config import (
     USER_CONFIG_DIR,
+    _save_user_cfg,
     _sync_api_keys_to_env,
     delete_config,
     format_models_for_display,
@@ -77,6 +79,10 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/model", "view/change model  (all: /model all <m>)"),
     ("/apikey", "manage API keys  (set/del)"),
     ("/task ", "multi-agent orchestration"),
+    ("/mode", "show interactive mode"),
+    ("/default", "smart mode (router decides)"),
+    ("/plan", "plan-then-confirm mode"),
+    ("/auto", "autonomous-continue mode"),
     ("/fog", "switch to Fog"),
     ("/rain", "switch to Rain"),
     ("/frost", "switch to Frost"),
@@ -213,6 +219,8 @@ def _poll_esc() -> bool:
 
 
 app = typer.Typer(name="wa", help="Weather Agents CLI", no_args_is_help=False)
+voice_app = typer.Typer(help="Voice chat server and TTS voice management")
+app.add_typer(voice_app, name="voice", help="Voice chat server and TTS voice management")
 console = Console()
 
 # Per-agent animated spinner themes for streaming / status indicators
@@ -580,9 +588,9 @@ def _place_ime_cursor(col: int) -> None:
         pass
 
 
-# -- Interactive mode (plan / auto) ------------------------------------------
+# -- Interactive mode (default / plan / auto) -------------------------------
 
-INTERACTIVE_MODE: str = "auto"  # "auto" or "plan"
+MODE: ModeController = ModeController()
 
 
 # Combined auto-continue signal: CJK + English patterns that indicate
@@ -772,6 +780,7 @@ def _build_input_display(
     # ── Prompt line ──────────────────────────────────────────────────────────
     prompt = Text()
     prompt.append("  ")
+    # DEFAULT renders no label — keeps the prompt clean for the common case.
     if mode == "plan":
         prompt.append("[PLAN] ", style="bold magenta")
     elif mode == "auto":
@@ -984,16 +993,11 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
                 continue
 
             if key == "shift_tab":
-                # Toggle between auto and plan mode
-                global INTERACTIVE_MODE
-                INTERACTIVE_MODE = "plan" if INTERACTIVE_MODE == "auto" else "auto"
-                mode = INTERACTIVE_MODE  # sync local var so the display updates
-                mode_tag = (
-                    "[bold yellow]AUTO[/bold yellow]"
-                    if INTERACTIVE_MODE == "auto"
-                    else "[bold magenta]PLAN[/bold magenta]"
-                )
-                console.print(f"  {mode_tag}")
+                # Cycle: default → plan → auto → default
+                new_mode = MODE.cycle()
+                mode = new_mode.value  # sync local var so the display updates
+                text, style = MODE.label()
+                console.print(f"  [{style}]{text}[/{style}]  [dim]{MODE.describe()}[/dim]")
                 continue
 
             if popup_visible and filtered:
@@ -1045,7 +1049,6 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
 
 
 async def _interactive(agent_name: str | None = None) -> None:
-    global INTERACTIVE_MODE
     set_request_id(uuid.uuid4().hex[:12])
     ctx = create_system_context()
     # Lazy init: only initialize current agent, not all 5
@@ -1062,7 +1065,7 @@ async def _interactive(agent_name: str | None = None) -> None:
 
         while True:
             try:
-                inp: str | None = _read_line_with_popup(agent, ctx, INTERACTIVE_MODE)
+                inp: str | None = _read_line_with_popup(agent, ctx, MODE.current.value)
             except (EOFError, KeyboardInterrupt):
                 console.print()
                 break
@@ -1166,16 +1169,17 @@ async def _interactive(agent_name: str | None = None) -> None:
             if cmd_lower == "/version":
                 console.print(f"  Weather Agents [bold]v{__version__}[/bold]")
                 continue
-            if cmd_lower == "/auto":
-                INTERACTIVE_MODE = "auto"
-                console.print(
-                    "  [bold yellow]AUTO[/bold yellow]  mode — autonomous reasoning & execution"
-                )
+            if cmd_lower in ("/default", "/auto", "/plan"):
+                target = InteractiveMode(cmd_lower[1:])
+                MODE.set(target)
+                text, style = MODE.label()
+                console.print(f"  [{style}]{text}[/{style}]  [dim]{MODE.describe()}[/dim]")
                 continue
-            if cmd_lower == "/plan":
-                INTERACTIVE_MODE = "plan"
+            if cmd_lower == "/mode":
+                text, style = MODE.label()
+                console.print(f"  current: [{style}]{text}[/{style}]  [dim]{MODE.describe()}[/dim]")
                 console.print(
-                    "  [bold magenta]PLAN[/bold magenta]  mode — plan first, then confirm before execute"
+                    "  [dim]switch with /default, /plan, /auto — or Shift+Tab to cycle[/dim]"
                 )
                 continue
             if cmd_lower.lstrip("/") in AGENT_CLASSES:
@@ -1195,8 +1199,29 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _print_help(ctx)
                 continue
 
+            # --- Default mode: route by complexity, no human gate ---
+            # Smart adaptive — `direct` short questions are one-shot, no
+            # auto-continue probing; `single`/`orchestrate` follow the autonomous
+            # path. The router runs in <1ms (rules only, no LLM).
+            effective_mode = MODE.current
+            if effective_mode is InteractiveMode.DEFAULT:
+                from weather_agents.core.router import classify
+
+                routed = classify(inp)
+                # `direct` → one-shot reply, never trigger auto-continue.
+                # `single` / `orchestrate` → behave like AUTO so the model
+                # can finish multi-step work without nagging the user.
+                effective_mode = (
+                    InteractiveMode.PLAN
+                    if False  # default never gates — kept for symmetry / future opt-in
+                    else InteractiveMode.AUTO
+                )
+                _route_disable_auto_continue = routed == "direct"
+            else:
+                _route_disable_auto_continue = False
+
             # --- Plan mode: show a plan before executing ---
-            if INTERACTIVE_MODE == "plan":
+            if effective_mode is InteractiveMode.PLAN:
                 await _init_agent_lazy(agent, ctx)
                 plan_t0 = time.monotonic()
                 plan_content = ""
@@ -1372,7 +1397,8 @@ async def _interactive(agent_name: str | None = None) -> None:
                 had_tools = any(a["status"] == "done" for a in activities)
                 had_errors = any(a["status"] == "error" for a in activities)
                 if (
-                    INTERACTIVE_MODE == "auto"
+                    effective_mode is InteractiveMode.AUTO
+                    and not _route_disable_auto_continue
                     and not interrupted
                     and _should_auto_continue(
                         md_content, had_tool_calls=had_tools, had_errors=had_errors
@@ -2372,10 +2398,27 @@ async def _run_task(goal: str, agents=None) -> None:
         await own_ctx.init_all()
         agents = own_ctx.agent_map
 
+    status_handles: dict[str, Any] = {}
     try:
-        from weather_agents.core.factory import orchestrate_task
+        # Route simple goals to a single agent — skips Snow's LLM decomposition
+        # call (saves ~1 LLM round-trip and the planning/summary table render).
+        from weather_agents.core.router import classify, pick_agent_for_goal
 
-        status_handles: dict[str, Any] = {}
+        mode = classify(goal)
+        if mode in ("direct", "single"):
+            available = {name for name, ag in agents.items() if ag is not None}
+            target_name = pick_agent_for_goal(goal, available)
+            target = agents[target_name]
+            ict = icon_text(target_name)
+            sp = AGENT_SPINNERS.get(target_name, "dots")
+            console.print()
+            console.print(Rule(f"  {ict}  ", align="left", style="dim"))
+            with console.status(f"  [dim]{ict} thinking…[/dim]", spinner=sp):
+                reply = await target.chat(goal)
+            console.print(Padding(Markdown(_strip_hr(reply)), pad=(0, 2, 0, 2)))
+            return
+
+        from weather_agents.core.factory import orchestrate_task
 
         async def _on_start(t):
             ict = icon_text(t.assigned_to or "")
@@ -2575,8 +2618,9 @@ def task(goal: str = typer.Argument(..., help="Task goal for multi-agent orchest
     asyncio.run(_run_task(goal))
 
 
-@app.command()
+@voice_app.callback(invoke_without_command=True)
 def voice(
+    ctx: typer.Context,
     host: str = typer.Option(
         "0.0.0.0",
         "--host",
@@ -2614,9 +2658,48 @@ def voice(
     for microphone access.  If --cert-file/--key-file are provided they are
     used directly; otherwise a self-signed certificate is auto-generated.
     """
+    if ctx.invoked_subcommand is not None:
+        return
     if (cert_file is None) != (key_file is None):
         raise typer.BadParameter("--cert-file and --key-file must be used together")
     asyncio.run(_run_voice_server(host, port, agent, cert_file, key_file))
+
+
+@voice_app.command("list")
+def voice_list() -> None:
+    """List available TTS voices."""
+    from weather_agents.web.tts import VOICE_CATALOG
+
+    if not VOICE_CATALOG:
+        console.print("[yellow]暂无可用音色[/yellow]")
+        raise typer.Exit(0)
+
+    tbl = Table(title="可用音色", show_header=True, box=box.SIMPLE, title_style="bold cyan")
+    tbl.add_column("名称", style="cyan", width=14)
+    tbl.add_column("音色ID", style="dim", width=22)
+    tbl.add_column("描述")
+    for v in VOICE_CATALOG:
+        tbl.add_row(v["name"], v["key"], v["desc"])
+    console.print()
+    console.print(tbl)
+    current = load_config().tts.voice_type
+    console.print(f"\n  当前音色: [cyan]{current}[/cyan]")
+    console.print("  [dim]使用 [cyan]wa voice select <名称>[/cyan] 切换音色[/dim]")
+
+
+@voice_app.command("select")
+def voice_select(
+    name: str = typer.Argument(..., help="音色名称 (如 sajiaoxuemei, uranus)"),
+) -> None:
+    """Select a TTS voice by name (use 'wa voice list' to see available voices)."""
+    from weather_agents.web.tts import get_voice_by_key
+
+    entry = get_voice_by_key(name)
+    if not entry:
+        console.print(f"[red]未知音色: {name}. 使用 wa voice list 查看可用音色[/red]")
+        raise typer.Exit(1)
+    _save_user_cfg({"tts": {"voice_type": entry["voice_type"]}})
+    console.print(f"[green]已切换音色至: {entry['name']} ({entry['desc']})[/green]")
 
 
 @app.command()

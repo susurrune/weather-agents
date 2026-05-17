@@ -275,6 +275,50 @@
     margin-bottom: 6px;
   }
   .setting-row .value { color: var(--text); min-width: 28px; text-align: center; }
+  /* ── Agent selector modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid rgba(232,184,75,0.15);
+    border-radius: 20px;
+    padding: 20px;
+    width: 280px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal h2 { font-size: 16px; color: var(--gold); margin-bottom: 12px; text-align: center; letter-spacing: 1px; }
+  .agent-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 4px;
+  }
+  .agent-option:hover { background: rgba(232,184,75,0.1); }
+  .agent-option.active { background: rgba(232,184,75,0.15); border: 1px solid rgba(232,184,75,0.3); }
+  .agent-option .avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; color: #1a1a2e; font-weight: bold; flex-shrink: 0;
+  }
+  .agent-option .info { flex: 1; min-width: 0; }
+  .agent-option .info .name { font-weight: 600; font-size: 14px; color: var(--text); }
+  .agent-option .info .spec { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent-option .check { color: var(--gold); font-size: 18px; flex-shrink: 0; }
   /* ── Reconnect ── */
   .reconnect-bar {
     display: none;
@@ -309,11 +353,11 @@
   </div>
 </header>
 
-<div class="agent-profile">
-  <div class="agent-avatar">&#x2600;</div>
+<div class="agent-profile" id="agent-profile">
+  <div class="agent-avatar" id="agent-avatar">*</div>
   <div class="agent-info">
-    <div class="name">晴</div>
-    <div class="tag" id="conn-info">语音助手</div>
+    <div class="name" id="agent-name">晴</div>
+    <div class="tag" id="agent-tag">情感陪伴</div>
   </div>
   <button class="settings" id="settings-btn" title="设置">&#x2699;</button>
 </div>
@@ -334,9 +378,16 @@
     </select>
   </div>
   <label>
-    <input type="checkbox" id="auto-listen" checked>
+    <input type="checkbox" id="auto-listen">
     自动循环收听（说完后自动开始聆听）
   </label>
+</div>
+
+<div class="modal-overlay" id="agent-modal">
+  <div class="modal">
+    <h2>选择 Agent</h2>
+    <div id="agent-list"></div>
+  </div>
 </div>
 
 <div class="reconnect-bar" id="reconnect-bar">
@@ -369,6 +420,8 @@ let serverTtsPending = false;
 let lastFullText = '';
 let currentAudioSource = null;
 let serverTtsTimeoutId = null;
+let currentAgent = { name: 'sunshine', display_name: '晴', emoji: '*', specialty: '情感陪伴' };
+let agentList = [];
 
 const UI = {
   messages: document.getElementById('messages'),
@@ -386,11 +439,16 @@ const UI = {
   autoListen: document.getElementById('auto-listen'),
   settingsBtn: document.getElementById('settings-btn'),
   settingsPanel: document.getElementById('settings-panel'),
+  agentProfile: document.getElementById('agent-profile'),
+  agentAvatar: document.getElementById('agent-avatar'),
+  agentName: document.getElementById('agent-name'),
+  agentTag: document.getElementById('agent-tag'),
+  headerTitle: document.querySelector('header h1'),
+  agentModal: document.getElementById('agent-modal'),
+  agentListEl: document.getElementById('agent-list'),
 };
 let recognition = null;
-let synth = window.speechSynthesis;
-let autoListenEnabled = true;
-let currentUtterance = null;
+let autoListenEnabled = false;
 
 // ── WebSocket ──
 function getWsUrl() {
@@ -409,6 +467,7 @@ function connect() {
     setStatus('connected');
     UI.reconnectBar.classList.remove('show');
     UI.connInfo.textContent = '已连接';
+    ws.send(JSON.stringify({type: 'list_agents'}));
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   };
 
@@ -486,16 +545,18 @@ function handleMsg(msg) {
         hideThinking();
       }
       if (!serverTtsPending) {
-        speakText(lastFullText);
+        // No server-side TTS configured — response is text-only
       } else {
         setStatus('waiting');
-        // Timeout: if server TTS doesn't deliver within 10s, fall back to browser TTS
+        // Guard: if server TTS doesn't deliver within 15s, silently give up
         if (serverTtsTimeoutId) clearTimeout(serverTtsTimeoutId);
         serverTtsTimeoutId = setTimeout(() => {
           serverTtsTimeoutId = null;
           serverTtsPending = false;
-          if (lastFullText) speakText(lastFullText);
-        }, 10000);
+          isSpeaking = false;
+          setStatus('connected');
+          tryAutoListen();
+        }, 15000);
       }
       break;
     case 'audio_start':
@@ -508,10 +569,11 @@ function handleMsg(msg) {
     case 'audio_end':
       if (serverTtsTimeoutId) { clearTimeout(serverTtsTimeoutId); serverTtsTimeoutId = null; }
       if (msg.error) {
-        // Server TTS failed; fall back to browser SpeechSynthesis
         serverTtsPending = false;
         pendingAudioB64 = '';
-        if (lastFullText) speakText(lastFullText);
+        isSpeaking = false;
+        setStatus('connected');
+        tryAutoListen();
       } else if (pendingAudioB64) {
         playBase64Audio(pendingAudioB64);
       } else {
@@ -536,6 +598,19 @@ function handleMsg(msg) {
       break;
     case 'pong':
       break;
+    case 'agent_list':
+      agentList = msg.agents || [];
+      const match = agentList.find(a => a.name === msg.current);
+      if (match) currentAgent = match;
+      updateAgentUI();
+      break;
+    case 'agent_switched':
+      currentAgent = { name: msg.agent, display_name: msg.display_name, emoji: msg.emoji, specialty: msg.specialty };
+      // Clear messages on agent switch
+      UI.messages.querySelectorAll('.msg, .think-indicator').forEach(el => el.remove());
+      updateAgentUI();
+      addStatusMsg('已切换至 ' + msg.display_name);
+      break;
   }
 }
 
@@ -543,7 +618,7 @@ function handleMsg(msg) {
 function createMsgEl(role) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
-  div.innerHTML = '<div class="label">' + (role === 'user' ? '你' : '☀ 晴') + '</div><div class="text"></div>';
+  div.innerHTML = '<div class="label">' + (role === 'user' ? '你' : currentAgent.emoji + ' ' + currentAgent.display_name) + '</div><div class="text"></div>';
   UI.messages.appendChild(div);
   return div;
 }
@@ -561,7 +636,7 @@ function showThinking() {
   const div = document.createElement('div');
   div.className = 'think-indicator';
   div.id = 'think-indicator';
-  div.innerHTML = '<div class="spinner"></div>晴 正在思考...';
+  div.innerHTML = '<div class="spinner"></div>' + currentAgent.display_name + ' 正在思考...';
   UI.messages.appendChild(div);
   scrollBottom();
 }
@@ -599,26 +674,23 @@ function initRecognition() {
     const text = e.results[e.results.length - 1][0].transcript;
     if (!text.trim()) return;
     stopSpeaking();
+    stopListening(true);
     appendUserText(text);
+    isWaitingResponse = true;
     sendSpeech(text);
     setStatus('waiting');
-    // Auto-restart listening after sending User's speech
-    if (!autoListenEnabled) {
-      isListening = false;
-      UI.micBtn.classList.remove('active');
-    }
   };
 
   recognition.onerror = (e) => {
     console.warn('recognition error:', e.error);
     isListening = false;
-    UI.micBtn.classList.remove('active');
     if (e.error === 'no-speech') {
-      if (autoListenEnabled && !isWaitingResponse && !isSpeaking) {
-        startListening();
+      if (autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening) {
+        setTimeout(() => startListening(), 100);
       }
       return;
     }
+    UI.micBtn.classList.remove('active');
     if (e.error !== 'aborted') {
       addStatusMsg('语音识别错误: ' + e.error);
     }
@@ -627,17 +699,18 @@ function initRecognition() {
 
   recognition.onend = () => {
     isListening = false;
-    UI.micBtn.classList.remove('active');
-    if (autoListenEnabled && !isWaitingResponse && !isSpeaking) {
-      startListening();
+    if (autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening) {
+      // Auto-restart without toggling active state to avoid visual flash
+      setTimeout(() => startListening(), 100);
     } else {
-      setStatus('connected');
+      UI.micBtn.classList.remove('active');
+      if (!isWaitingResponse) setStatus('connected');
     }
   };
 }
 
 function startListening() {
-  if (!recognition || isListening || isWaitingResponse) return;
+  if (!recognition || isListening || isWaitingResponse || isSpeaking) return;
   try {
     recognition.lang = UI.recLang.value;
     recognition.start();
@@ -646,6 +719,9 @@ function startListening() {
     setStatus('listening');
   } catch(e) {
     if (e.name !== 'InvalidStateError') console.warn('startListening error:', e);
+    isListening = false;
+    UI.micBtn.classList.remove('active');
+    setStatus('connected');
   }
 }
 
@@ -660,57 +736,20 @@ function stopListening(silent) {
 
 function toggleListening() {
   if (isListening) {
+    userStoppedListening = true;
     stopListening();
   } else {
+    userStoppedListening = false;
+    ensureAudio();
     stopSpeaking();
     startListening();
   }
 }
 
 // ── Speech Synthesis ──
-function speakText(text) {
-  if (!text || !synth) return;
-  if (currentUtterance) {
-    synth.cancel();
-    currentUtterance = null;
-  }
-  // Don't speak status messages
-  if (text.length < 2) { tryAutoListen(); return; }
-
-  const utter = new SpeechSynthesisUtterance(text);
-  currentUtterance = utter;
-  utter.lang = UI.recLang.value;
-  utter.rate = parseFloat(UI.ttsRate.value) || 0.95;
-  utter.pitch = 1.05;
-  utter.volume = 1;
-
-  isSpeaking = true;
-  setStatus('speaking');
-
-  utter.onend = () => {
-    isSpeaking = false;
-    currentUtterance = null;
-    setStatus('connected');
-    tryAutoListen();
-  };
-
-  utter.onerror = (e) => {
-    if (e.error === 'canceled' || e.error === 'interrupted') return;
-    console.warn('tts error:', e.error);
-    isSpeaking = false;
-    currentUtterance = null;
-    setStatus('connected');
-    tryAutoListen();
-  };
-
-  synth.speak(utter);
-}
+let userStoppedListening = false;
 
 function stopSpeaking() {
-  if (synth) {
-    synth.cancel();
-    currentUtterance = null;
-  }
   if (currentAudioSource) {
     try { currentAudioSource.stop(); } catch(_) {}
     currentAudioSource = null;
@@ -719,8 +758,60 @@ function stopSpeaking() {
 }
 
 function tryAutoListen() {
-  if (autoListenEnabled && !isWaitingResponse && ws && ws.readyState === WebSocket.OPEN) {
+  if (autoListenEnabled && !isWaitingResponse && !isSpeaking && ws && ws.readyState === WebSocket.OPEN) {
     startListening();
+  }
+}
+
+// ── Agent Selector ──
+function updateAgentUI() {
+  UI.agentAvatar.textContent = currentAgent.emoji;
+  UI.agentName.textContent = currentAgent.display_name;
+  UI.agentTag.textContent = currentAgent.specialty;
+  const titleSpan = UI.headerTitle.querySelector('span');
+  if (titleSpan) titleSpan.textContent = currentAgent.display_name;
+}
+
+function openAgentModal() {
+  populateAgentList();
+  UI.agentModal.classList.add('open');
+}
+
+function closeAgentModal() {
+  UI.agentModal.classList.remove('open');
+}
+
+function populateAgentList() {
+  const list = UI.agentListEl;
+  if (!list) return;
+  list.innerHTML = '';
+  agentList.forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'agent-option' + (a.name === currentAgent.name ? ' active' : '');
+    div.innerHTML =
+      '<div class="avatar">' + a.emoji + '</div>' +
+      '<div class="info"><div class="name">' + a.display_name + '</div><div class="spec">' + a.specialty + '</div></div>' +
+      (a.name === currentAgent.name ? '<div class="check">&#x2713;</div>' : '');
+    div.addEventListener('click', function() { switchAgent(a.name); });
+    list.appendChild(div);
+  });
+}
+
+function switchAgent(name) {
+  if (name === currentAgent.name) { closeAgentModal(); return; }
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'switch_agent', agent: name}));
+  }
+  closeAgentModal();
+}
+
+// ── Audio context (must be created/resumed from user gesture on mobile) ──
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
   }
 }
 
@@ -732,8 +823,9 @@ function playBase64Audio(b64data) {
     for (let i = 0; i < binaryStr.length; i++) {
       bytes[i] = binaryStr.charCodeAt(i);
     }
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    ensureAudio();
+    if (audioCtx.state === 'suspended') {
+      throw new Error('AudioContext suspended - needs user interaction');
     }
     isSpeaking = true;
     setStatus('speaking');
@@ -753,14 +845,14 @@ function playBase64Audio(b64data) {
       console.warn('audio decode error:', err);
       isSpeaking = false;
       setStatus('connected');
-      if (lastFullText) speakText(lastFullText);
+      addStatusMsg('语音解码失败，请检查音频格式');
       tryAutoListen();
     });
   } catch(e) {
     console.warn('playBase64Audio error:', e);
     isSpeaking = false;
     setStatus('connected');
-    if (lastFullText) speakText(lastFullText);
+    addStatusMsg('语音播放失败: ' + e.message);
     tryAutoListen();
   }
 }
@@ -777,11 +869,73 @@ function sendSpeech(text) {
 
 function sendText(text) {
   if (!text.trim()) return;
+  // Handle slash commands locally
+  if (text.startsWith('/')) {
+    handleCommand(text);
+    return;
+  }
   stopSpeaking();
   stopListening(true);
+  ensureAudio();
   appendUserText(text);
+  isWaitingResponse = true;
   sendSpeech(text);
   setStatus('waiting');
+  UI.textInput.value = '';
+  UI.sendBtn.disabled = true;
+  UI.textInput.style.height = 'auto';
+}
+
+// ── Slash Commands ──
+const COMMANDS = [
+  { cmd: '/help', desc: '显示帮助信息' },
+  { cmd: '/clear', desc: '清空聊天记录' },
+  { cmd: '/lang zh', desc: '切换语音识别为中文' },
+  { cmd: '/lang en', desc: '切换语音识别为英文' },
+  { cmd: '/lang ja', desc: '切换语音识别为日语' },
+];
+
+function handleCommand(text) {
+  const parts = text.toLowerCase().split(/\s+/);
+  const cmd = parts[0];
+  const arg = parts.slice(1).join(' ');
+
+  switch (cmd) {
+    case '/help':
+      addStatusMsg('可用命令:');
+      COMMANDS.forEach(c => {
+        const el = document.createElement('div');
+        el.className = 'msg status-msg';
+        el.style.display = 'flex';
+        el.style.justifyContent = 'center';
+        el.style.gap = '12px';
+        el.innerHTML = '<span style="color:var(--gold);font-family:monospace;">' + c.cmd + '</span> <span style="color:var(--text-dim)">' + c.desc + '</span>';
+        UI.messages.appendChild(el);
+      });
+      scrollBottom();
+      break;
+
+    case '/clear':
+      UI.messages.querySelectorAll('.msg').forEach(el => el.remove());
+      UI.welcomeMsg.style.display = 'block';
+      scrollBottom();
+      break;
+
+    case '/lang':
+      if (!arg) {
+        addStatusMsg('当前语言: ' + UI.recLang.value + '。使用 /lang zh|en|ja 切换');
+        break;
+      }
+      const langMap = { zh: 'zh-CN', en: 'en-US', ja: 'ja-JP' };
+      const lang = langMap[arg] || arg;
+      UI.recLang.value = lang;
+      if (recognition) recognition.lang = lang;
+      addStatusMsg('语音识别已切换至: ' + UI.recLang.options[UI.recLang.selectedIndex].text);
+      break;
+
+    default:
+      addStatusMsg('未知命令: ' + cmd + '。输入 /help 查看可用命令');
+  }
   UI.textInput.value = '';
   UI.sendBtn.disabled = true;
   UI.textInput.style.height = 'auto';
@@ -823,6 +977,12 @@ UI.autoListen.addEventListener('change', () => {
 
 UI.settingsBtn.addEventListener('click', () => {
   UI.settingsPanel.classList.toggle('open');
+});
+
+UI.agentProfile.addEventListener('click', openAgentModal);
+
+UI.agentModal.addEventListener('click', (e) => {
+  if (e.target === UI.agentModal) closeAgentModal();
 });
 
 // ── Init ──

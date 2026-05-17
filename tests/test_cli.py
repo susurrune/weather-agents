@@ -434,17 +434,29 @@ class TestStreamingChat:
 
 class TestRunTask:
     @pytest.mark.asyncio
-    async def test_run_task_uses_orchestrate(self):
-        """_run_task should delegate to factory.orchestrate_task, not duplicate logic."""
+    async def test_complex_goal_uses_orchestrate(self):
+        """Multi-step goals go through factory.orchestrate_task."""
+        from weather_agents.cli.main import _run_task
+
+        mock_ctx = _make_ctx()
+        goal = "先帮我分析这段代码，然后重构它，最后写测试"
+
+        with patch("weather_agents.core.factory.orchestrate_task") as mock_orch:
+            mock_orch.return_value = ([], [], "no tasks")
+            await _run_task(goal, agents=mock_ctx.agent_map)
+            mock_orch.assert_called_once()
+            assert mock_orch.call_args[0][0] == goal
+
+    @pytest.mark.asyncio
+    async def test_simple_goal_skips_orchestrate(self):
+        """Single-purpose goals bypass orchestration — go straight to one agent."""
         from weather_agents.cli.main import _run_task
 
         mock_ctx = _make_ctx()
 
         with patch("weather_agents.core.factory.orchestrate_task") as mock_orch:
-            mock_orch.return_value = ([], [], "no tasks")
-            await _run_task("build x", agents=mock_ctx.agent_map)
-            mock_orch.assert_called_once()
-            assert mock_orch.call_args[0][0] == "build x"
+            await _run_task("你好", agents=mock_ctx.agent_map)
+            mock_orch.assert_not_called()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

@@ -30,19 +30,24 @@ class VoiceServer:
     Each WebSocket connection gets its own memory session so conversations
     are isolated.  HTTP ``GET /`` serves the single-page voice client HTML.
     HTTP ``GET /health`` returns a simple health-check JSON.
+
+    Supports switching agents at runtime via WebSocket messages:
+    ``{"type":"list_agents"}`` and ``{"type":"switch_agent","agent":"<name>"}``.
     """
 
     def __init__(
         self,
-        agent: BaseAgent,
+        agent_map: dict[str, BaseAgent],
         system_ctx: SystemContext,
         *,
+        agent_name: str = "sunshine",
         host: str = "0.0.0.0",
         port: int = 8765,
         tts_engine: DoubaoTTS | None = None,
         ssl_context: ssl.SSLContext | None = None,
     ) -> None:
-        self.agent = agent
+        self._agent_map = agent_map
+        self._current_agent_name = agent_name
         self.ctx = system_ctx
         self.host = host
         self.port = port
@@ -53,6 +58,30 @@ class VoiceServer:
         self._app.router.add_get("/", self._handle_index)
         self._app.router.add_get("/health", self._handle_health)
         self._app.router.add_get("/ws", self._handle_ws)
+
+    @property
+    def agent(self) -> BaseAgent:
+        """Return the currently active agent."""
+        return self._agent_map[self._current_agent_name]
+
+    def _build_agent_list(self) -> list[dict[str, str]]:
+        """Build a list of all available agents with their metadata."""
+        return [
+            {
+                "name": a.name,
+                "display_name": a.display_name,
+                "emoji": a.emoji,
+                "specialty": a.specialty,
+            }
+            for a in self._agent_map.values()
+        ]
+
+    def _switch_agent(self, name: str) -> bool:
+        """Switch the active agent. Returns True on success."""
+        if name not in self._agent_map:
+            return False
+        self._current_agent_name = name
+        return True
 
     async def _handle_index(self, _request: web.Request) -> web.Response:
         """Serve the single-page voice client."""
@@ -91,6 +120,31 @@ class VoiceServer:
                             await self._handle_speech(ws, text)
                     elif msg_type == "ping":
                         await ws.send_json({"type": "pong"})
+                    elif msg_type == "list_agents":
+                        await ws.send_json(
+                            {
+                                "type": "agent_list",
+                                "agents": self._build_agent_list(),
+                                "current": self._current_agent_name,
+                            }
+                        )
+                    elif msg_type == "switch_agent":
+                        name = data.get("agent", "")
+                        if self._switch_agent(name):
+                            await self.agent.init()
+                            await self.agent.memory.create_session()
+                            await ws.send_json(
+                                {
+                                    "type": "agent_switched",
+                                    "agent": name,
+                                    "display_name": self.agent.display_name,
+                                    "emoji": self.agent.emoji,
+                                    "specialty": self.agent.specialty,
+                                    "session_id": self.agent.memory.get_active_session(),
+                                }
+                            )
+                        else:
+                            await ws.send_json({"type": "error", "text": f"unknown agent: {name}"})
                 elif msg.type == web.WSMsgType.ERROR:
                     _log.warning("voice_ws_error session=%s err=%s", session_id, ws.exception())
         except asyncio.CancelledError:
@@ -124,7 +178,9 @@ class VoiceServer:
                 elif ev_type == "reasoning":
                     pass
                 elif ev_type == "tool_status":
-                    if not await self._safe_send(ws, {"type": "status", "label": event.get("label", "")}):
+                    if not await self._safe_send(
+                        ws, {"type": "status", "label": event.get("label", "")}
+                    ):
                         return
                 elif ev_type == "done":
                     break
@@ -153,11 +209,15 @@ class VoiceServer:
                 await self._safe_send(ws, {"type": "audio_end", "error": "empty"})
                 return
             audio_b64 = base64.b64encode(audio_data).decode("ascii")
-            if not await self._safe_send(ws, {"type": "audio_start", "format": self.tts_engine.encoding}):
+            if not await self._safe_send(
+                ws, {"type": "audio_start", "format": self.tts_engine.encoding}
+            ):
                 return
             chunk_size = 48000
             for i in range(0, len(audio_b64), chunk_size):
-                if not await self._safe_send(ws, {"type": "audio_chunk", "data": audio_b64[i : i + chunk_size]}):
+                if not await self._safe_send(
+                    ws, {"type": "audio_chunk", "data": audio_b64[i : i + chunk_size]}
+                ):
                     return
             await self._safe_send(ws, {"type": "audio_end"})
         except Exception as exc:
@@ -194,13 +254,12 @@ async def run_voice_server(
     cfg = load_config()
     ctx = create_system_context()
 
-    agent = ctx.agent_map.get(agent_name)
-    if agent is None:
+    if agent_name not in ctx.agent_map:
         msg = f"unknown agent: {agent_name}"
         raise ValueError(msg)
 
-    # Init the agent so system prompt / memory / session are ready.
-    await agent.init()
+    # Init the default agent so system prompt / memory / session are ready.
+    await ctx.agent_map[agent_name].init()
 
     # Create TTS engine if configured
     tts_engine = None
@@ -219,7 +278,13 @@ async def run_voice_server(
         )
 
     server = VoiceServer(
-        agent, ctx, host=host, port=port, tts_engine=tts_engine, ssl_context=ssl_context
+        ctx.agent_map,
+        ctx,
+        agent_name=agent_name,
+        host=host,
+        port=port,
+        tts_engine=tts_engine,
+        ssl_context=ssl_context,
     )
     try:
         await server.run()

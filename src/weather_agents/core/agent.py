@@ -173,7 +173,9 @@ class BaseAgent:
                 "6. Self-verify: after tool execution, check results. If a tool returned an error, "
                 "diagnose the cause and try a corrected approach immediately. "
                 "If a file write/edit succeeded, read it back to confirm the content is correct. "
-                "Report the final verified state, not just the attempt."
+                "Report the final verified state, not just the attempt.\n"
+                "7. Never expand task scope. Do only what the user asked — no extra files, no bonus "
+                "features, no 'while I'm at it' additions. When the core request is done, stop."
             )
         else:
             rules = (
@@ -186,7 +188,9 @@ class BaseAgent:
                 "只有任务确实需要 3 步以上不同操作时才拆分计划。"
                 "不要为了了解情况而遍历工作空间或读取文件，除非任务本身需要。\n"
                 "6. 执行后验证：工具执行后检查结果，如有错误立即诊断并重试修正。"
-                "写入/编辑文件后应读取确认内容正确。汇报最终验证后的状态，而非仅说已尝试。"
+                "写入/编辑文件后应读取确认内容正确。汇报最终验证后的状态，而非仅说已尝试。\n"
+                "7. 禁止擅自扩展任务范围。用户要求什么就做什么——不多创建文件、不添加额外功能、"
+                "不做「顺便也做个…」。核心请求完成后立即停止，不要自作主张深化或扩展。"
             )
         return prompt + rules
 
@@ -239,14 +243,18 @@ class BaseAgent:
         if self._base_system_prompt:
             return
         await self.memory.init_db()
-        # Always own a session — applies to delegate targets too (delegate.py
-        # calls only target.init(), not the REPL's lazy-init). Without a
-        # session_id every persisted message lands in a global "NULL session"
-        # bucket and _load_short_term can resurrect unrelated past turns from
-        # any prior process, producing the cross-session memory chaos users
-        # see ("之前你说了几次…", fragments from unrelated tasks).
+        # Always own a session. Prefer resuming this agent's most recent
+        # session so `wa chat` feels continuous across invocations; fall back
+        # to creating a new one for first run or when WA_NO_RESUME=1 is set
+        # (e.g. tests asserting cross-process isolation).
+        import os as _os
+
         if self.memory.get_active_session() is None:
-            await self.memory.create_session()
+            resumed = None
+            if _os.environ.get("WA_NO_RESUME") != "1":
+                resumed = await self.memory.resume_latest_session()
+            if resumed is None:
+                await self.memory.create_session()
         self._base_system_prompt = self._resolve_system_prompt()
         self._base_system_prompt = self._inject_workspace_info(self._base_system_prompt)
         self._base_system_prompt = self._inject_behavior_rules(self._base_system_prompt)
