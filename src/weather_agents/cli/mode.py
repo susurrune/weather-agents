@@ -67,13 +67,22 @@ _DESCRIPTIONS = {
 
 
 class ModeController:
-    """Owns the current interactive mode and its persistence."""
+    """Owns the current interactive mode and its persistence.
+
+    Yaml is read lazily on the first ``.current`` access — instantiation is
+    free of IO so callers can place ``MODE = ModeController()`` at module
+    scope without paying ~2s of YAML/dotenv parsing on cold startup of
+    subcommands that never touch the mode (e.g. ``wa voice list``).
+    """
 
     def __init__(self, initial: InteractiveMode | None = None) -> None:
-        self._mode = initial or self._load() or InteractiveMode.DEFAULT
+        # _mode==None means "not yet resolved"; resolution happens on first read.
+        self._mode: InteractiveMode | None = initial
 
     @property
     def current(self) -> InteractiveMode:
+        if self._mode is None:
+            self._mode = self._load() or InteractiveMode.DEFAULT
         return self._mode
 
     def set(self, mode: InteractiveMode, *, persist: bool = True) -> InteractiveMode:
@@ -83,15 +92,16 @@ class ModeController:
         return mode
 
     def cycle(self) -> InteractiveMode:
-        idx = _CYCLE.index(self._mode) if self._mode in _CYCLE else -1
+        cur = self.current
+        idx = _CYCLE.index(cur) if cur in _CYCLE else -1
         return self.set(_CYCLE[(idx + 1) % len(_CYCLE)])
 
     def label(self) -> tuple[str, str]:
         """Return (text, rich-style) tuple for prompt rendering."""
-        return _LABEL_STYLE[self._mode]
+        return _LABEL_STYLE[self.current]
 
     def describe(self) -> str:
-        return _DESCRIPTIONS[self._mode]
+        return _DESCRIPTIONS[self.current]
 
     @staticmethod
     def _load() -> InteractiveMode | None:

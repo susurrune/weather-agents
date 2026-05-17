@@ -619,7 +619,8 @@ def _place_ime_cursor(col: int) -> None:
 
 
 # -- Interactive mode (default / plan / auto) -------------------------------
-
+# ModeController defers its YAML/dotenv read to first .current access, so
+# instantiating it here is free for subcommands that never look at the mode.
 MODE: ModeController = ModeController()
 
 
@@ -2631,6 +2632,12 @@ async def _run_voice_server(
 def chat(
     agent: str = typer.Argument("fog", help="Agent name (fog/rain/frost/snow/dew/sunshine)"),
     message: str | None = typer.Argument(None, help="Message (omit for interactive mode)"),
+    new: bool = typer.Option(
+        False,
+        "--new",
+        "-n",
+        help="Start a fresh session instead of resuming the most recent one.",
+    ),
 ) -> None:
     """Chat with an agent. Omit message for interactive mode."""
     if agent not in AGENT_CLASSES:
@@ -2648,6 +2655,11 @@ def chat(
                 "Run [cyan]wa init[/cyan] later when ready.[/yellow]\n"
             )
             raise typer.Exit(0)
+
+    # `--new` sets WA_NO_RESUME for the duration of this process so the
+    # BaseAgent.init() resume hook stays out of the way.
+    if new:
+        os.environ["WA_NO_RESUME"] = "1"
 
     if message:
         asyncio.run(_chat_single(agent, message))

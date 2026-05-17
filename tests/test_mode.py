@@ -41,6 +41,22 @@ class TestController:
         c = ModeController()
         assert c.current is InteractiveMode.DEFAULT
 
+    def test_construction_does_no_io(self, isolated_user_dir, monkeypatch):
+        # Regression: pre-lazy ModeController() called load_config() in __init__
+        # adding ~2s to every cli subcommand startup. Loading must be deferred
+        # until the first .current read.
+        calls = {"n": 0}
+        import weather_agents.cli.mode as mode_mod
+        orig = mode_mod.load_config
+
+        def counted():
+            calls["n"] += 1
+            return orig()
+
+        monkeypatch.setattr(mode_mod, "load_config", counted)
+        ModeController()
+        assert calls["n"] == 0, "construction must not trigger load_config"
+
     def test_set_persists_to_user_config(self, isolated_user_dir):
         c = ModeController()
         c.set(InteractiveMode.PLAN)
