@@ -1222,16 +1222,16 @@ async def _interactive(agent_name: str | None = None) -> None:
                     console.print("  [red]usage: /shared <key>  or  /shared[/red]")
                 else:
                     await _init_agent_lazy(agent, ctx)
-                    value = await agent.memory.read_shared(key)
-                    if value is None:
+                    shared_val = await agent.memory.read_shared(key)
+                    if shared_val is None:
                         console.print(f"  [dim]no entry for [cyan]{key}[/cyan][/dim]")
                     else:
-                        if not isinstance(value, str):
+                        if not isinstance(shared_val, str):
                             import json as _json
 
-                            value = _json.dumps(value, ensure_ascii=False, indent=2)
+                            shared_val = _json.dumps(shared_val, ensure_ascii=False, indent=2)
                         console.print(f"  [cyan]{key}[/cyan]:")
-                        console.print(Padding(value, pad=(0, 0, 0, 4)))
+                        console.print(Padding(shared_val, pad=(0, 0, 0, 4)))
                 continue
             if cmd_lower == "/compact":
                 await _init_agent_lazy(agent, ctx)
