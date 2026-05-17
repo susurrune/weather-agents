@@ -39,3 +39,6 @@ POLISH_PLAN.md
 # Data
 *.db
 *.sqlite3
+
+# TTS / voice test artifacts (local dev outputs)
+*.mp3
