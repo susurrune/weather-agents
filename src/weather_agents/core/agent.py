@@ -101,6 +101,10 @@ class BaseAgent:
         self._base_system_prompt: str = ""
         agent_cfg = getattr(config.agents, self.name, None)
         self._max_tool_rounds: int = agent_cfg.max_tool_rounds if agent_cfg else 10
+        # Fire-and-forget fact-extraction state. We count completed chat turns
+        # so the extractor only runs every N (default 10), keeping cost low.
+        self._user_turns_since_extract: int = 0
+        self._pending_extracts: set = set()
 
     def _resolve_system_prompt(self) -> str:
         """Pick the language-appropriate system prompt based on config."""
@@ -586,6 +590,7 @@ class BaseAgent:
                 reasoning_content=response.reasoning_content,
             )
             await self._set_state(AgentState.IDLE)
+            self._maybe_extract_facts()
             return response.content
         except Exception as e:
             await self._set_state(AgentState.ERROR)
@@ -683,6 +688,7 @@ class BaseAgent:
                     )
                     assistant_stored = True
                     await self._set_state(AgentState.IDLE)
+                    self._maybe_extract_facts()
                     if final_content and final_content != round_content:
                         yield {"type": "content", "text": final_content}
                     yield {"type": "done"}
@@ -966,6 +972,147 @@ class BaseAgent:
                     names.append(tool_name)
                     seen.add(tool_name)
         return names
+
+    # -- Automatic fact extraction (durable long-term memory) -----------------
+
+    EXTRACT_PROMPT_TEMPLATE = """你是一个事实抽取助手。从下面的对话中抽取**用户透露的稳定、可复用的事实**。
+
+**应该抽取**：
+- 工具/技术偏好（pkg_mgr=pnpm, editor=neovim, framework=FastAPI）
+- 项目信息（project_lang=Python, project_name=weather-agents）
+- 长期目标（goal=build_url_shortener）
+- 关键约束（os=Windows, python_version=3.13）
+
+**不要抽取**：
+- 用户的情绪、心情
+- 当前任务的临时细节（"帮我写这个函数"中的"这个"）
+- 对话过程中的中间产物
+- 任何不确定的信息
+
+**规则**：
+- 只在用户**明确陈述**时抽取（"我用 X"、"项目是 X"）
+- key 用 snake_case 英文，value 简短
+- 如无可抽取的稳定事实，输出 `[]`
+
+**输出格式**：纯 JSON 数组，不要任何额外文字、不要 markdown 围栏：
+[{{"key": "pkg_mgr", "value": "pnpm", "category": "user_pref"}}]
+
+对话：
+{conversation}
+
+输出："""
+
+    def _maybe_extract_facts(self) -> None:
+        """Schedule a fact-extraction pass every N user turns (default 10).
+
+        Fire-and-forget — schedules an async task and returns immediately so
+        it doesn't slow down the user's next prompt. WA_NO_EXTRACT=1 or
+        WA_EXTRACT_EVERY_N=0 disables; both are read each call so users can
+        flip them mid-session.
+        """
+        import os as _os
+
+        if _os.environ.get("WA_NO_EXTRACT") == "1":
+            return
+        try:
+            every_n = int(_os.environ.get("WA_EXTRACT_EVERY_N", "10"))
+        except ValueError:
+            every_n = 10
+        if every_n <= 0:
+            return
+
+        self._user_turns_since_extract += 1
+        if self._user_turns_since_extract < every_n:
+            return
+        self._user_turns_since_extract = 0
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._extract_facts_async())
+        self._pending_extracts.add(task)
+        task.add_done_callback(self._pending_extracts.discard)
+
+    async def _extract_facts_async(self) -> int:
+        """Run one fact-extraction pass against recent conversation.
+
+        Returns the number of facts written. Exceptions are logged but never
+        raised — extraction is best-effort, never blocks the main flow.
+        Callable directly from tests to assert behavior without juggling
+        the create_task indirection.
+        """
+        try:
+            recent = self.memory.short_term[-20:]
+            convo_msgs = [m for m in recent if m.role in ("user", "assistant") and m.content]
+            if len(convo_msgs) < 4:
+                return 0
+            convo_text = "\n".join(f"{m.role}: {m.content[:500]}" for m in convo_msgs)
+            prompt = self.EXTRACT_PROMPT_TEMPLATE.format(conversation=convo_text)
+            response = await self.llm.complete(
+                messages=[{"role": "user", "content": prompt}],
+                agent_name=f"{self.name}_extract",
+                tools=None,
+            )
+            facts = self._parse_extracted_facts(response.content)
+            written = 0
+            for f in facts:
+                key = f.get("key")
+                value = f.get("value")
+                category = f.get("category") or "auto_extracted"
+                if not isinstance(key, str) or not key.strip() or value in (None, ""):
+                    continue
+                await self.memory.remember(key.strip(), value, category=str(category))
+                written += 1
+            if written:
+                _log.info(
+                    "auto_extracted_facts",
+                    extra={"agent": self.name, "count": written},
+                )
+            return written
+        except Exception as exc:
+            _log.warning("fact_extract_failed: %s", exc)
+            return 0
+
+    @staticmethod
+    def _parse_extracted_facts(content: str) -> list[dict]:
+        """Best-effort JSON array extraction from LLM response.
+
+        Tries: raw JSON parse → markdown-fenced ``` json ``` → first ``[...]``
+        substring in the message. Returns ``[]`` on every failure path so the
+        caller can iterate safely.
+        """
+        import re
+
+        text = (content or "").strip()
+        if not text:
+            return []
+        # 1. Direct parse
+        try:
+            data = json.loads(text)
+            if isinstance(data, list):
+                return [f for f in data if isinstance(f, dict)]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # 2. Markdown-fenced JSON
+        m = re.search(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```", text)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+                if isinstance(data, list):
+                    return [f for f in data if isinstance(f, dict)]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # 3. First raw JSON array substring
+        m = re.search(r"\[[\s\S]*?\]", text)
+        if m:
+            try:
+                data = json.loads(m.group(0))
+                if isinstance(data, list):
+                    return [f for f in data if isinstance(f, dict)]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return []
 
     async def _messages_with_recall(self) -> list[dict]:
         """Return short-term messages with a 'relevant facts' system block
