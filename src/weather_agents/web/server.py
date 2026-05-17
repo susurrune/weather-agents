@@ -59,6 +59,12 @@ class VoiceServer:
         self.ssl_context = ssl_context
         self._app = web.Application()
 
+        # Serialize all _handle_ws calls so concurrent connections to the same
+        # agent don't race on memory._active_session. Per-agent locks would be
+        # more concurrent but break on agent switch (old lock still held when
+        # accessing the new agent's memory in the switch handler).
+        self._ws_lock = asyncio.Lock()
+
         # Cache HTML at startup — avoid disk I/O on every request.
         if _HTML_PATH.is_file():
             self._html_content = _HTML_PATH.read_text(encoding="utf-8")
@@ -115,90 +121,99 @@ class VoiceServer:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
-        # Each voice connection gets its own session for isolation.
-        await self.agent.memory.create_session()
-        session_id = self.agent.memory.get_active_session()
-        # Track all sessions created during this WS lifecycle so they
-        # are reliably cleaned up on every exit path.
-        _open_sessions: list[tuple[str, str]] = (
-            [(self._current_agent_name, session_id)] if session_id else []
-        )
-
-        _log.info("voice_ws_open session=%s", session_id)
-
+        # Serialize all WS connections — concurrent access to any agent's
+        # memory._active_session would race otherwise.
+        await self._ws_lock.acquire()
         try:
-            while True:
-                try:
-                    msg = await asyncio.wait_for(ws.receive(), timeout=self._IDLE_TIMEOUT)
-                except TimeoutError:
-                    _log.info("voice_ws_idle_timeout session=%s", session_id)
-                    await ws.send_json({"type": "error", "text": "idle timeout"})
-                    break
+            await self.agent.memory.create_session()
+            session_id = self.agent.memory.get_active_session()
+            # Track all sessions created during this WS lifecycle so they
+            # are reliably cleaned up on every exit path.
+            _open_sessions: list[tuple[str, str]] = (
+                [(self._current_agent_name, session_id)] if session_id else []
+            )
 
-                if msg.type == web.WSMsgType.TEXT:
+            _log.info("voice_ws_open session=%s", session_id)
+
+            try:
+                while True:
                     try:
-                        data: dict[str, Any] = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        await ws.send_json({"type": "error", "text": "invalid json"})
-                        continue
+                        msg = await asyncio.wait_for(ws.receive(), timeout=self._IDLE_TIMEOUT)
+                    except TimeoutError:
+                        _log.info("voice_ws_idle_timeout session=%s", session_id)
+                        await ws.send_json({"type": "error", "text": "idle timeout"})
+                        break
 
-                    msg_type = data.get("type", "")
-                    if msg_type == "speech":
-                        text = (data.get("text") or "").strip()
-                        if text:
-                            await self._handle_speech(ws, text)
-                    elif msg_type == "ping":
-                        await ws.send_json({"type": "pong"})
-                    elif msg_type == "list_agents":
-                        await ws.send_json(
-                            {
-                                "type": "agent_list",
-                                "agents": self._build_agent_list(),
-                                "current": self._current_agent_name,
-                            }
-                        )
-                    elif msg_type == "switch_agent":
-                        name = data.get("agent", "")
-                        # Close old session before switching agents
-                        old_name = self._current_agent_name
-                        if old_name != name:
-                            old_agent = self._agent_map.get(old_name)
-                            if old_agent:
-                                old_sid = old_agent.memory.get_active_session()
-                                if old_sid:
-                                    await old_agent.memory.delete_session(old_sid)
-                        if self._switch_agent(name):
-                            await self.agent.init()
-                            await self.agent.memory.create_session()
-                            new_sid = self.agent.memory.get_active_session()
-                            if new_sid:
-                                _open_sessions.append((self._current_agent_name, new_sid))
+                    if msg.type == web.WSMsgType.TEXT:
+                        try:
+                            data: dict[str, Any] = json.loads(msg.data)
+                        except json.JSONDecodeError:
+                            await ws.send_json({"type": "error", "text": "invalid json"})
+                            continue
+
+                        msg_type = data.get("type", "")
+                        if msg_type == "speech":
+                            text = (data.get("text") or "").strip()
+                            if text:
+                                await self._handle_speech(ws, text)
+                        elif msg_type == "ping":
+                            await ws.send_json({"type": "pong"})
+                        elif msg_type == "list_agents":
                             await ws.send_json(
                                 {
-                                    "type": "agent_switched",
-                                    "agent": name,
-                                    "display_name": self.agent.display_name,
-                                    "emoji": self.agent.emoji,
-                                    "specialty": self.agent.specialty,
-                                    "session_id": new_sid,
+                                    "type": "agent_list",
+                                    "agents": self._build_agent_list(),
+                                    "current": self._current_agent_name,
                                 }
                             )
-                        else:
-                            await ws.send_json({"type": "error", "text": f"unknown agent: {name}"})
-                elif msg.type == web.WSMsgType.ERROR:
-                    _log.warning("voice_ws_error session=%s err=%s", session_id, ws.exception())
-                    break
-                elif msg.type == web.WSMsgType.CLOSE:
-                    break
-        except asyncio.CancelledError:
-            pass
+                        elif msg_type == "switch_agent":
+                            name = data.get("agent", "")
+                            # Close old session before switching agents
+                            old_name = self._current_agent_name
+                            if old_name != name:
+                                old_agent = self._agent_map.get(old_name)
+                                if old_agent:
+                                    old_sid = old_agent.memory.get_active_session()
+                                    if old_sid:
+                                        await old_agent.memory.delete_session(old_sid)
+                            if self._switch_agent(name):
+                                await self.agent.init()
+                                await self.agent.memory.create_session()
+                                new_sid = self.agent.memory.get_active_session()
+                                if new_sid:
+                                    _open_sessions.append((self._current_agent_name, new_sid))
+                                await ws.send_json(
+                                    {
+                                        "type": "agent_switched",
+                                        "agent": name,
+                                        "display_name": self.agent.display_name,
+                                        "emoji": self.agent.emoji,
+                                        "specialty": self.agent.specialty,
+                                        "session_id": new_sid,
+                                    }
+                                )
+                            else:
+                                await ws.send_json(
+                                    {"type": "error", "text": f"unknown agent: {name}"}
+                                )
+                    elif msg.type == web.WSMsgType.ERROR:
+                        _log.warning(
+                            "voice_ws_error session=%s err=%s", session_id, ws.exception()
+                        )
+                        break
+                    elif msg.type == web.WSMsgType.CLOSE:
+                        break
+            except asyncio.CancelledError:
+                pass
+            finally:
+                _log.info("voice_ws_close sessions=%s", [s for _, s in _open_sessions])
+                for agent_name, sid in _open_sessions:
+                    agent = self._agent_map.get(agent_name)
+                    if agent:
+                        with contextlib.suppress(Exception):
+                            await agent.memory.delete_session(sid)
         finally:
-            _log.info("voice_ws_close sessions=%s", [s for _, s in _open_sessions])
-            for agent_name, sid in _open_sessions:
-                agent = self._agent_map.get(agent_name)
-                if agent:
-                    with contextlib.suppress(Exception):
-                        await agent.memory.delete_session(sid)
+            self._ws_lock.release()
 
         return ws
 
