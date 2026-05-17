@@ -107,6 +107,9 @@ _CODE_BLOCK = re.compile(r"```[\s\S]+?```")
 _URL = re.compile(r"https?://\S+")
 _PATH = re.compile(r"(?:[A-Za-z]:[\\/]|[\\/])[\w\-./\\]+")
 _NUMBERED_LIST = re.compile(r"(?:^|\n)\s*(?:\d+[.)、]|[-*])\s+", re.MULTILINE)
+# Inline form: "1. X 2. Y 3. Z" on a single line (no newline anchor).
+# Three+ enumerations within the same line implies a sequenced plan.
+_INLINE_ENUMERATED = re.compile(r"\b\d+[.)、]\s*\S")
 
 
 def classify(goal: str) -> Mode:
@@ -127,6 +130,7 @@ def classify(goal: str) -> Mode:
     has_url = bool(_URL.search(text))
     has_path = bool(_PATH.search(text))
     list_matches = len(_NUMBERED_LIST.findall(text))
+    inline_enum_hits = len(_INLINE_ENUMERATED.findall(text))
 
     multi_step_hits = sum(1 for tok in _MULTI_STEP_TOKENS if tok in lower)
     greeting_hits = sum(1 for tok in _GREETING_TOKENS if tok in lower)
@@ -136,7 +140,7 @@ def classify(goal: str) -> Mode:
     if greeting_hits >= 1 and length < 30 and multi_step_hits == 0 and action_hits == 0:
         return "direct"
 
-    if multi_step_hits >= 2 or list_matches >= 2:
+    if multi_step_hits >= 2 or list_matches >= 2 or inline_enum_hits >= 3:
         return "orchestrate"
 
     if length > 200 and multi_step_hits >= 1:
@@ -171,8 +175,22 @@ def pick_agent_for_goal(goal: str, available: set[str]) -> str:
     buckets: list[tuple[str, tuple[str, ...]]] = [
         ("frost", ("审查", "review", "漏洞", "安全", "审计", "lint", "重构建议", "code smell")),
         ("dew", ("部署", "运行", "执行命令", "shell", "deploy", "ci", "cd", "环境变量", "运维")),
-        ("fog", ("研究", "调研", "搜一下", "搜索", "查一下", "找", "research", "search", "调查")),
-        ("rain", ("写", "生成", "实现", "create", "generate", "写一段", "写个", "代码")),
+        # "找" was too greedy — matched 二分查找 / 找回密码 / 找一个函数 etc.
+        # Use longer, less ambiguous markers and rely on rain's bucket for code.
+        (
+            "fog",
+            (
+                "研究", "调研", "搜一下", "搜索", "查一下", "查资料",
+                "research", "search", "调查", "找一下", "找资料",
+            ),
+        ),
+        (
+            "rain",
+            (
+                "写", "生成", "实现", "create", "generate",
+                "写一段", "写个", "代码", "二分", "函数", "实现一个",
+            ),
+        ),
         (
             "sunshine",
             ("陪我", "聊天", "心情", "难过", "开心", "孤独", "倾诉", "你好", "hi", "hello", "嗨"),

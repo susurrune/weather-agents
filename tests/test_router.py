@@ -64,6 +64,24 @@ def test_long_code_block_is_orchestrate() -> None:
     assert classify(goal) == "orchestrate"
 
 
+@pytest.mark.parametrize(
+    "goal",
+    [
+        "1. 拉数据 2. 分析 3. 出图",
+        "先做 1. xxx 2. yyy 3. zzz 4. www",
+        "step 1. login 2. fetch 3. render",
+    ],
+)
+def test_inline_enumerated_list_is_orchestrate(goal: str) -> None:
+    """Single-line `1. X 2. Y 3. Z` should count as a multi-step plan."""
+    assert classify(goal) == "orchestrate"
+
+
+def test_two_inline_items_still_not_orchestrate() -> None:
+    # Two items is ambiguous — could be just "step 1, step 2 done". Stay conservative.
+    assert classify("1. 你好 2. 谢谢") != "orchestrate"
+
+
 class TestPickAgent:
     def test_security_keyword_picks_frost(self) -> None:
         available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
@@ -80,6 +98,13 @@ class TestPickAgent:
     def test_falls_back_to_rain(self) -> None:
         available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
         assert pick_agent_for_goal("处理这个东西", available) == "rain"
+
+    def test_binary_search_picks_rain_not_fog(self) -> None:
+        # Regression: "二分查找" contains the substring "找" which used to land
+        # in fog's bucket. Code-generation phrasing must route to rain.
+        available = {"fog", "rain", "frost", "snow", "dew", "sunshine"}
+        assert pick_agent_for_goal("帮我写一个二分查找", available) == "rain"
+        assert pick_agent_for_goal("实现一个排序函数", available) == "rain"
 
     def test_skips_missing_agents(self) -> None:
         available = {"rain", "snow"}

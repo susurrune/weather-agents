@@ -2432,21 +2432,39 @@ async def _run_task(goal: str, agents=None) -> None:
     try:
         # Route simple goals to a single agent — skips Snow's LLM decomposition
         # call (saves ~1 LLM round-trip and the planning/summary table render).
+        from weather_agents.core.pipelines import match_pipeline
         from weather_agents.core.router import classify, pick_agent_for_goal
 
         mode = classify(goal)
         if mode in ("direct", "single"):
             available = {name for name, ag in agents.items() if ag is not None}
-            target_name = pick_agent_for_goal(goal, available)
-            target = agents[target_name]
-            ict = icon_text(target_name)
-            sp = AGENT_SPINNERS.get(target_name, "dots")
-            console.print()
-            console.print(Rule(f"  {ict}  ", align="left", style="dim"))
-            with console.status(f"  [dim]{ict} thinking…[/dim]", spinner=sp):
-                reply = await target.chat(goal)
-            console.print(Padding(Markdown(_strip_hr(reply)), pad=(0, 2, 0, 2)))
-            return
+            # Pipeline match beats keyword routing — more specific signal,
+            # better agent pick. Single-step pipelines stay on the fast path
+            # with the right agent + refined description; multi-step ones fall
+            # through to the orchestrator (factory matches pipelines too).
+            pipeline = match_pipeline(goal)
+            fast_path = pipeline is None or len(pipeline.steps) == 1
+
+            if fast_path:
+                if pipeline is not None:
+                    step = pipeline.steps[0]
+                    target_name = (
+                        step.agent if step.agent in available else next(iter(available))
+                    )
+                    refined_goal = step.description_template.format(goal=goal)
+                else:
+                    target_name = pick_agent_for_goal(goal, available)
+                    refined_goal = goal
+
+                target = agents[target_name]
+                ict = icon_text(target_name)
+                sp = AGENT_SPINNERS.get(target_name, "dots")
+                console.print()
+                console.print(Rule(f"  {ict}  ", align="left", style="dim"))
+                with console.status(f"  [dim]{ict} thinking…[/dim]", spinner=sp):
+                    reply = await target.chat(refined_goal)
+                console.print(Padding(Markdown(_strip_hr(reply)), pad=(0, 2, 0, 2)))
+                return
 
         from weather_agents.core.factory import orchestrate_task
 
