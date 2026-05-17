@@ -127,42 +127,71 @@ class DoubaoTTS:
         self.pitch_ratio = pitch_ratio
         self.emotion = emotion
         self.app_id = app_id
+        self._client: httpx.AsyncClient | None = None
+
+    # ── Lifecycle ──
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Lazily create and return the shared httpx client with connection pooling."""
+        if self._client is None:
+            limits = httpx.Limits(max_keepalive_connections=4, keepalive_expiry=30)
+            self._client = httpx.AsyncClient(timeout=30, limits=limits)
+        return self._client
+
+    async def close(self) -> None:
+        """Close the shared httpx client if it was opened."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     # ── Public API ──
 
-    async def synthesize(self, text: str) -> bytes:
-        """Convert text to audio bytes via the V3 HTTP Unidirectional API.
+    async def synthesize_stream(self, text: str):  # -> AsyncGenerator[str, None]
+        """Stream TTS audio as base64 chunks, yielding each as it arrives.
 
-        Posts the text to the TTS endpoint and returns the raw audio
-        bytes (MP3 by default).
-
-        The API streams audio as multiple JSON lines, each containing
-        a base64 chunk of the audio data.  All chunks are concatenated.
+        Uses httpx streaming to process the response incrementally.
+        Yields base64-encoded audio strings that can be forwarded directly
+        to a WebSocket client without decode/re-encode overhead.
         """
         text = text.strip()
         if not text:
-            return b""
+            return
 
         headers = self._get_http_headers()
         body = self._make_request_body(text)
+        client = self._get_client()
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(HTTP_ENDPOINT, json=body, headers=headers)
+        async with client.stream("POST", HTTP_ENDPOINT, json=body, headers=headers) as resp:
+            if resp.status_code != 200:
+                preview = await resp.aread()
+                raise RuntimeError(f"TTS HTTP {resp.status_code}: {preview[:200]!r}")
 
-        if resp.status_code != 200:
-            raise RuntimeError(f"TTS HTTP {resp.status_code}: {resp.text[:200]}")
+            buffer = ""
+            async for raw_chunk in resp.aiter_text():
+                buffer += raw_chunk
+                for b64 in self._parse_stream_lines(buffer):
+                    if b64 is None:
+                        return
+                    yield b64
+                # Keep any partial last line in the buffer
+                _, _, remainder = buffer.rpartition("\n")
+                buffer = remainder
 
-        if not resp.content:
-            raise RuntimeError("TTS empty response")
+            # Flush any remaining content after the stream ends
+            if buffer.strip():
+                for b64 in self._parse_stream_lines(buffer + "\n"):
+                    if b64 is None:
+                        return
+                    yield b64
 
-        # The API streams audio as multiple JSON lines:
-        #   {"code":0,"message":"","data":"<base64_audio_chunk>"}
-        #   {"code":0,"message":"","data":"<base64_audio_chunk>"}
-        #   ...
-        # Each line is a separate chunk. Concatenate all data fields,
-        # then decode once.
-        audio_chunks: list[bytes] = []
-        for line in resp.text.split("\n"):
+    @staticmethod
+    def _parse_stream_lines(text: str):  # -> Generator[str | None, None, None]
+        """Parse newline-delimited JSON lines from the TTS API response.
+
+        Yields base64 audio strings, or *None* for end-of-stream,
+        or raises ``RuntimeError`` for API errors.
+        """
+        for line in text.split("\n"):
             line = line.strip()
             if not line:
                 continue
@@ -173,23 +202,35 @@ class DoubaoTTS:
 
             code = payload.get("code", 0)
             if code == 20000000:
-                # End-of-stream signal, no more data
-                break
+                yield None
+                return
             if code != 0:
                 msg = payload.get("message", "unknown error")
                 raise RuntimeError(f"TTS API error ({code}): {msg}")
 
             raw_data = payload.get("data")
             if isinstance(raw_data, str):
-                audio_chunks.append(base64.b64decode(raw_data))
+                yield raw_data
             elif isinstance(raw_data, dict):
                 audio_b64 = raw_data.get("audio")
                 if audio_b64:
-                    audio_chunks.append(base64.b64decode(audio_b64))
+                    yield audio_b64
 
+    async def synthesize(self, text: str) -> bytes:
+        """Convert text to audio bytes via the V3 HTTP Unidirectional API.
+
+        Posts the text to the TTS endpoint and returns the raw audio
+        bytes (MP3 by default).  Uses ``synthesize_stream`` internally,
+        accumulating all yielded base64 chunks.
+        """
+        text = text.strip()
+        if not text:
+            return b""
+        audio_chunks: list[bytes] = []
+        async for chunk_b64 in self.synthesize_stream(text):
+            audio_chunks.append(base64.b64decode(chunk_b64))
         if not audio_chunks:
             raise RuntimeError("TTS response missing data field")
-
         return b"".join(audio_chunks)
 
     # ── Request helpers ──

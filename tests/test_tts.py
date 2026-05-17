@@ -103,6 +103,53 @@ def test_request_body_default_speed_omitted():
     assert "speech_rate" not in body["req_params"]["audio_params"]
 
 
+# ── Stream helpers ──
+
+
+@pytest.fixture
+def tts() -> DoubaoTTS:
+    return DoubaoTTS(api_key="k")
+
+
+def _stream_ctx(resp_status: int, resp_text: str) -> MagicMock:
+    """Build a mock for ``client.stream()`` return value.
+
+    Returns a ``MagicMock`` that acts as an async context manager.
+    ``__aenter__`` yields a response mock with ``status_code`` and
+    ``aiter_text()`` returning *resp_text* as a single chunk.
+    """
+
+    async def _single_chunk() -> AsyncMock:
+        yield resp_text
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = resp_status
+    mock_resp.aiter_text = _single_chunk
+    if resp_status != 200:
+        mock_resp.aread = AsyncMock(return_value=resp_text.encode())
+
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_resp)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    return cm
+
+
+def _json_response(chunks: list[bytes]) -> str:
+    """Build multi-line JSON response text from audio chunks."""
+    lines = []
+    for c in chunks:
+        b64 = base64.b64encode(c).decode()
+        lines.append(f'{{"code":0,"message":"","data":"{b64}"}}')
+    lines.append('{"code":20000000,"message":"OK"}')
+    return "\n".join(lines)
+
+
+@pytest.fixture
+def mock_stream():
+    with patch.object(httpx.AsyncClient, "stream") as m:
+        yield m
+
+
 # ── Full synthesize flow ──
 
 
@@ -114,52 +161,33 @@ async def test_synthesize_empty_text():
     assert await tts.synthesize("  ") == b""
 
 
-def _mock_multi_chunk_response(chunks: list[bytes]) -> MagicMock:
-    """Create a mock httpx.Response that simulates multi-line JSON streaming.
-
-    Each chunk is base64-encoded and sent as a separate JSON line,
-    mimicking the actual V3 API streaming behavior.
-    """
-    lines = []
-    for chunk in chunks:
-        b64 = base64.b64encode(chunk).decode()
-        lines.append(f'{{"code":0,"message":"","data":"{b64}"}}')
-    lines.append('{"code":20000000,"message":"OK"}')  # end-of-stream signal
-    json_text = "\n".join(lines)
-    m = MagicMock(spec=httpx.Response)
-    m.status_code = 200
-    m.content = json_text.encode()
-    m.text = json_text
-    return m
-
-
 @pytest.mark.asyncio
 async def test_synthesize_success():
     """Successful synthesize decodes base64 audio from multi-chunk JSON."""
     tts = DoubaoTTS(api_key="test-key")
-    fake_audio = b"fake_mp3_data_chunk1" + b"fake_mp3_data_chunk2"
-    chunk1 = b"fake_mp3_data_chunk1"
-    chunk2 = b"fake_mp3_data_chunk2"
-    mock_response = _mock_multi_chunk_response([chunk1, chunk2])
+    chunk1, chunk2 = b"fake_mp3_data_chunk1", b"fake_mp3_data_chunk2"
+    fake_audio = chunk1 + chunk2
+    json_text = _json_response([chunk1, chunk2])
+    ctx = _stream_ctx(200, json_text)
 
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)) as mock_post:
+    with patch.object(httpx.AsyncClient, "stream", return_value=ctx) as mock_stream:
         result = await tts.synthesize("hello world")
 
     assert result == fake_audio
-    mock_post.assert_awaited_once()
-
-    call_args = mock_post.call_args
-    assert call_args[0][0] == "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
-    assert call_args[1]["headers"]["X-Api-Key"] == "test-key"
-    assert call_args[1]["headers"]["X-Api-Resource-Id"] == "seed-tts-2.0"
+    mock_stream.assert_called_once()
+    args, kwargs = mock_stream.call_args
+    assert args[0] == "POST"
+    assert args[1] == "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+    assert kwargs["headers"]["X-Api-Key"] == "test-key"
+    assert kwargs["headers"]["X-Api-Resource-Id"] == "seed-tts-2.0"
 
 
 @pytest.mark.asyncio
 async def test_synthesize_single_chunk():
     """Single chunk + end-of-stream still works."""
     tts = DoubaoTTS(api_key="k")
-    mock_response = _mock_multi_chunk_response([b"audio_data"])
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
+    ctx = _stream_ctx(200, _json_response([b"audio_data"]))
+    with patch.object(httpx.AsyncClient, "stream", return_value=ctx):
         result = await tts.synthesize("hi")
     assert result == b"audio_data"
 
@@ -168,14 +196,9 @@ async def test_synthesize_single_chunk():
 async def test_synthesize_http_error():
     """Non-200 status code raises RuntimeError."""
     tts = DoubaoTTS(api_key="k")
-
-    mock_response = MagicMock(spec=httpx.Response)
-    mock_response.status_code = 401
-    mock_response.content = b"unauthorized"
-    mock_response.text = "unauthorized"
-
+    ctx = _stream_ctx(401, "unauthorized")
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)),
+        patch.object(httpx.AsyncClient, "stream", return_value=ctx),
         pytest.raises(RuntimeError, match="401"),
     ):
         await tts.synthesize("test")
@@ -185,15 +208,10 @@ async def test_synthesize_http_error():
 async def test_synthesize_api_error():
     """API returns JSON error (code != 0) with 200 status."""
     tts = DoubaoTTS(api_key="k")
-
     err_json = '{"reqid":"","code":55000000,"message":"resource ID is mismatched"}'
-    mock_response = MagicMock(spec=httpx.Response)
-    mock_response.status_code = 200
-    mock_response.content = err_json.encode()
-    mock_response.text = err_json
-
+    ctx = _stream_ctx(200, err_json)
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)),
+        patch.object(httpx.AsyncClient, "stream", return_value=ctx),
         pytest.raises(RuntimeError, match="55000000"),
     ):
         await tts.synthesize("test")
@@ -203,14 +221,51 @@ async def test_synthesize_api_error():
 async def test_synthesize_empty_response():
     """Empty response body raises RuntimeError."""
     tts = DoubaoTTS(api_key="k")
-
-    mock_response = MagicMock(spec=httpx.Response)
-    mock_response.status_code = 200
-    mock_response.content = b""
-    mock_response.text = ""
-
+    ctx = _stream_ctx(200, "")
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)),
-        pytest.raises(RuntimeError, match="empty response"),
+        patch.object(httpx.AsyncClient, "stream", return_value=ctx),
+        pytest.raises(RuntimeError, match="missing data"),
     ):
         await tts.synthesize("test")
+
+
+# ── synthesize_stream ──
+
+
+@pytest.mark.asyncio
+async def test_synthesize_stream_empty_text():
+    """Empty text yields nothing without connecting."""
+    tts = DoubaoTTS(api_key="k")
+    got = [c async for c in tts.synthesize_stream("")]
+    assert got == []
+    got = [c async for c in tts.synthesize_stream("  ")]
+    assert got == []
+
+
+@pytest.mark.asyncio
+async def test_synthesize_stream_yields_b64():
+    """synthesize_stream yields raw base64 strings from the API."""
+    tts = DoubaoTTS(api_key="k")
+    chunk1, chunk2 = b"\x00\x01\x02", b"\x03\x04\x05"
+    b64_1 = base64.b64encode(chunk1).decode()
+    b64_2 = base64.b64encode(chunk2).decode()
+    json_text = _json_response([chunk1, chunk2])
+    ctx = _stream_ctx(200, json_text)
+
+    with patch.object(httpx.AsyncClient, "stream", return_value=ctx):
+        got = [c async for c in tts.synthesize_stream("hello")]
+
+    assert got == [b64_1, b64_2]
+
+
+@pytest.mark.asyncio
+async def test_synthesize_stream_http_error():
+    """Non-200 status propagates from stream."""
+    tts = DoubaoTTS(api_key="k")
+    ctx = _stream_ctx(403, "forbidden")
+    with (
+        patch.object(httpx.AsyncClient, "stream", return_value=ctx),
+        pytest.raises(RuntimeError, match="403"),
+    ):
+        async for _ in tts.synthesize_stream("hi"):
+            pass

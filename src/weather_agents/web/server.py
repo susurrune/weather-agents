@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import re
 import ssl
@@ -35,6 +34,10 @@ class VoiceServer:
     ``{"type":"list_agents"}`` and ``{"type":"switch_agent","agent":"<name>"}``.
     """
 
+    _html_content: str
+    _html_etag: str
+    _IDLE_TIMEOUT: int = 300  # close WS after 5 min of silence
+
     def __init__(
         self,
         agent_map: dict[str, BaseAgent],
@@ -54,6 +57,16 @@ class VoiceServer:
         self.tts_engine = tts_engine
         self.ssl_context = ssl_context
         self._app = web.Application()
+
+        # Cache HTML at startup — avoid disk I/O on every request.
+        if _HTML_PATH.is_file():
+            self._html_content = _HTML_PATH.read_text(encoding="utf-8")
+            import hashlib
+
+            self._html_etag = hashlib.md5(self._html_content.encode()).hexdigest()[:16]
+        else:
+            self._html_content = "<h1>Voice client not found</h1>"
+            self._html_etag = "not-found"
 
         self._app.router.add_get("/", self._handle_index)
         self._app.router.add_get("/health", self._handle_health)
@@ -83,13 +96,16 @@ class VoiceServer:
         self._current_agent_name = name
         return True
 
-    async def _handle_index(self, _request: web.Request) -> web.Response:
-        """Serve the single-page voice client."""
-        if _HTML_PATH.is_file():
-            html = _HTML_PATH.read_text(encoding="utf-8")
-        else:
-            html = "<h1>Voice client not found</h1>"
-        return web.Response(text=html, content_type="text/html", charset="utf-8")
+    async def _handle_index(self, request: web.Request) -> web.Response:
+        """Serve the single-page voice client (cached in memory, ETag support)."""
+        if request.headers.get("If-None-Match") == self._html_etag:
+            return web.Response(status=304)
+        return web.Response(
+            text=self._html_content,
+            content_type="text/html",
+            charset="utf-8",
+            headers={"ETag": self._html_etag},
+        )
 
     async def _handle_health(self, _request: web.Request) -> web.Response:
         return web.json_response({"status": "ok", "agent": self.agent.name})
@@ -105,7 +121,14 @@ class VoiceServer:
         _log.info("voice_ws_open session=%s", session_id)
 
         try:
-            async for msg in ws:
+            while True:
+                try:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=self._IDLE_TIMEOUT)
+                except TimeoutError:
+                    _log.info("voice_ws_idle_timeout session=%s", session_id)
+                    await ws.send_json({"type": "error", "text": "idle timeout"})
+                    break
+
                 if msg.type == web.WSMsgType.TEXT:
                     try:
                         data: dict[str, Any] = json.loads(msg.data)
@@ -130,6 +153,14 @@ class VoiceServer:
                         )
                     elif msg_type == "switch_agent":
                         name = data.get("agent", "")
+                        # Close old session before switching agents
+                        old_name = self._current_agent_name
+                        if old_name != name:
+                            old_agent = self._agent_map.get(old_name)
+                            if old_agent:
+                                old_sid = old_agent.memory.get_active_session()
+                                if old_sid:
+                                    await old_agent.memory.delete_session(old_sid)
                         if self._switch_agent(name):
                             await self.agent.init()
                             await self.agent.memory.create_session()
@@ -147,6 +178,9 @@ class VoiceServer:
                             await ws.send_json({"type": "error", "text": f"unknown agent: {name}"})
                 elif msg.type == web.WSMsgType.ERROR:
                     _log.warning("voice_ws_error session=%s err=%s", session_id, ws.exception())
+                    break
+                elif msg.type == web.WSMsgType.CLOSE:
+                    break
         except asyncio.CancelledError:
             pass
         finally:
@@ -200,26 +234,28 @@ class VoiceServer:
             await self._synthesize_audio(ws, clean)
 
     async def _synthesize_audio(self, ws: web.WebSocketResponse, text: str) -> None:
-        """Synthesize text to audio and send chunks via WebSocket."""
+        """Synthesize text to audio and forward chunks via WebSocket as they arrive.
+
+        Uses the streaming API to forward base64 audio chunks directly
+        from the TTS response to the browser without buffering or
+        decode/re-encode overhead.
+        """
         assert self.tts_engine is not None
         try:
-            audio_data = await self.tts_engine.synthesize(text)
-            if not audio_data:
-                _log.warning("tts_empty_audio")
-                await self._safe_send(ws, {"type": "audio_end", "error": "empty"})
-                return
-            audio_b64 = base64.b64encode(audio_data).decode("ascii")
             if not await self._safe_send(
                 ws, {"type": "audio_start", "format": self.tts_engine.encoding}
             ):
                 return
-            chunk_size = 48000
-            for i in range(0, len(audio_b64), chunk_size):
-                if not await self._safe_send(
-                    ws, {"type": "audio_chunk", "data": audio_b64[i : i + chunk_size]}
-                ):
+            sent = 0
+            async for chunk_b64 in self.tts_engine.synthesize_stream(text):
+                sent += 1
+                if not await self._safe_send(ws, {"type": "audio_chunk", "data": chunk_b64}):
                     return
-            await self._safe_send(ws, {"type": "audio_end"})
+            if sent:
+                await self._safe_send(ws, {"type": "audio_end"})
+            else:
+                _log.warning("tts_empty_audio")
+                await self._safe_send(ws, {"type": "audio_end", "error": "empty"})
         except Exception as exc:
             _log.warning("tts_synthesis_error %s", exc)
             await self._safe_send(ws, {"type": "audio_end", "error": str(exc)})
@@ -289,6 +325,8 @@ async def run_voice_server(
     try:
         await server.run()
     finally:
+        if tts_engine:
+            await tts_engine.close()
         await ctx.close_all()
 
 
