@@ -140,3 +140,20 @@ class TestFactoryShortCircuits:
         _t, _r, summary = await orchestrate_task("先调研再写一篇", agent_map, snow)
         snow.chat.assert_awaited()
         assert summary == "aggregated summary"
+
+    @pytest.mark.asyncio
+    async def test_downstream_task_receives_upstream_result(self):
+        """Regression: rain must actually see fog's output, not just a placeholder."""
+        from weather_agents.core.factory import orchestrate_task
+
+        snow = _fake_agent("snow", chat_result="summary")
+        fog = _fake_agent("fog", chat_result="FOG_FOUND_FACT_X")
+        rain = _fake_agent("rain", chat_result="writeup")
+        agent_map = {"snow": snow, "fog": fog, "rain": rain}
+
+        await orchestrate_task("先调研再写一篇", agent_map, snow)
+
+        # Rain's task description must include fog's content.
+        rain_task = rain.execute_task.call_args[0][0]
+        assert "FOG_FOUND_FACT_X" in rain_task.description
+        assert rain_task.parent_id == "1"

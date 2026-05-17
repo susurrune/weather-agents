@@ -191,6 +191,7 @@ async def orchestrate_task(
     # Build dependency graph and execute in topological order
     completed: set[str] = set()
     results: list[TaskExecutionResult] = []
+    results_by_id: dict[str, TaskExecutionResult] = {}
     pending = [t for t in tasks if t.assigned_to and t.assigned_to != "snow"]
 
     while pending:
@@ -212,10 +213,23 @@ async def orchestrate_task(
                 )
             if on_task_start:
                 await on_task_start(t)
+            # Inject upstream results so downstream agents actually see what
+            # their dependencies produced. Before this, multi-step pipelines
+            # were broken: rain got "基于第 1 步…" but never received the
+            # fog data, so the dependency edge carried no information.
+            description = t.description
+            if t.parent_id and t.parent_id in results_by_id:
+                parent_result = results_by_id[t.parent_id]
+                description = (
+                    f"{t.description}\n\n"
+                    f"## 上游产出 (task {parent_result.id} · {parent_result.agent})\n"
+                    f"{parent_result.content}"
+                )
             a_task = AgentTask(
                 id=t.id,
-                description=t.description,
+                description=description,
                 assigned_to=t.assigned_to,
+                parent_id=t.parent_id,
                 metadata=t.metadata,
             )
             result = await agent.execute_task(a_task)
@@ -236,6 +250,7 @@ async def orchestrate_task(
         batch_results = await asyncio.gather(*[_execute_one(t) for t in ready])
         for r in batch_results:
             results.append(r)
+            results_by_id[r.id] = r
             completed.add(r.id)
         for t in ready:
             pending.remove(t)

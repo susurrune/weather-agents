@@ -1237,16 +1237,11 @@ async def _interactive(agent_name: str | None = None) -> None:
             if effective_mode is InteractiveMode.DEFAULT:
                 from weather_agents.core.router import classify
 
-                routed = classify(inp)
                 # `direct` → one-shot reply, never trigger auto-continue.
                 # `single` / `orchestrate` → behave like AUTO so the model
                 # can finish multi-step work without nagging the user.
-                effective_mode = (
-                    InteractiveMode.PLAN
-                    if False  # default never gates — kept for symmetry / future opt-in
-                    else InteractiveMode.AUTO
-                )
-                _route_disable_auto_continue = routed == "direct"
+                effective_mode = InteractiveMode.AUTO
+                _route_disable_auto_continue = classify(inp) == "direct"
             else:
                 _route_disable_auto_continue = False
 
