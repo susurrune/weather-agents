@@ -654,10 +654,9 @@ def _should_auto_continue(
 ) -> bool:
     """Check if the AI response signals more work — auto-continue.
 
-    1. Explicit "done" markers → stop (strongest signal).
-    2. Tool errors → continue (the model should retry with corrected approach).
-    3. Tool calls → continue (the model took action, likely more to come).
-    4. Text pattern match → continue if planning/signalling more steps.
+    1. Tool errors → continue (the model should retry with corrected approach).
+    2. Text tail matches forward-planning language → continue.
+    3. Otherwise → stop (model signaled completion or gave final answer).
     """
     # Only inspect the tail — the last paragraph where forward-looking
     # language actually lives.
@@ -668,8 +667,6 @@ def _should_auto_continue(
         return False
     if had_errors:
         return True  # always retry after tool errors
-    if had_tool_calls:
-        return True
     return bool(_AUTO_CONTINUE.search(tail))
 
 
