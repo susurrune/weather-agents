@@ -379,6 +379,98 @@ ruff format src/ tests/
 | Tools | 15 built-in · MCP Protocol · Plugin system |
 | CI | GitHub Actions · Ruff · MyPy · Pytest |
 
+## Project Status & Roadmap
+
+> 诚实的状态记录——基于代码事实，不夸大愿景。
+
+### 现在在哪里 (v1.x, ~2026 Q2)
+
+Weather Agents 已经是一个**可用的本地多 Agent 终端**。它能做到的事：
+
+| 能力 | 落地程度 |
+|:-----|:-------|
+| **6 Agent 角色** | 完成。每个 Agent 有独立 system_prompt、专属技能集、独立 LLM 配置 |
+| **复杂度路由** | 完成。`direct/single/orchestrate` 三档规则路由，< 1ms 决策，简单问题不触发编排 |
+| **三态交互模式** | 完成。`default/plan/auto` StrEnum + 持久化（`~/.weather-agents/config.yaml`）+ Shift+Tab 循环 |
+| **Pipeline 模板** | 完成。4 个内置 DAG（`code_review` / `research_then_write` / `implement_and_review` / `implement_test_deploy`），命中后跳过 Snow 拆任务 LLM 调用 |
+| **依赖任务数据流** | 完成。下游任务自动注入上游 `result.content`，描述里附 `## 上游产出 (task N · agent)` |
+| **多 Provider LLM** | 完成。LiteLLM 接 OpenAI / Anthropic / DeepSeek / Ollama，按 Agent 可换模型 |
+| **15 内置工具 + MCP + Plugin** | 完成。文件/Shell/HTTP/搜索 + MCP stdio 协议 + 用户插件目录加载 |
+| **三层记忆** | 完成。Short-term（SQLite 会话级，自动 prune dangling tool_calls）+ Working（in-memory 任务级）+ Long-term（SQLite KV + 模糊搜索） |
+| **Session resume** | 完成。`wa chat` 再启动自动恢复最近 session；`wa chat --new` 显式开新 |
+| **LLM Cache** | 完成。LRU + TTL，重复 prompt 命中 |
+| **Cost 追踪** | 完成。Token / 费用记账 + 预算上限 |
+| **Safety guardrails** | 完成。`shell_exec` 拒危险二进制；`http_*` 默认禁私网；截断标记防 LLM 误判 |
+| **语音聊天** | 完成（晴专属）。Doubao TTS V3 HTTP + WebSocket 语音服务器 |
+| **CI** | 完成。Ruff + MyPy + Pytest，3 个 Python 版本矩阵，覆盖率 ≥ 55% |
+| **Claude Code 自动化骨架** | 完成。`CLAUDE.md` 项目宪法 + `.claude/agents` + `.claude/commands` + hooks |
+
+### 哪里不够
+
+诚实的短板，按影响力排序：
+
+| 短板 | 影响 | 计划 |
+|:-----|:-----|:-----|
+| **跨 Agent 共享 working memory 缺失** | 多步 pipeline 靠 description 拼接传上游产出——超过 500 字符就被截断；3 步以上链信息丢失 | v2 必做（已在 `优化方案-多智能体记忆.md` 设计） |
+| **长期记忆没自动抽取/召回** | `memories` 表存在、有 `category` + fuzzy search，但**代码没自动写入点**也**没自动召回**——表是空的 | v2 必做 |
+| **`_AUTO_CONTINUE` 是正则** | 用正则匹配 LLM 输出文本判断"是否继续"——多语言/模型 phrasing 变化易失效 | v3 重写为显式 `<continue/>` token 契约 |
+| **`cli/main.py` 3000+ 行单文件** | 所有 CLI 逻辑挤在一起，新加命令成本高 | v2 拆分 |
+| **没有 Web/移动 UI** | 仅 CLI；voice server 已存在但没 chat UI | v3 |
+| **多 Agent 不能 handoff 给真人** | 没有"等待用户决策"的中断机制（除 plan 模式按 Enter） | v3 |
+| **Pipeline 模板只有 4 个** | 内置模板覆盖少；项目本身叫 weather agents 却没 weather_report pipeline | v1.x 持续加 |
+| **关键词路由以中文为中心** | 英文用户体验差（`pick_agent_for_goal` buckets 是中文 hint 为主） | v1.x |
+| **Plugin 生态空** | Plugin 机制有，但没社区贡献的实际 plugin | v3+ |
+| **没有 multi-modal 输入** | 用户只能发文本；不能拖图、不能传 PDF | v4 |
+
+### 路线图
+
+按时间倒序，**先近后远**。每一档都明确"完成意味着什么"。
+
+#### v1.x · Polish (~ 当前)
+- [x] 复杂度路由 + 三态模式（已 ship）
+- [x] Pipeline 模板系统（已 ship）
+- [x] 依赖任务数据注入（已 ship）
+- [ ] 补 5+ pipeline 模板（含 `weather_report`、`bug_fix`、`doc_write`、`refactor_review`）
+- [ ] 关键词路由补全英文桶
+- [ ] `cli/main.py` 拆分为 `cli/{interactive,commands,display,voice}.py`
+
+**完成标志**：日常 90% 用户输入有合适的 fast path 或 pipeline 命中。
+
+#### v2 · Memory (~ 下个 milestone)
+- [ ] `SessionStore` 跨 Agent 共享对话流（schema 设计已就绪）
+- [ ] `shared_working` 表：`(session_id, key) → value` —— 跨 Agent 工作内存
+- [ ] 长期记忆自动抽取：对话每 N 轮 fire-and-forget 抽 facts
+- [ ] 长期记忆自动召回：chat 入口注入 top-K 相关 facts 到 system_prompt
+- [ ] Agent 视角投影：切换 Agent 看到 `[fog]: ...` 标签的他人产出，不混淆 assistant 身份
+- [ ] 迁移脚本：v1 → v2 schema 平滑升级
+
+**完成标志**：3 步以上 pipeline 信息完整传递；切换 Agent 不丢上下文；重复对话同一主题第二次自动召回。
+
+#### v3 · Platform
+- [ ] Web UI（基于已有 voice server 扩展）：聊天 + Agent 切换 + Pipeline 可视化
+- [ ] 显式 `<continue/>` token 契约替代 `_AUTO_CONTINUE` 正则
+- [ ] 团队协作：多用户共享 session，handoff 给真人需审批
+- [ ] 知识库管理 UI：长期记忆查看/编辑/标签
+- [ ] Plugin marketplace：CLI 安装 + 签名验证
+
+**完成标志**：Weather Agents 成为可托管运行的多人协作平台，不只是个人终端。
+
+#### v4 · Multi-modal & Ecosystem
+- [ ] 图像/PDF/音频输入
+- [ ] Agent 间的图像/文件交换（不只是文本）
+- [ ] 第三方 Agent 接入协议（开放 6 Agent 之外的扩展）
+- [ ] 移动端 / 桌面端 App
+
+**完成标志**：从"开发者工具"演变为"通用 AI 协作平台"。
+
+### 设计原则（不会改的部分）
+
+- **规则优先，LLM 兜底**：能用规则解决的（路由、pipeline 匹配）就不调 LLM。每多一次 LLM 调用都要解释为什么。
+- **Agent 角色稳定**：6 个 Agent 的人格与职能不会随版本漂移；新能力作为 skill / pipeline 加入，不挤压角色定义。
+- **本地优先**：核心功能不依赖云服务，离线可用 Ollama。Web 平台是补充，不是替代。
+- **诚实的状态报告**：README / `/status` 等所有"项目能做什么"的描述必须基于代码事实，不夸大未上线的能力。
+- **晴 (Sunshine) 是例外**：她的角色不被路由优化或 token 节省所削减——情感陪伴不是效率问题。
+
 ## License
 
 [MIT](LICENSE)
