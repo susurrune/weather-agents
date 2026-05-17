@@ -929,6 +929,7 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
     selected_idx = 0
 
     result = ""
+    last_console_width = console.width
     with Live(
         Table(show_header=False, box=None, padding=0),
         console=console,
@@ -936,6 +937,12 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
         transient=True,
     ) as live:
         while True:
+            # Detect terminal resize and refresh so transient cursor
+            # tracking doesn't lose its place across reflowed lines.
+            if console.width != last_console_width:
+                live.refresh()
+                last_console_width = console.width
+
             text = "".join(buffer)
             filtered = [c for c in _COMMANDS if c[0].startswith(text)] if popup_visible else []
             if filtered and selected_idx >= len(filtered):
