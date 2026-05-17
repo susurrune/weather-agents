@@ -626,23 +626,23 @@ class TestBuildStreamDisplay:
 
 
 class TestBuildResponsePanel:
-    def test_returns_panel(self):
-        from rich.panel import Panel
+    def test_returns_table(self):
+        from rich.table import Table
 
         from weather_agents.cli.main import _build_response_panel
 
         ag = _make_display_agent()
         result = _build_response_panel(ag, "# Hello\nWorld", 1.23)
-        assert isinstance(result, Panel)
+        assert isinstance(result, Table)
 
     def test_interrupted_flag(self):
-        from rich.panel import Panel
+        from rich.table import Table
 
         from weather_agents.cli.main import _build_response_panel
 
         ag = _make_display_agent("snow")
         result = _build_response_panel(ag, "Partial answer", 0.5, interrupted=True)
-        assert isinstance(result, Panel)
+        assert isinstance(result, Table)
 
     def test_all_agents(self):
         from weather_agents.cli.main import _build_response_panel

@@ -324,32 +324,25 @@ def _build_stream_display(
     status_text: str,
     md_content: str,
 ) -> Table:
-    """Live renderable during streaming: agent header + content."""
+    """Live renderable during streaming: compact one-line header + content."""
     color = AGENT_COLORS.get(agent.name, "white")
     spinner_name = AGENT_SPINNERS.get(agent.name, "dots")
 
     tbl = Table(show_header=False, box=None, padding=0, expand=True)
+    tbl.add_column(width=3, justify="center")
     tbl.add_column(ratio=1)
 
-    # Header: animated spinner · agent name · status
     name_text = Text()
     name_text.append(f" {agent.display_name}", style=f"bold {color}")
     if status_text:
-        name_text.append("  ", style="dim")
-        name_text.append(status_text, style="dim")
+        name_text.append(f"  {status_text}", style="dim")
 
-    header_row = Table(show_header=False, box=None, padding=0, expand=True)
-    header_row.add_column(width=3, justify="center")
-    header_row.add_column(ratio=1)
-    header_row.add_row(
+    tbl.add_row(
         Spinner(spinner_name, style=f"bold {color}"),
         name_text,
     )
-    tbl.add_row(header_row)
-
-    # Streamed content
     if md_content:
-        tbl.add_row(Padding(Markdown(_strip_hr(md_content)), pad=(0, 2, 0, 2)))
+        tbl.add_row("", Padding(Markdown(_strip_hr(md_content)), pad=(0, 0, 0, 2)))
 
     return tbl
 
@@ -359,25 +352,38 @@ def _build_response_panel(
     content: str,
     elapsed: float,
     interrupted: bool = False,
-) -> Panel:
-    """Panel wrapping the final agent response."""
+    ctx: object | None = None,
+) -> Table:
+    """Compact response display: agent name + timing + compact status."""
     color = AGENT_COLORS.get(agent.name, "white")
-    title_text = Text()
-    title_text.append("  ", style="dim")
-    title_text.append(agent.display_name, style=f"bold {color}")
-
     sub = f"{elapsed:.1f}s" if not interrupted else f"{elapsed:.1f}s  interrupted"
 
-    return Panel(
-        Padding(Markdown(_strip_hr(content)), pad=(0, 1, 0, 1)),
-        title=title_text,
-        title_align="left",
-        subtitle=f"[dim]{sub}[/dim]",
-        subtitle_align="right",
-        border_style=f"dim {color}",
-        box=box.SIMPLE,
-        padding=(0, 1),
-    )
+    tbl = Table(show_header=False, box=None, padding=0, expand=True)
+    tbl.add_column(ratio=1)
+
+    header = Text()
+    header.append(f"  {agent.display_name}", style=f"bold {color}")
+    header.append(f"  {sub}", style="dim")
+
+    # Append compact context info on the same line
+    if ctx is not None:
+        try:
+            cu = agent.context_usage()
+            pct = cu["pct"]
+            msgs = cu["message_count"]
+            ratio = min(10, max(0, int(pct / 10)))
+            bar_color = "green" if pct < 50 else "yellow" if pct < 80 else "red"
+            header.append("  ", style="dim")
+            header.append(f"{'━' * ratio}{'╌' * (10 - ratio)}", style=f"bold {bar_color}")
+            header.append(f"  {pct}%", style="dim")
+            header.append(f"  {msgs}msgs", style="dim")
+        except Exception:
+            pass
+
+    tbl.add_row(header)
+    if content:
+        tbl.add_row(Padding(Markdown(_strip_hr(content)), pad=(0, 0, 0, 2)))
+    return tbl
 
 
 def _format_cost(cost: float) -> str:
@@ -784,7 +790,7 @@ async def _chat_single(agent_name: str, message: str) -> None:
         finally:
             status_handle.stop()
         elapsed = time.monotonic() - t0
-        console.print(_build_response_panel(agent, resp, elapsed))
+        console.print(_build_response_panel(agent, resp, elapsed, ctx=ctx))
     finally:
         await ctx.close_all()
 
@@ -817,16 +823,10 @@ def _build_input_display(
     """Build renderables for the input area with optional command popup."""
     color = AGENT_COLORS.get(agent.name, "cyan")
     results: list = []
-    w = console.width
-    rule = "━" * max(0, w - 4)
-
-    # ── Top solid line (agent color) ─────────────────────────────────────────
-    results.append(Text(f"  {rule}", style=f"bold {color}"))
 
     # ── Prompt line ──────────────────────────────────────────────────────────
     prompt = Text()
     prompt.append("  ")
-    # DEFAULT renders no label — keeps the prompt clean for the common case.
     if mode == "plan":
         prompt.append("[PLAN] ", style="bold magenta")
     elif mode == "auto":
@@ -862,25 +862,10 @@ def _build_input_display(
         prompt.append("▌", style=f"bold {color}")
     results.append(prompt)
 
-    # ── Hint line ────────────────────────────────────────────────────────────
-    if popup_visible:
-        hint = "↑↓ select  tab complete  esc dismiss  enter confirm"
-    else:
-        hint = "/ commands  ↑↓ history  esc clear"
-    hint_line = Text()
-    hint_line.append("  ")
-    hint_line.append(hint, style="dim")
-    results.append(hint_line)
-
-    # ── Bottom solid line (subtle) ───────────────────────────────────────────
-    results.append(Text(f"  {rule}", style="dim"))
-
-    # ── Status bar ───────────────────────────────────────────────────────────
-    status_text = _build_status_line(agent, ctx)
-    status_bar = Text()
-    status_bar.append("  ")
-    status_bar.append(status_text)
-    results.append(status_bar)
+    # ── Subtle separator ─────────────────────────────────────────────────────
+    w = console.width
+    sep = "─" * max(0, w - 4)
+    results.append(Text(f"  {sep}", style="dim"))
 
     # ── Command popup ────────────────────────────────────────────────────────
     if popup_visible and filtered_commands:
@@ -1375,7 +1360,9 @@ async def _interactive(agent_name: str | None = None) -> None:
                 finally:
                     if plan_content.strip():
                         plan_live.update(
-                            _build_response_panel(agent, plan_content, time.monotonic() - plan_t0)
+                            _build_response_panel(
+                                agent, plan_content, time.monotonic() - plan_t0, ctx=ctx
+                            )
                         )
                     plan_live.stop()
 
@@ -1499,7 +1486,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                     if md_content.strip():
                         live.update(
                             _build_response_panel(
-                                agent, md_content, time.monotonic() - t0, interrupted
+                                agent, md_content, time.monotonic() - t0, interrupted, ctx=ctx
                             )
                         )
                     live.stop()
@@ -2561,10 +2548,9 @@ async def _run_task(goal: str, agents=None) -> None:
                 ict = icon_text(target_name)
                 sp = AGENT_SPINNERS.get(target_name, "dots")
                 console.print()
-                console.print(Rule(f"  {ict}  ", align="left", style="dim"))
-                with console.status(f"  [dim]{ict} thinking…[/dim]", spinner=sp):
+                with console.status(f"  [dim]{ict} {target.display_name}…[/dim]", spinner=sp):
                     reply = await target.chat(refined_goal)
-                console.print(Padding(Markdown(_strip_hr(reply)), pad=(0, 2, 0, 2)))
+                console.print(Padding(Markdown(_strip_hr(reply)), pad=(0, 0, 0, 2)))
                 return
 
         from weather_agents.core.factory import orchestrate_task
@@ -2585,11 +2571,10 @@ async def _run_task(goal: str, agents=None) -> None:
             console.print(f"  {icon} {ict} {r.description}")
 
         console.print()
-        console.print(Rule("  Task  ", align="left", style="dim"))
         console.print(f"  [bold]{goal}[/bold]")
         console.print()
 
-        with console.status("  [dim]planning…[/dim]", spinner="dots"):
+        with console.status("  [dim]planning[/dim]", spinner="dots"):
             tasks, results, summary = await orchestrate_task(
                 goal,
                 agents,
@@ -2603,7 +2588,6 @@ async def _run_task(goal: str, agents=None) -> None:
             return
 
         # Task plan
-        console.print(Rule("  Plan  ", align="left", style="dim"))
         plan_tbl = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
         plan_tbl.add_column(width=4, style="dim")  # id
         plan_tbl.add_column(width=4)  # emoji
@@ -2625,8 +2609,6 @@ async def _run_task(goal: str, agents=None) -> None:
         )
 
         if summary:
-            console.print()
-            console.print(Rule("  Summary  ", align="left", style="dim"))
             console.print(Padding(Markdown(_strip_hr(summary)), pad=(0, 2, 0, 2)))
 
     finally:
