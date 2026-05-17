@@ -197,9 +197,7 @@ class VoiceServer:
                                     {"type": "error", "text": f"unknown agent: {name}"}
                                 )
                     elif msg.type == web.WSMsgType.ERROR:
-                        _log.warning(
-                            "voice_ws_error session=%s err=%s", session_id, ws.exception()
-                        )
+                        _log.warning("voice_ws_error session=%s err=%s", session_id, ws.exception())
                         break
                     elif msg.type == web.WSMsgType.CLOSE:
                         break
