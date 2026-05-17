@@ -643,7 +643,7 @@ _AUTO_CONTINUE = re.compile(
     r"next[,:]\s*(?:I'll|let me|step|we|I will)|"
     r"let me\s(?:now|continue|proceed|handle|take|work)|"
     r"I'll\s(?:now|start|begin|go|handle|take|work|need)|"
-    r"接下来|剩下|现在[就我]|先[把给让]|"
+    r"剩下|现在[就我]|先[把给让]|"
     r"\b(?:continue|next)\b|"
     r"remaining|ongoing|further|additionally|subsequently|"
     r"now[,:]\s*(?:let|I'll|I will|we'll|the))"
