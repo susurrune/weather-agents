@@ -3,8 +3,8 @@
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
-        "command": "if echo \"$CLAUDE_TOOL_FILE_PATH\" | grep -qE 'src/weather_agents/.*\\.py$'; then uv run ruff check --fix \"$CLAUDE_TOOL_FILE_PATH\" 2>&1 | tail -20; fi",
-        "description": "Python 改动自动 ruff fix"
+        "command": "if echo \"$CLAUDE_TOOL_FILE_PATH\" | grep -qE '\\.py$'; then uv run ruff check --fix \"$CLAUDE_TOOL_FILE_PATH\" 2>&1 | tail -10; uv run ruff format \"$CLAUDE_TOOL_FILE_PATH\" 2>&1 | tail -5; fi",
+        "description": "Python 改动自动 ruff fix + format (CI 跑 format --check 会因此挂)"
       }
     ],
     "PreToolUse": [

@@ -2444,9 +2444,7 @@ async def _run_task(goal: str, agents=None) -> None:
             if fast_path:
                 if pipeline is not None:
                     step = pipeline.steps[0]
-                    target_name = (
-                        step.agent if step.agent in available else next(iter(available))
-                    )
+                    target_name = step.agent if step.agent in available else next(iter(available))
                     refined_goal = step.description_template.format(goal=goal)
                 else:
                     target_name = pick_agent_for_goal(goal, available)

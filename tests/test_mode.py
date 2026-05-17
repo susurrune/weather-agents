@@ -47,6 +47,7 @@ class TestController:
         # until the first .current read.
         calls = {"n": 0}
         import weather_agents.cli.mode as mode_mod
+
         orig = mode_mod.load_config
 
         def counted():
