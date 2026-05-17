@@ -353,37 +353,36 @@ def _build_response_panel(
     elapsed: float,
     interrupted: bool = False,
     ctx: object | None = None,
-) -> Table:
-    """Compact response display: agent name + timing + compact status."""
+) -> Panel:
+    """Compact response panel — agent name + timing + optional status in subtitle."""
     color = AGENT_COLORS.get(agent.name, "white")
-    sub = f"{elapsed:.1f}s" if not interrupted else f"{elapsed:.1f}s  interrupted"
+    timing = f"{elapsed:.1f}s" if not interrupted else f"{elapsed:.1f}s  interrupted"
 
-    tbl = Table(show_header=False, box=None, padding=0, expand=True)
-    tbl.add_column(ratio=1)
+    title_text = Text()
+    title_text.append(f"  {agent.display_name}", style=f"bold {color}")
 
-    header = Text()
-    header.append(f"  {agent.display_name}", style=f"bold {color}")
-    header.append(f"  {sub}", style="dim")
-
-    # Append compact context info on the same line
+    sub = f"[dim]{timing}[/dim]"
     if ctx is not None:
         try:
             cu = agent.context_usage()
             pct = cu["pct"]
             msgs = cu["message_count"]
-            ratio = min(10, max(0, int(pct / 10)))
+            r = min(10, max(0, int(pct / 10)))
             bar_color = "green" if pct < 50 else "yellow" if pct < 80 else "red"
-            header.append("  ", style="dim")
-            header.append(f"{'━' * ratio}{'╌' * (10 - ratio)}", style=f"bold {bar_color}")
-            header.append(f"  {pct}%", style="dim")
-            header.append(f"  {msgs}msgs", style="dim")
+            sub += f"  [bold {bar_color}]{'━' * r}{'╌' * (10 - r)}[/] [dim]{pct}%  {msgs}msgs[/dim]"
         except Exception:
             pass
 
-    tbl.add_row(header)
-    if content:
-        tbl.add_row(Padding(Markdown(_strip_hr(content)), pad=(0, 0, 0, 2)))
-    return tbl
+    return Panel(
+        Markdown(_strip_hr(content)),
+        title=title_text,
+        title_align="left",
+        subtitle=sub,
+        subtitle_align="right",
+        border_style=f"dim {color}",
+        box=box.MINIMAL,
+        padding=(0, 1),
+    )
 
 
 def _format_cost(cost: float) -> str:
