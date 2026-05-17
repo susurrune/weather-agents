@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "command": "if echo \"$CLAUDE_TOOL_FILE_PATH\" | grep -qE 'src/weather_agents/.*\\.py$'; then uv run ruff check --fix \"$CLAUDE_TOOL_FILE_PATH\" 2>&1 | tail -20; fi",
+        "description": "Python 改动自动 ruff fix"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "case \"$CLAUDE_TOOL_BASH_COMMAND\" in *'git push'*|*'--no-verify'*|*'reset --hard'*|*'rm -rf /'*) echo 'BLOCKED: 需要用户明确授权' >&2; exit 2;; esac",
+        "description": "拦截危险操作"
+      }
+    ]
+  }
+}
