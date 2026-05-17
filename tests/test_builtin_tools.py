@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
+
+_IS_WIN = sys.platform == "win32"
 
 
 class TestFileTools:
@@ -85,7 +88,8 @@ class TestShellExec:
     async def test_basic_command(self):
         from weather_agents.tools.builtin import _shell_exec
 
-        result = await _shell_exec("echo hello")
+        cmd = "cmd /c echo hello" if _IS_WIN else "echo hello"
+        result = await _shell_exec(cmd)
         assert "hello" in result
 
     @pytest.mark.asyncio
@@ -106,7 +110,10 @@ class TestShellExec:
     async def test_timeout(self):
         from weather_agents.tools.builtin import _shell_exec
 
-        result = await _shell_exec("sleep 10", timeout=1)
+        if _IS_WIN:
+            result = await _shell_exec("ping -n 11 127.0.0.1", timeout=1)
+        else:
+            result = await _shell_exec("sleep 10", timeout=1)
         assert "timed out" in result
 
 
