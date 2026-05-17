@@ -655,7 +655,7 @@ _AUTO_CONTINUE = re.compile(
 
 # Auto-stop signal: explicit "done" markers trump auto-continue
 _AUTO_STOP = re.compile(
-    r"(?:完成了|全部完成|以上就|都做好了|已经完成|到此结束|"
+    r"(?:完成了|全部完成|以上就|都做好了|已经完成|到此结束|已生成完毕|"
     r"all done|task complete|finished|everything is done)",
     re.IGNORECASE,
 )
@@ -666,9 +666,13 @@ def _should_auto_continue(
 ) -> bool:
     """Check if the AI response signals more work — auto-continue.
 
-    1. Tool errors → continue (the model should retry with corrected approach).
+    1. Text tail contains explicit ''done'' markers → stop.
     2. Text tail matches forward-planning language → continue.
-    3. Otherwise → stop (model signaled completion or gave final answer).
+    3. Otherwise → stop.
+
+    Tool errors alone (``had_errors``) do NOT trigger continuation — the
+    model either retries internally via the LLM loop or returns a complete
+    response.
     """
     # Only inspect the tail — the last paragraph where forward-looking
     # language actually lives.
@@ -677,8 +681,6 @@ def _should_auto_continue(
 
     if _AUTO_STOP.search(tail):
         return False
-    if had_errors:
-        return True  # always retry after tool errors
     return bool(_AUTO_CONTINUE.search(tail))
 
 
@@ -1399,6 +1401,8 @@ async def _interactive(agent_name: str | None = None) -> None:
             # Inner loop: allows choice-menu re-entry with a new input
             _plan_steps: list[str] = []
             _plan_completed: set[int] = set()
+            _auto_continue_count = 0
+            _MAX_AUTO_CONTINUE = 3
             while True:
                 await _init_agent_lazy(agent, ctx)
                 t0 = time.monotonic()
@@ -1527,10 +1531,12 @@ async def _interactive(agent_name: str | None = None) -> None:
                     effective_mode is InteractiveMode.AUTO
                     and not _route_disable_auto_continue
                     and not interrupted
+                    and _auto_continue_count < _MAX_AUTO_CONTINUE
                     and _should_auto_continue(
                         md_content, had_tool_calls=had_tools, had_errors=had_errors
                     )
                 ):
+                    _auto_continue_count += 1
                     # Parse plan from the first substantive response
                     if not _plan_steps and md_content:
                         _plan_steps = _parse_plan_steps(md_content)
