@@ -237,16 +237,24 @@ def _get_key() -> str:
 def _poll_esc() -> bool:
     """Non-blocking check for Esc / Ctrl+C keypress.
 
-    Called from the streaming loop as a secondary interrupt path so Esc is
-    detected even when the background _esc_watcher executor thread can't read
-    from the console (e.g. Windows Terminal limits on background threads).
+    On Windows uses ``GetAsyncKeyState`` — a non-consumptive API that
+    checks physical key state without draining the console input buffer.
+    User keystrokes typed while the agent is streaming are preserved
+    for the next input prompt.
     """
     if sys.platform == "win32":
         try:
-            while _msvcrt.kbhit():
-                ch = _msvcrt.getwch()
-                if ch in ("\x1b", "\x03"):
-                    return True
+            import ctypes as _ct
+
+            PRESSED = 0x8000
+            if _ct.windll.user32.GetAsyncKeyState(0x1B) & PRESSED:  # VK_ESCAPE
+                return True
+            # Ctrl+C: check both VK_CONTROL and 'C' simultaneously
+            if (
+                _ct.windll.user32.GetAsyncKeyState(0x11) & PRESSED  # VK_CONTROL
+                and _ct.windll.user32.GetAsyncKeyState(0x43) & PRESSED  # 'C' key
+            ):
+                return True
         except Exception:
             pass
     return False
