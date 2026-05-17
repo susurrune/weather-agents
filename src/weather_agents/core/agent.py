@@ -323,6 +323,67 @@ class BaseAgent:
                 handler=_list,
             )
         )
+
+        async def _read_shared(key: str) -> str:
+            agent = get_call_agent()
+            if agent is None:
+                return "Error: no active agent"
+            value = await agent.memory.read_shared(key)
+            if value is None:
+                return f"No shared memory entry for key '{key}'."
+            if not isinstance(value, str):
+                import json as _json
+
+                value = _json.dumps(value, ensure_ascii=False)
+            return value
+
+        async def _list_shared() -> str:
+            agent = get_call_agent()
+            if agent is None:
+                return "Error: no active agent"
+            items = await agent.memory.list_shared()
+            if not items:
+                return "Shared memory is empty for this session."
+            lines = ["Shared memory in this session:"]
+            for it in items:
+                lines.append(f"  - {it['key']}  (by {it['written_by']}, {it['updated_at']})")
+            lines.append("\nUse read_shared_memory(key) to fetch a value.")
+            return "\n".join(lines)
+
+        self.tool_registry.register(
+            Tool(
+                name="list_shared_memory",
+                description=(
+                    "List keys in the session-shared scratchpad written by other "
+                    "agents in this orchestration. Call this first to discover what "
+                    "upstream agents produced; then call read_shared_memory(key) for "
+                    "the full content. Use this when your task description references "
+                    "an upstream task's output."
+                ),
+                parameters=[],
+                handler=_list_shared,
+            )
+        )
+        self.tool_registry.register(
+            Tool(
+                name="read_shared_memory",
+                description=(
+                    "Read the full value of a shared-memory key written by an "
+                    "upstream agent. Use this to fetch large upstream outputs that "
+                    "did not fit in your task description."
+                ),
+                parameters=[
+                    ToolParameter(
+                        name="key",
+                        type="string",
+                        description="The shared memory key, e.g. 'task_1_output'",
+                        required=True,
+                    ),
+                ],
+                handler=_read_shared,
+            )
+        )
+
         self.tool_registry.register(
             Tool(
                 name="use_skill",

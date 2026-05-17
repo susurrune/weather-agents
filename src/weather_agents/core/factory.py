@@ -6,6 +6,7 @@ Avoids duplication between CLI and web entry points.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -227,6 +228,10 @@ async def orchestrate_task(
     completed: set[str] = set()
     results: list[TaskExecutionResult] = []
     results_by_id: dict[str, TaskExecutionResult] = {}
+    # Original, un-truncated content keyed by task id — used so downstream
+    # description-injection can know when the excerpt is incomplete and
+    # so shared_working stores the full value (not the 500-char excerpt).
+    full_contents_by_id: dict[str, str] = {}
     pending = [t for t in tasks if t.assigned_to and t.assigned_to != "snow"]
 
     while pending:
@@ -249,16 +254,37 @@ async def orchestrate_task(
             if on_task_start:
                 await on_task_start(t)
             # Inject upstream results so downstream agents actually see what
-            # their dependencies produced. Before this, multi-step pipelines
-            # were broken: rain got "基于第 1 步…" but never received the
-            # fog data, so the dependency edge carried no information.
+            # their dependencies produced. Two complementary channels:
+            #   (1) Inline excerpt in the description so single-pass agents
+            #       without tool support still work. Capped at 500 chars to
+            #       keep the prompt small.
+            #   (2) The FULL value written to shared_working keyed by
+            #       `task_<parent_id>_output`. Downstream agents can pull it
+            #       in full via the read_shared_memory tool when the truncated
+            #       excerpt is insufficient — the "按需检索" pattern.
             description = t.description
             if t.parent_id and t.parent_id in results_by_id:
                 parent_result = results_by_id[t.parent_id]
+                # Prefer the un-truncated original when available — otherwise
+                # the description excerpt would be capped at the per-result
+                # truncation limit (default 500), making the "incomplete"
+                # detection useless.
+                full_content = full_contents_by_id.get(t.parent_id, parent_result.content or "")
+                excerpt = full_content
+                truncated = False
+                if len(excerpt) > 500:
+                    excerpt = excerpt[:500]
+                    truncated = True
+                tail = (
+                    "\n\n[完整内容存于 shared memory · key=task_{pid}_output · "
+                    "调用 read_shared_memory 拉取]"
+                    if truncated
+                    else ""
+                ).format(pid=parent_result.id)
                 description = (
                     f"{t.description}\n\n"
                     f"## 上游产出 (task {parent_result.id} · {parent_result.agent})\n"
-                    f"{parent_result.content}"
+                    f"{excerpt}{tail}"
                 )
             a_task = AgentTask(
                 id=t.id,
@@ -271,7 +297,15 @@ async def orchestrate_task(
             # (最多 3 轮)" but the code only awaited once. Exponential backoff
             # is bounded to keep failure cases from dragging on too long.
             result = await _execute_with_retry(agent, a_task, max_attempts=max_task_retries)
-            tr = result.content
+            full = result.content or ""
+            # Publish FULL output to shared memory BEFORE truncation so
+            # downstream agents can fetch the original via read_shared_memory.
+            # Best-effort — DB / session errors must never break orchestration.
+            if full:
+                with contextlib.suppress(Exception):
+                    await agent.memory.write_shared(f"task_{t.id}_output", full)
+            full_contents_by_id[t.id] = full
+            tr = full
             if result_truncate is not None and len(tr) > result_truncate:
                 tr = tr[:result_truncate]
             r = TaskExecutionResult(

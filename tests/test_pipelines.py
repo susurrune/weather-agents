@@ -158,6 +158,31 @@ class TestFactoryShortCircuits:
         assert "FOG_FOUND_FACT_X" in rain_task.description
         assert rain_task.parent_id == "1"
 
+    @pytest.mark.asyncio
+    async def test_large_upstream_result_truncated_with_pointer(self):
+        """When upstream output exceeds 500 chars, the description gets a
+        truncated excerpt + a pointer to shared memory."""
+        from weather_agents.core.factory import orchestrate_task
+
+        big = "X" * 2000
+        snow = _fake_agent("snow", chat_result="summary")
+        fog = _fake_agent("fog", chat_result=big)
+        rain = _fake_agent("rain", chat_result="writeup")
+        # Wire write_shared so we can assert it was called.
+        for a in (snow, fog, rain):
+            a.memory = MagicMock()
+            a.memory.write_shared = AsyncMock(return_value=True)
+        agent_map = {"snow": snow, "fog": fog, "rain": rain}
+
+        await orchestrate_task("先调研再写一篇", agent_map, snow)
+
+        rain_task = rain.execute_task.call_args[0][0]
+        # Truncated to ~500 chars in the description + a pointer message.
+        assert "task_1_output" in rain_task.description
+        assert "read_shared_memory" in rain_task.description
+        # And the FULL value was published to shared memory.
+        fog.memory.write_shared.assert_any_call("task_1_output", big)
+
 
 class TestTaskRetry:
     """README has promised retries since v1; this now actually verifies it."""
