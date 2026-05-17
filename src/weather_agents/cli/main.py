@@ -32,7 +32,37 @@ else:
     import tty as _tty
 
 from weather_agents import __version__
-from weather_agents.cli.mode import InteractiveMode, ModeController
+
+# InteractiveMode / ModeController are part of the new router system
+# (weather_agents/cli/mode.py).  If unavailable — e.g. CI without the
+# not-yet-committed file — fall back to auto-mode stubs so the CLI
+# still works.
+try:
+    from weather_agents.cli.mode import InteractiveMode as _InteractiveMode
+    from weather_agents.cli.mode import ModeController as _ModeController
+
+    InteractiveMode = _InteractiveMode
+    ModeController = _ModeController
+except ImportError:
+
+    class InteractiveMode:  # type: ignore[no-redef]
+        DEFAULT = "default"
+        PLAN = "plan"
+        AUTO = "auto"
+
+    class ModeController:  # type: ignore[no-redef]
+        current: str = "auto"
+
+        def set(self, mode: object) -> None:
+            self.current = mode if isinstance(mode, str) else "auto"
+
+        def label(self) -> tuple[str, str]:
+            return ("mode: auto", "dim")
+
+        def describe(self) -> str:
+            return "automatic mode (fallback)"
+
+
 from weather_agents.core.config import (
     USER_CONFIG_DIR,
     _save_user_cfg,
