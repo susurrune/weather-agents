@@ -643,6 +643,96 @@ class Memory:
         )
         await self._db.commit()
 
+    # -- Retrieval-injection helpers (used by BaseAgent._messages_with_recall) --
+
+    _TOKEN_RE = None  # type: ignore[assignment]  # populated lazily
+
+    @staticmethod
+    def _tokenize_for_recall(query: str) -> list[str]:
+        """Split `query` into recall tokens.
+
+        Strategy (no LLM, no embeddings):
+        - ASCII words (length ≥ 2) come FIRST — they're typically the
+          high-signal terms ("pnpm", "FastAPI") and must not get crowded
+          out by a flood of CJK ngrams when callers apply a count cap.
+        - CJK character runs → emit overlapping 2-grams and 3-grams. Plain
+          run-as-token over-matches ("的依赖" instead of "依赖") and ends up
+          missing facts stored under a sub-phrase.
+        Returns unique tokens preserving the priority above.
+        """
+        import re
+
+        out: dict[str, None] = {}
+        # ASCII first → they're typically the most discriminative tokens.
+        for w in re.findall(r"[A-Za-z][A-Za-z0-9_+-]+", query or ""):
+            out.setdefault(w, None)
+        for run in re.findall(r"[一-鿿]+", query or ""):
+            for size in (3, 2):
+                if len(run) < size:
+                    continue
+                for i in range(len(run) - size + 1):
+                    out.setdefault(run[i : i + size], None)
+        return list(out.keys())
+
+    async def recall_for_injection(self, query: str, limit: int = 3) -> list[dict]:
+        """Find long-term facts whose key OR value matches tokens from `query`.
+
+        Goes direct to SQL rather than delegating to ``recall()`` because the
+        public ``recall(key=...)`` only LIKEs the key column — facts stored
+        under semantic keys (``pkg_mgr=pnpm``) would never be found by their
+        value. Returns at most `limit` distinct facts ordered by recency.
+        Empty list when the store is empty.
+
+        Performance: assembles all tokens into a single SQL query rather
+        than looping (one round-trip instead of N). Caps at 24 tokens to
+        keep the LIKE chain from getting absurd on pasted essays.
+        """
+        if not self._db or not query:
+            return []
+        tokens = self._tokenize_for_recall(query)[:24]
+        if not tokens:
+            return []
+        # Build a single (key LIKE ? OR value LIKE ?) chain.
+        like_clauses = " OR ".join(["key LIKE ? OR value LIKE ?"] * len(tokens))
+        params: list[Any] = [self.agent_name]
+        for tok in tokens:
+            pattern = f"%{tok}%"
+            params.append(pattern)
+            params.append(pattern)
+        params.append(limit)
+        cursor = await self._db.execute(
+            f"SELECT key, value, category FROM memories "
+            f"WHERE agent = ? AND ({like_clauses}) "
+            f"ORDER BY updated_at DESC LIMIT ?",
+            params,
+        )
+        rows = await cursor.fetchall()
+        out: list[dict] = []
+        for r in rows:
+            try:
+                val = json.loads(r[1])
+            except (json.JSONDecodeError, TypeError):
+                val = r[1]
+            out.append({"key": r[0], "value": val, "category": r[2]})
+        return out
+
+    @staticmethod
+    def format_facts_block(facts: list[dict]) -> str:
+        """Render facts as a compact markdown block suitable for prompt injection.
+
+        Empty / falsy input returns an empty string so callers can ``if block``.
+        """
+        if not facts:
+            return ""
+        lines = ["## 相关记忆"]
+        for f in facts:
+            v = f.get("value")
+            if not isinstance(v, str):
+                with contextlib.suppress(TypeError, ValueError):
+                    v = json.dumps(v, ensure_ascii=False)
+            lines.append(f"- **{f.get('key')}**: {v}")
+        return "\n".join(lines)
+
     # -- Session management --
 
     def get_active_session(self) -> str | None:

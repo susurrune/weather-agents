@@ -575,7 +575,7 @@ class BaseAgent:
         try:
             full_content = ""
             for _iteration in range(self._max_tool_rounds):
-                messages = self.memory.get_messages()
+                messages = await self._messages_with_recall()
                 tool_names = self._active_tool_names()
 
                 tool_calls_received: list[dict] = []
@@ -906,6 +906,39 @@ class BaseAgent:
                     seen.add(tool_name)
         return names
 
+    async def _messages_with_recall(self) -> list[dict]:
+        """Return short-term messages with a 'relevant facts' system block
+        injected right before the latest user message.
+
+        Implements the 'retrieval-injection' principle: instead of dumping
+        all of long-term memory into the prompt, look up only what's
+        relevant to the current turn (by token match against the user's
+        latest message). Set WA_NO_RECALL=1 to disable, e.g. for debugging.
+        """
+        import os as _os
+
+        messages = self.memory.get_messages()
+        if not messages or _os.environ.get("WA_NO_RECALL") == "1":
+            return messages
+        last_user_idx = next(
+            (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
+            None,
+        )
+        if last_user_idx is None:
+            return messages
+        query = str(messages[last_user_idx].get("content") or "")[:200]
+        try:
+            facts = await self.memory.recall_for_injection(query, limit=3)
+        except Exception:
+            return messages
+        if not facts:
+            return messages
+        block = self.memory.format_facts_block(facts)
+        if not block:
+            return messages
+        messages.insert(last_user_idx, {"role": "system", "content": block})
+        return messages
+
     async def _llm_loop(
         self,
         max_iterations: int = 10,
@@ -917,7 +950,7 @@ class BaseAgent:
 
         try:
             for _ in range(max_iterations):
-                messages = self.memory.get_messages()
+                messages = await self._messages_with_recall()
                 if on_status:
                     on_status("thinking...")
                 response = await self.llm.complete(

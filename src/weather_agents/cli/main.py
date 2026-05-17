@@ -105,6 +105,9 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/session load ", "switch session"),
     ("/session delete ", "delete session"),
     ("/memory", "memory stats (clear: /memory clear)"),
+    ("/remember ", "store a fact: /remember key=value"),
+    ("/recall ", "list facts or /recall <query>"),
+    ("/forget ", "delete a fact: /forget <key>"),
     ("/workspace", "workspace info/set/auto"),
     ("/model", "view/change model  (all: /model all <m>)"),
     ("/apikey", "manage API keys  (set/del)"),
@@ -1140,6 +1143,60 @@ async def _interactive(agent_name: str | None = None) -> None:
                         f"  [green]cleared {icon_text(ag.name)} {ag.display_name} "
                         f"({removed} messages)[/green]"
                     )
+                continue
+            if cmd_lower.startswith("/remember "):
+                # /remember <key>=<value>   — store one long-term fact for this agent
+                payload = cmd[len("/remember ") :].strip()
+                if "=" not in payload:
+                    console.print(
+                        "  [red]usage: /remember <key>=<value>[/red]  "
+                        "[dim](e.g. /remember pkg_mgr=pnpm)[/dim]"
+                    )
+                else:
+                    key, _, value = payload.partition("=")
+                    key = key.strip()
+                    value = value.strip()
+                    if key and value:
+                        await _init_agent_lazy(agent, ctx)
+                        await agent.memory.remember(key, value, category="user_fact")
+                        console.print(f"  [green]+ remembered[/green] [cyan]{key}[/cyan] = {value}")
+                    else:
+                        console.print("  [red]key and value cannot be empty[/red]")
+                continue
+            if cmd_lower.startswith("/recall"):
+                # /recall              → list all long-term facts for this agent
+                # /recall <query>      → relevance-ranked facts for the query
+                query = cmd[len("/recall") :].strip()
+                await _init_agent_lazy(agent, ctx)
+                if query:
+                    facts = await agent.memory.recall_for_injection(query, limit=10)
+                else:
+                    facts = await agent.memory.recall(limit=20)
+                if not facts:
+                    console.print("  [dim]no facts stored yet — try /remember key=value[/dim]")
+                else:
+                    for f in facts:
+                        v = f.get("value")
+                        if not isinstance(v, str):
+                            try:
+                                import json as _json
+
+                                v = _json.dumps(v, ensure_ascii=False)
+                            except Exception:
+                                v = str(v)
+                        console.print(
+                            f"  [cyan]{f.get('key')}[/cyan] = {v} "
+                            f"[dim]({f.get('category', 'general')})[/dim]"
+                        )
+                continue
+            if cmd_lower.startswith("/forget "):
+                key = cmd[len("/forget ") :].strip()
+                if not key:
+                    console.print("  [red]usage: /forget <key>[/red]")
+                else:
+                    await _init_agent_lazy(agent, ctx)
+                    await agent.memory.forget(key)
+                    console.print(f"  [green]- forgot[/green] [cyan]{key}[/cyan]")
                 continue
             if cmd_lower == "/compact":
                 await _init_agent_lazy(agent, ctx)

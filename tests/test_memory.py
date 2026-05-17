@@ -401,6 +401,54 @@ class TestGapTruncation:
         assert len(kept) >= 1
 
     @pytest.mark.asyncio
+    async def test_recall_for_injection_finds_tokens(self, mem):
+        await mem.remember("pkg_mgr", "pnpm", category="user_fact")
+        await mem.remember("editor", "neovim", category="user_fact")
+        await mem.remember("unrelated", "xyz", category="general")
+
+        hits = await mem.recall_for_injection("我现在用 pnpm 装依赖", limit=3)
+        keys = {h["key"] for h in hits}
+        assert "pkg_mgr" in keys
+
+    @pytest.mark.asyncio
+    async def test_recall_for_injection_dedupes(self, mem):
+        await mem.remember("project", "weather-agents", category="user_fact")
+        # Query has two tokens that both match the same fact — must still
+        # return the fact only once.
+        hits = await mem.recall_for_injection("weather agents project", limit=3)
+        keys = [h["key"] for h in hits]
+        assert keys.count("project") == 1
+
+    @pytest.mark.asyncio
+    async def test_recall_for_injection_empty_when_no_facts(self, mem):
+        hits = await mem.recall_for_injection("anything", limit=3)
+        assert hits == []
+
+    def test_tokenize_for_recall_splits_cjk_and_ascii(self):
+        from weather_agents.core.memory import Memory as _M
+
+        toks = _M._tokenize_for_recall("帮我 update pnpm 的依赖")
+        # CJK runs ≥2 chars + ascii words
+        assert "update" in toks
+        assert "pnpm" in toks
+        assert "依赖" in toks
+
+    def test_format_facts_block_empty(self):
+        from weather_agents.core.memory import Memory as _M
+
+        assert _M.format_facts_block([]) == ""
+
+    def test_format_facts_block_renders(self):
+        from weather_agents.core.memory import Memory as _M
+
+        block = _M.format_facts_block(
+            [{"key": "pkg_mgr", "value": "pnpm", "category": "user_fact"}]
+        )
+        assert "相关记忆" in block
+        assert "pkg_mgr" in block
+        assert "pnpm" in block
+
+    @pytest.mark.asyncio
     async def test_resume_does_not_drag_in_old_messages(self, memory_config, monkeypatch):
         """End-to-end: writing messages now + simulating an old message
         long ago should NOT load the old one on resume."""
