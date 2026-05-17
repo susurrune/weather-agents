@@ -157,3 +157,73 @@ class TestFactoryShortCircuits:
         rain_task = rain.execute_task.call_args[0][0]
         assert "FOG_FOUND_FACT_X" in rain_task.description
         assert rain_task.parent_id == "1"
+
+
+class TestTaskRetry:
+    """README has promised retries since v1; this now actually verifies it."""
+
+    @pytest.mark.asyncio
+    async def test_transient_failure_retries_until_success(self):
+        from weather_agents.core.factory import orchestrate_task
+
+        snow = _fake_agent("snow", chat_result="summary")
+
+        attempts = {"n": 0}
+
+        async def flaky(task):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                return MagicMock(success=False, content="transient")
+            return MagicMock(success=True, content="finally worked")
+
+        frost = MagicMock()
+        frost.name = "frost"
+        frost.execute_task = AsyncMock(side_effect=flaky)
+        agent_map = {"snow": snow, "frost": frost}
+
+        _t, results, _s = await orchestrate_task("代码审查", agent_map, snow, max_task_retries=3)
+        assert attempts["n"] == 3
+        assert results[0].success is True
+        assert "finally worked" in results[0].content
+
+    @pytest.mark.asyncio
+    async def test_persistent_failure_gives_up_after_max_attempts(self):
+        from weather_agents.core.factory import orchestrate_task
+
+        snow = _fake_agent("snow", chat_result="summary")
+        frost = MagicMock()
+        frost.name = "frost"
+        attempts = {"n": 0}
+
+        async def always_fail(task):
+            attempts["n"] += 1
+            return MagicMock(success=False, content="boom")
+
+        frost.execute_task = AsyncMock(side_effect=always_fail)
+        agent_map = {"snow": snow, "frost": frost}
+
+        _t, results, _s = await orchestrate_task("代码审查", agent_map, snow, max_task_retries=2)
+        assert attempts["n"] == 2
+        assert results[0].success is False
+
+    @pytest.mark.asyncio
+    async def test_exception_path_also_retries(self):
+        from weather_agents.core.factory import orchestrate_task
+
+        snow = _fake_agent("snow", chat_result="summary")
+        frost = MagicMock()
+        frost.name = "frost"
+        attempts = {"n": 0}
+
+        async def raise_then_succeed(task):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise RuntimeError("network hiccup")
+            return MagicMock(success=True, content="recovered")
+
+        frost.execute_task = AsyncMock(side_effect=raise_then_succeed)
+        agent_map = {"snow": snow, "frost": frost}
+
+        _t, results, _s = await orchestrate_task("代码审查", agent_map, snow, max_task_retries=3)
+        assert attempts["n"] == 2
+        assert results[0].success is True

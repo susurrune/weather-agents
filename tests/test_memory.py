@@ -351,3 +351,91 @@ class TestMessageDataclass:
     def test_message_with_tool_info(self):
         msg = Message(role="tool", content="result", name="read_file", tool_call_id="tc_1")
         assert msg.name == "read_file"
+
+
+class TestGapTruncation:
+    """Resume-time gap truncation — prevents the 乱拉取 bug."""
+
+    def _row(self, role: str, content: str, ts: str) -> tuple:
+        # Mirrors the 7-tuple shape from the messages SELECT in _load_short_term.
+        # (role, content, name, tool_call_id, tool_calls, reasoning_content, created_at)
+        return (role, content, None, None, None, None, ts)
+
+    def test_no_gap_keeps_everything(self):
+        rows = [
+            self._row("assistant", "c", "2026-05-17 10:00:05"),
+            self._row("user", "b", "2026-05-17 10:00:03"),
+            self._row("assistant", "a", "2026-05-17 10:00:01"),
+        ]
+        kept = Memory._truncate_at_timestamp_gap(rows, gap_seconds=14400)
+        assert len(kept) == 3
+
+    def test_large_gap_truncates_older_messages(self):
+        # Newest two are seconds apart; older two are from yesterday.
+        rows = [
+            self._row("assistant", "today2", "2026-05-17 10:05:00"),
+            self._row("user", "today1", "2026-05-17 10:00:00"),
+            self._row("assistant", "yesterday2", "2026-05-16 09:00:00"),
+            self._row("user", "yesterday1", "2026-05-16 08:55:00"),
+        ]
+        kept = Memory._truncate_at_timestamp_gap(rows, gap_seconds=14400)  # 4h
+        contents = [r[1] for r in kept]
+        assert contents == ["today2", "today1"]
+        assert "yesterday2" not in contents
+
+    def test_gap_zero_disables_truncation(self):
+        rows = [
+            self._row("assistant", "now", "2026-05-17 10:00:00"),
+            self._row("user", "ancient", "2020-01-01 00:00:00"),
+        ]
+        kept = Memory._truncate_at_timestamp_gap(rows, gap_seconds=0)
+        assert len(kept) == 2
+
+    def test_handles_missing_timestamps(self):
+        rows = [
+            self._row("assistant", "a", "2026-05-17 10:00:00"),
+            self._row("user", "b", None),
+        ]
+        # Must not crash; behavior is best-effort (keep when ts is missing).
+        kept = Memory._truncate_at_timestamp_gap(rows, gap_seconds=14400)
+        assert len(kept) >= 1
+
+    @pytest.mark.asyncio
+    async def test_resume_does_not_drag_in_old_messages(self, memory_config, monkeypatch):
+        """End-to-end: writing messages now + simulating an old message
+        long ago should NOT load the old one on resume."""
+        # Use 1-second gap so we don't need to actually wait hours.
+        monkeypatch.setenv("WA_RESUME_GAP_SECONDS", "1")
+
+        m1 = Memory(memory_config, "agent_a")
+        await m1.init_db()
+        sid = await m1.create_session("test")
+
+        # Backdate one user message by 1 hour by writing directly to the DB.
+        # (mimics yesterday's session)
+        assert m1._db is not None
+        await m1._db.execute(
+            "INSERT INTO messages (agent, role, content, session_id, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now', '-1 hour'))",
+            ("agent_a", "user", "stale message from yesterday", sid),
+        )
+        # Recent message at current time.
+        await m1._db.execute(
+            "INSERT INTO messages (agent, role, content, session_id, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            ("agent_a", "user", "fresh message", sid),
+        )
+        await m1._db.commit()
+        await m1.close()
+
+        # Fresh Memory instance — simulating a new process resuming the session.
+        m2 = Memory(memory_config, "agent_a")
+        await m2.init_db()
+        ok = await m2.load_session(sid)
+        try:
+            assert ok is True
+            user_contents = [msg.content for msg in m2.short_term if msg.role == "user"]
+            assert "fresh message" in user_contents
+            assert "stale message from yesterday" not in user_contents
+        finally:
+            await m2.close()

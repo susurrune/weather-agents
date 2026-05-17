@@ -158,6 +158,40 @@ class TaskExecutionResult:
     content: str
 
 
+async def _execute_with_retry(agent: BaseAgent, a_task: Any, *, max_attempts: int) -> Any:
+    """Run ``agent.execute_task`` with bounded retries on failure / exception.
+
+    Returns whatever ``execute_task`` returned on success. On final failure,
+    returns the last result object (which already has ``.success=False``) so
+    the caller's result shape stays uniform.
+    """
+    last_exc: Exception | None = None
+    last_result: Any = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await agent.execute_task(a_task)
+            if getattr(result, "success", True):
+                return result
+            last_result = result
+        except Exception as e:
+            last_exc = e
+        # Exponential backoff: 0.5s, 1.0s, 2.0s — stops growing for sanity.
+        if attempt < max_attempts:
+            await asyncio.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
+
+    if last_result is not None:
+        return last_result
+    # Synthesize a result object if every attempt threw.
+    return type(
+        "_FailedResult",
+        (),
+        {
+            "success": False,
+            "content": f"All {max_attempts} attempts threw: {last_exc!r}",
+        },
+    )()
+
+
 async def orchestrate_task(
     goal: str,
     agent_map: dict[str, BaseAgent],
@@ -167,6 +201,7 @@ async def orchestrate_task(
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None = None,
     result_truncate: int | None = 500,
     summary_prompt_template: str = "",
+    max_task_retries: int = 3,
 ) -> tuple[list[Any], list[TaskExecutionResult], str]:
     """Orchestrate a multi-agent task: plan -> execute -> summarize.
 
@@ -232,7 +267,10 @@ async def orchestrate_task(
                 parent_id=t.parent_id,
                 metadata=t.metadata,
             )
-            result = await agent.execute_task(a_task)
+            # Retry on failure — README has long advertised "失败任务自动重试
+            # (最多 3 轮)" but the code only awaited once. Exponential backoff
+            # is bounded to keep failure cases from dragging on too long.
+            result = await _execute_with_retry(agent, a_task, max_attempts=max_task_retries)
             tr = result.content
             if result_truncate is not None and len(tr) > result_truncate:
                 tr = tr[:result_truncate]

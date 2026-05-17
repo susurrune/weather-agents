@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -203,7 +204,8 @@ class Memory:
         # ordering that could place a tool message before its assistant.
         if self._active_session:
             cursor = await self._db.execute(
-                "SELECT role, content, name, tool_call_id, tool_calls, reasoning_content FROM messages "
+                "SELECT role, content, name, tool_call_id, tool_calls, "
+                "reasoning_content, created_at FROM messages "
                 "WHERE agent = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
                 (self.agent_name, self._active_session, self.config.short_term_limit),
             )
@@ -214,8 +216,18 @@ class Memory:
             self._loaded = True
             self._prune_dangling_tool_calls()
             return
-        rows = await cursor.fetchall()
-        for row in reversed(list(rows)):
+
+        rows = list(await cursor.fetchall())
+        # Conversation-gap truncation: walking from the newest backward, stop
+        # as soon as we see a timestamp gap larger than RESUME_GAP_SECONDS.
+        # Pre-fix users complained that a fresh `wa chat` would drag in 50
+        # messages spanning days of unrelated tasks (the "乱拉取" bug). A 4h
+        # gap is a cheap proxy for "different work session"; nothing earlier
+        # belongs in the immediate context.
+        gap_seconds = float(os.environ.get("WA_RESUME_GAP_SECONDS", "14400"))  # 4h default
+        rows = self._truncate_at_timestamp_gap(rows, gap_seconds)
+
+        for row in reversed(rows):
             tool_calls = None
             if len(row) > 4 and row[4]:
                 with contextlib.suppress(json.JSONDecodeError, TypeError):
@@ -235,6 +247,42 @@ class Memory:
             )
         self._loaded = True
         self._prune_dangling_tool_calls()
+
+    @staticmethod
+    def _truncate_at_timestamp_gap(rows: list, gap_seconds: float) -> list:
+        """Keep only the contiguous tail of rows where consecutive
+        ``created_at`` values are within ``gap_seconds`` of each other.
+
+        ``rows`` is ordered NEWEST first (DESC). We walk from index 0 forward
+        looking for the first big gap; everything from that gap onward (older)
+        is dropped. The created_at column is the LAST element of each row.
+        """
+        if not rows or gap_seconds <= 0:
+            return rows
+        from datetime import datetime
+
+        def parse_ts(raw: Any) -> datetime | None:
+            if not raw:
+                return None
+            if isinstance(raw, datetime):
+                return raw
+            with contextlib.suppress(ValueError, TypeError):
+                # SQLite returns 'YYYY-MM-DD HH:MM:SS' for CURRENT_TIMESTAMP.
+                return datetime.fromisoformat(str(raw).replace(" ", "T"))
+            return None
+
+        keep = [rows[0]]
+        prev_ts = parse_ts(rows[0][-1])
+        for row in rows[1:]:
+            cur_ts = parse_ts(row[-1])
+            if prev_ts and cur_ts:
+                delta = abs((prev_ts - cur_ts).total_seconds())
+                if delta > gap_seconds:
+                    break
+            keep.append(row)
+            if cur_ts:
+                prev_ts = cur_ts
+        return keep
 
     def _prune_dangling_tool_calls(self) -> None:
         """Remove orphaned tool_calls/tool message pairs from short-term memory.
