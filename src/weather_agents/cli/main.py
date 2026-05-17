@@ -241,18 +241,22 @@ def _poll_esc() -> bool:
     checks physical key state without draining the console input buffer.
     User keystrokes typed while the agent is streaming are preserved
     for the next input prompt.
+
+    Masks both ``0x8000`` (key currently down) and ``0x0001`` (pressed
+    since last call) so a quick tap of Esc between poll cycles is
+    still detected.
     """
     if sys.platform == "win32":
         try:
             import ctypes as _ct
 
-            PRESSED = 0x8000
-            if _ct.windll.user32.GetAsyncKeyState(0x1B) & PRESSED:  # VK_ESCAPE
+            KEYEVENT = 0x8001  # 0x8000 (currently down) | 0x0001 (pressed since last call)
+            if _ct.windll.user32.GetAsyncKeyState(0x1B) & KEYEVENT:  # VK_ESCAPE
                 return True
             # Ctrl+C: check both VK_CONTROL and 'C' simultaneously
             if (
-                _ct.windll.user32.GetAsyncKeyState(0x11) & PRESSED  # VK_CONTROL
-                and _ct.windll.user32.GetAsyncKeyState(0x43) & PRESSED  # 'C' key
+                _ct.windll.user32.GetAsyncKeyState(0x11) & 0x8000  # VK_CONTROL
+                and _ct.windll.user32.GetAsyncKeyState(0x43) & 0x8000  # 'C' key
             ):
                 return True
         except Exception:
