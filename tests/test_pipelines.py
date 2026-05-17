@@ -63,9 +63,7 @@ class TestBuild:
             triggers=("x",),
             steps=(
                 PipelineStep(id="1", agent="fog", description_template="a"),
-                PipelineStep(
-                    id="2", agent="rain", description_template="b", depends_on=("1",)
-                ),
+                PipelineStep(id="2", agent="rain", description_template="b", depends_on=("1",)),
             ),
         )
         tasks = build_tasks_from_pipeline(p, "g")

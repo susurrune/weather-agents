@@ -71,7 +71,9 @@ class TestResume:
     ):
         from weather_agents.agents.fog import FogAgent
 
-        agent = FogAgent(config=shared_db_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        agent = FogAgent(
+            config=shared_db_config, llm=mock_llm, bus=bus, tool_registry=tool_registry
+        )
         await agent.init()
         try:
             assert agent.memory.get_active_session() is not None
@@ -96,7 +98,9 @@ class TestResume:
         await fog.memory._flush_pending()
         await fog.close()
 
-        rain = RainAgent(config=shared_db_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        rain = RainAgent(
+            config=shared_db_config, llm=mock_llm, bus=bus, tool_registry=tool_registry
+        )
         await rain.init()
         try:
             # Rain should NOT inherit Fog's session.

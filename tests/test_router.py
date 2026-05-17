@@ -59,9 +59,7 @@ def test_empty_goal_is_direct() -> None:
 def test_long_code_block_is_orchestrate() -> None:
     goal = (
         "帮我处理这段代码并先重构再加测试：\n"
-        "```python\n"
-        + "def foo():\n    return 1\n" * 30
-        + "```\n"
+        "```python\n" + "def foo():\n    return 1\n" * 30 + "```\n"
     )
     assert classify(goal) == "orchestrate"
 

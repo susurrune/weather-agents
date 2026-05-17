@@ -53,6 +53,7 @@ class TestController:
             yaml.dump({"cli": {"interactive_mode": "auto"}}), encoding="utf-8"
         )
         import weather_agents.core.config as cfg_mod
+
         cfg_mod.invalidate_cache()
         c = ModeController()
         assert c.current is InteractiveMode.AUTO
@@ -62,6 +63,7 @@ class TestController:
             yaml.dump({"cli": {"interactive_mode": "bogus"}}), encoding="utf-8"
         )
         import weather_agents.core.config as cfg_mod
+
         cfg_mod.invalidate_cache()
         c = ModeController()
         assert c.current is InteractiveMode.DEFAULT
@@ -88,10 +90,15 @@ class TestController:
         # Regression: an earlier version did its own write and dropped every
         # other key on the file (api_keys, model overrides, …) on each save.
         (isolated_user_dir / "config.yaml").write_text(
-            yaml.dump({
-                "llm": {"default_model": "deepseek/deepseek-v4-flash", "api_keys": {"openai": "sk-x"}},
-                "memory": {"short_term_limit": 80},
-            }),
+            yaml.dump(
+                {
+                    "llm": {
+                        "default_model": "deepseek/deepseek-v4-flash",
+                        "api_keys": {"openai": "sk-x"},
+                    },
+                    "memory": {"short_term_limit": 80},
+                }
+            ),
             encoding="utf-8",
         )
         c = ModeController(initial=InteractiveMode.DEFAULT)
@@ -127,6 +134,7 @@ class TestConfigIntegration:
             yaml.dump({"cli": {"interactive_mode": "plan"}}), encoding="utf-8"
         )
         import weather_agents.core.config as cfg_mod
+
         cfg_mod.invalidate_cache()
         from weather_agents.core.config import load_config
 

@@ -45,9 +45,7 @@ _PIPELINES: tuple[Pipeline, ...] = (
     Pipeline(
         name="code_review",
         triggers=("审查代码", "代码审查", "code review", "review my code", "审计安全", "安全审计"),
-        steps=(
-            PipelineStep(id="1", agent="frost", description_template="审查代码: {goal}"),
-        ),
+        steps=(PipelineStep(id="1", agent="frost", description_template="审查代码: {goal}"),),
     ),
     Pipeline(
         name="research_then_write",
