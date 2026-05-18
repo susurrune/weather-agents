@@ -1006,13 +1006,21 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
     results: list[dict] | None = None
     errors: list[str] = []
 
-    # Try DuckDuckGo first
+    # Try DuckDuckGo first. The ddgs library is synchronous and its
+    # internal HTTP retries against yahoo/bing backends can stall for
+    # tens of seconds when those endpoints misbehave — exactly the
+    # "agent suddenly stopped" symptom seen by users. asyncio.wait_for
+    # gives the whole search a hard wall-clock cap so the chat loop can
+    # always recover, while _ddg_api_search itself uses asyncio.to_thread
+    # to keep the event loop responsive during the blocking call.
     try:
-        results = await _ddg_api_search(query, min(num_results, 10))
+        results = await asyncio.wait_for(_ddg_api_search(query, min(num_results, 10)), timeout=12.0)
     except Exception as e:
         errors.append(f"ddgs: {e}")
         try:
-            results = await _ddg_html_fallback(query, min(num_results, 10))
+            results = await asyncio.wait_for(
+                _ddg_html_fallback(query, min(num_results, 10)), timeout=10.0
+            )
         except Exception as e2:
             errors.append(f"ddg-html: {e2}")
 
@@ -1021,7 +1029,9 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
         bing_key = os.environ.get("BING_API_KEY")
         if bing_key:
             try:
-                results = await _bing_search(query, min(num_results, 10), bing_key)
+                results = await asyncio.wait_for(
+                    _bing_search(query, min(num_results, 10), bing_key), timeout=10.0
+                )
             except Exception as e3:
                 errors.append(f"bing: {e3}")
 
@@ -1041,8 +1051,8 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
     return "\n".join(output_parts)
 
 
-async def _ddg_api_search(query: str, num_results: int) -> list[dict]:
-    """Primary: use ddgs library."""
+def _ddg_api_search_sync(query: str, num_results: int) -> list[dict]:
+    """Synchronous core of the ddgs search — must run in a worker thread."""
     from ddgs import DDGS
 
     results: list[dict] = []
@@ -1056,6 +1066,14 @@ async def _ddg_api_search(query: str, num_results: int) -> list[dict]:
                 }
             )
     return results
+
+
+async def _ddg_api_search(query: str, num_results: int) -> list[dict]:
+    """Primary: ddgs library. Run in a thread because ddgs is synchronous and
+    can stall for tens of seconds on transient yahoo/bing backend errors.
+    Without to_thread() such a stall freezes the entire event loop — stream
+    rendering, Esc handling and other concurrent tool calls all wedge."""
+    return await asyncio.to_thread(_ddg_api_search_sync, query, num_results)
 
 
 def _parse_ddg_html(html: str, max_results: int) -> list[dict]:
