@@ -257,6 +257,45 @@ class TestOrchestrateTask:
         assert "not found" in results[0].content
 
     @pytest.mark.asyncio
+    async def test_orch_session_var_is_set_during_run(self):
+        """During orchestrate_task, _orch_session_var should reflect snow's
+        session id so cross-agent shared memory tools can find each other.
+        Resets to None when the function returns."""
+        from weather_agents.core.agent import Task, _orch_session_var
+
+        captured: dict[str, str | None] = {}
+
+        async def _spy_orchestrate(_goal):
+            captured["during_plan"] = _orch_session_var.get()
+            return [Task(id="1", description="x", assigned_to="rain")]
+
+        snow = Mock()
+        snow.orchestrate = AsyncMock(side_effect=_spy_orchestrate)
+        snow.chat = AsyncMock(return_value="ok")
+        snow.memory = Mock()
+        snow.memory.get_active_session = Mock(return_value="orch-sid-xyz")
+
+        async def _spy_execute(_t):
+            captured["during_execute"] = _orch_session_var.get()
+            return Mock(success=True, content="done")
+
+        rain = Mock()
+        rain.execute_task = AsyncMock(side_effect=_spy_execute)
+        rain.memory = Mock()
+        rain.memory.write_shared = AsyncMock()
+
+        await orchestrate_task("goal", agent_map={"rain": rain, "snow": snow})
+
+        assert captured["during_plan"] == "orch-sid-xyz"
+        assert captured["during_execute"] == "orch-sid-xyz"
+        # After return, ContextVar must be reset
+        assert _orch_session_var.get() is None
+        # write_shared must be called with the orchestration sid
+        rain.memory.write_shared.assert_awaited_once()
+        kwargs = rain.memory.write_shared.await_args.kwargs
+        assert kwargs.get("session_id") == "orch-sid-xyz"
+
+    @pytest.mark.asyncio
     async def test_dangling_dependency_fails_fast(self):
         """Task depending on an id that never appears in the plan must fail
         explicitly, not silently run without its upstream context."""

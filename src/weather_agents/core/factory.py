@@ -17,7 +17,7 @@ from weather_agents.agents.fog import FogAgent
 from weather_agents.agents.frost import FrostAgent
 from weather_agents.agents.rain import RainAgent
 from weather_agents.agents.snow import SnowAgent
-from weather_agents.core.agent import BaseAgent, TaskState
+from weather_agents.core.agent import BaseAgent, TaskState, _orch_session_var
 from weather_agents.core.agent import Task as AgentTask
 from weather_agents.core.bus import MessageBus
 from weather_agents.core.config import AppConfig, load_config
@@ -215,6 +215,53 @@ async def orchestrate_task(
     if snow is None:
         return [], [], "Snow agent not available"
 
+    # Pin a single shared-memory session id for the entire orchestration.
+    # Each agent's own _active_session is fine for that agent's chat history,
+    # but shared scratch writes (write_shared / read_shared) MUST go through
+    # one common sid or two agents in the same DAG will write/read different
+    # rows and the "upstream output in shared memory" contract silently fails.
+    # We prefer snow's session (snow is the orchestrator) and fall back to the
+    # first agent that has one. The ContextVar is read by tool handlers.
+    orch_sid: str | None = snow.memory.get_active_session()
+    if orch_sid is None:
+        for _a in agent_map.values():
+            sid = _a.memory.get_active_session()
+            if sid:
+                orch_sid = sid
+                break
+    _orch_token = _orch_session_var.set(orch_sid)
+    try:
+        return await _run_orchestration(
+            goal,
+            agent_map,
+            snow,
+            orch_sid,
+            on_task_start=on_task_start,
+            on_task_done=on_task_done,
+            on_planned=on_planned,
+            result_truncate=result_truncate,
+            summary_prompt_template=summary_prompt_template,
+            max_task_retries=max_task_retries,
+        )
+    finally:
+        _orch_session_var.reset(_orch_token)
+
+
+async def _run_orchestration(
+    goal: str,
+    agent_map: dict[str, BaseAgent],
+    snow: BaseAgent,
+    orch_sid: str | None,
+    *,
+    on_task_start: Callable[[Any], Awaitable[None]] | None,
+    on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None,
+    on_planned: Callable[[list[Any]], Awaitable[None]] | None,
+    result_truncate: int | None,
+    summary_prompt_template: str,
+    max_task_retries: int,
+) -> tuple[list[Any], list[TaskExecutionResult], str]:
+    """Inner orchestration loop. Extracted so orchestrate_task can wrap it
+    in a try/finally that always resets the orchestration ContextVar."""
     # Try pipeline match first — skips Snow's decomposition LLM call entirely
     # (~2-3k tokens saved) when the goal matches a known collaboration shape.
     from weather_agents.core.pipelines import build_tasks_from_pipeline, match_pipeline
@@ -356,7 +403,9 @@ async def orchestrate_task(
             full = result.content or ""
             if full:
                 with contextlib.suppress(Exception):
-                    await agent.memory.write_shared(f"task_{t.id}_output", full)
+                    await agent.memory.write_shared(
+                        f"task_{t.id}_output", full, session_id=orch_sid
+                    )
             full_contents_by_id[t.id] = full
             tr = full
             if result_truncate is not None and len(tr) > result_truncate:

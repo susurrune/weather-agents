@@ -32,10 +32,24 @@ _call_agent_var: contextvars.ContextVar[BaseAgent | None] = contextvars.ContextV
     "_call_agent", default=None
 )
 
+# Orchestration-scoped shared-memory session id. When set (by
+# factory.orchestrate_task), tool handlers and write_shared/read_shared
+# callers prefer this over each agent's individual _active_session — without
+# it, two agents in the same orchestration write to different sids and never
+# see each other's outputs, which silently broke cross-agent collaboration.
+_orch_session_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_orch_session", default=None
+)
+
 
 def get_call_agent() -> BaseAgent | None:
     """Return the agent that owns the current async context, if any."""
     return _call_agent_var.get()
+
+
+def get_orch_session() -> str | None:
+    """Return the orchestration-shared session id when one is active."""
+    return _orch_session_var.get()
 
 
 class AgentState(StrEnum):
@@ -386,7 +400,10 @@ class BaseAgent:
             agent = get_call_agent()
             if agent is None:
                 return "Error: no active agent"
-            value = await agent.memory.read_shared(key)
+            # Prefer the orchestration session id when one is active; otherwise
+            # fall back to this agent's own _active_session.
+            sid = get_orch_session()
+            value = await agent.memory.read_shared(key, session_id=sid)
             if value is None:
                 return f"No shared memory entry for key '{key}'."
             if not isinstance(value, str):
@@ -399,7 +416,8 @@ class BaseAgent:
             agent = get_call_agent()
             if agent is None:
                 return "Error: no active agent"
-            items = await agent.memory.list_shared()
+            sid = get_orch_session()
+            items = await agent.memory.list_shared(session_id=sid)
             if not items:
                 return "Shared memory is empty for this session."
             lines = ["Shared memory in this session:"]
@@ -707,11 +725,16 @@ class BaseAgent:
         # actually happened.
         delegations: list[tuple[str, bool]] = []  # (target_agent, success)
 
+        # Tools that returned a [CircuitBreakerOpen] error this turn — we
+        # drop them from the active tool set for the rest of the turn so the
+        # LLM doesn't waste iterations re-calling a known-broken tool.
+        suppressed_tools: set[str] = set()
+
         try:
             full_content = ""
             for _iteration in range(self._max_tool_rounds):
                 messages = await self._messages_with_recall()
-                tool_names = self._active_tool_names()
+                tool_names = [t for t in self._active_tool_names() if t not in suppressed_tools]
 
                 tool_calls_received: list[dict] = []
                 streaming_reasoning: str | None = None
@@ -866,6 +889,8 @@ class BaseAgent:
 
                 # ── Phase 3: Record results in original order ──
                 for tc, result, success, _tool_name in exec_results:
+                    if isinstance(result, str) and "[CircuitBreakerOpen]" in result:
+                        suppressed_tools.add(_tool_name)
                     self.memory.add_message("tool", result, name=_tool_name, tool_call_id=tc["id"])
                     label = next(p["tool_label"] for p in tool_prep if p["tc"] is tc)
                     yield {
@@ -925,10 +950,11 @@ class BaseAgent:
         Used to clean up after an error so the conversation history doesn't
         contain a dangling user message with no assistant response.
         """
-        for i in range(len(self.memory.short_term) - 1, -1, -1):
-            if self.memory.short_term[i].role == "user":
-                self.memory.short_term.pop(i)
-                break
+        with self.memory._short_term_lock:
+            for i in range(len(self.memory.short_term) - 1, -1, -1):
+                if self.memory.short_term[i].role == "user":
+                    self.memory.short_term.pop(i)
+                    break
 
     async def compact(self, keep_recent: int = 12) -> str:
         """Compress conversation context by summarising older messages.
@@ -1023,12 +1049,17 @@ class BaseAgent:
             digest_parts.append("Verbatim user directives to obey:")
             digest_parts.extend(f'  - "{d}"' for d in directives[-8:])
 
-        self.memory.short_term = system_msgs.copy()
-        # System-role insertion: persistence layer skips system rows, so this
-        # stays purely in-process and never bleeds into other sessions.
-        self.memory.add_message("system", "\n".join(digest_parts))
-        for m in recent:
-            self.memory.short_term.append(m)
+        # compact() runs across a long await (the digest LLM call), during
+        # which other turns may have added messages. We snapshot system+recent
+        # at the END and write atomically under the short-term lock so we don't
+        # clobber messages appended in the interim.
+        with self.memory._short_term_lock:
+            self.memory.short_term = system_msgs.copy()
+            # System-role insertion: persistence layer skips system rows, so this
+            # stays purely in-process and never bleeds into other sessions.
+            self.memory.add_message("system", "\n".join(digest_parts))
+            for m in recent:
+                self.memory.short_term.append(m)
         self.memory.prune_tool_messages()
 
         return f"compressed {len(to_summarize)} messages ({len(summary)} char digest)"

@@ -105,6 +105,15 @@ class Memory:
         self._loaded = False
         self._pending_persists: set[asyncio.Task] = set()
         self._active_session: str | None = None
+        # short_term is mutated from both the main chat loop and bus-dispatched
+        # request handlers (and concurrent gather() over the same agent in
+        # orchestration). All mutations go through a short, non-async critical
+        # section to keep insertions from interleaving. An RLock is used
+        # because a few mutation methods call each other (add_message ->
+        # _prune_dangling_tool_calls).
+        import threading as _threading
+
+        self._short_term_lock = _threading.RLock()
 
     async def init_db(self) -> None:
         if self._db is not None:
@@ -342,52 +351,55 @@ class Memory:
         handles duplicate tool_call_ids across different assistant messages,
         which the naive set-based approach would conflate.
         """
-        if not self.short_term:
-            return
+        with self._short_term_lock:
+            if not self.short_term:
+                return
 
-        n = len(self.short_term)
-        remove = [False] * n
+            n = len(self.short_term)
+            remove = [False] * n
 
-        # ── Pass 1: position-aware matching ──
-        # For each tool_call_id, a stack of assistant indices waiting for a
-        # response. A tool message pops from the stack — satisfying the most
-        # recent (closest) preceding assistant.
-        waiting: dict[str, list[int]] = {}
-        for i, msg in enumerate(self.short_term):
-            if msg.role == "assistant" and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    if tid := tc.get("id"):
-                        waiting.setdefault(tid, []).append(i)
-            elif msg.role == "tool" and msg.tool_call_id:
-                tid = msg.tool_call_id
-                if tid in waiting and waiting[tid]:
-                    waiting[tid].pop()  # consumed by closest assistant
-                else:
-                    remove[i] = True  # orphaned tool message
+            # ── Pass 1: position-aware matching ──
+            # For each tool_call_id, a stack of assistant indices waiting for a
+            # response. A tool message pops from the stack — satisfying the most
+            # recent (closest) preceding assistant.
+            waiting: dict[str, list[int]] = {}
+            for i, msg in enumerate(self.short_term):
+                if msg.role == "assistant" and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        if tid := tc.get("id"):
+                            waiting.setdefault(tid, []).append(i)
+                elif msg.role == "tool" and msg.tool_call_id:
+                    tid = msg.tool_call_id
+                    if tid in waiting and waiting[tid]:
+                        waiting[tid].pop()  # consumed by closest assistant
+                    else:
+                        remove[i] = True  # orphaned tool message
 
-        # Any assistant indices still in waiting stacks are orphaned.
-        for indices in waiting.values():
-            for i in indices:
-                remove[i] = True
+            # Any assistant indices still in waiting stacks are orphaned.
+            for indices in waiting.values():
+                for i in indices:
+                    remove[i] = True
 
-        if not any(remove):
-            return
+            if not any(remove):
+                return
 
-        kept = [m for i, m in enumerate(self.short_term) if not remove[i]]
+            kept = [m for i, m in enumerate(self.short_term) if not remove[i]]
 
-        # ── Pass 2: remove tool messages with no preceding assistant ──
-        seen_tc_ids: set[str] = set()
-        sanitized: list[Message] = []
-        for msg in kept:
-            if msg.role == "assistant" and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    if tid := tc.get("id"):
-                        seen_tc_ids.add(tid)
-            elif msg.role == "tool" and msg.tool_call_id and msg.tool_call_id not in seen_tc_ids:
-                continue
-            sanitized.append(msg)
+            # ── Pass 2: remove tool messages with no preceding assistant ──
+            seen_tc_ids: set[str] = set()
+            sanitized: list[Message] = []
+            for msg in kept:
+                if msg.role == "assistant" and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        if tid := tc.get("id"):
+                            seen_tc_ids.add(tid)
+                elif (
+                    msg.role == "tool" and msg.tool_call_id and msg.tool_call_id not in seen_tc_ids
+                ):
+                    continue
+                sanitized.append(msg)
 
-        self.short_term = sanitized
+            self.short_term = sanitized
 
     def prune_tool_messages(self) -> None:
         """Public wrapper around _prune_dangling_tool_calls."""
@@ -426,14 +438,15 @@ class Memory:
             msg.tool_calls = kwargs["tool_calls"]
         if "reasoning_content" in kwargs and kwargs["reasoning_content"]:
             msg.reasoning_content = kwargs["reasoning_content"]
-        self.short_term.append(msg)
+        with self._short_term_lock:
+            self.short_term.append(msg)
 
-        if len(self.short_term) > self.config.short_term_limit:
-            system_msgs = [m for m in self.short_term if m.role == "system"]
-            other_msgs = [m for m in self.short_term if m.role != "system"]
-            keep = max(0, self.config.short_term_limit - len(system_msgs))
-            self.short_term = system_msgs + other_msgs[-keep:] if keep else system_msgs
-            self._prune_dangling_tool_calls()
+            if len(self.short_term) > self.config.short_term_limit:
+                system_msgs = [m for m in self.short_term if m.role == "system"]
+                other_msgs = [m for m in self.short_term if m.role != "system"]
+                keep = max(0, self.config.short_term_limit - len(system_msgs))
+                self.short_term = system_msgs + other_msgs[-keep:] if keep else system_msgs
+                self._prune_dangling_tool_calls()
 
         if self._db and role != "system":
             try:

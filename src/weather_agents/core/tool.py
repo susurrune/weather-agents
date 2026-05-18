@@ -89,7 +89,11 @@ class Tool:
             if not allowed:
                 return f"Error: {reason}"
 
-        # Circuit breaker check — fail-fast if the breaker is OPEN
+        # Circuit breaker check — fail-fast if the breaker is OPEN.
+        # The "[CircuitBreakerOpen]" prefix is a contract with the agent
+        # layer: chat_stream detects it and removes the offending tool from
+        # the active tool set for the remainder of the turn so the LLM does
+        # not waste iterations re-calling a known-broken tool.
         breaker = get_breaker(self.name)
         if not breaker.allow_request():
             _log.warning(
@@ -97,9 +101,9 @@ class Tool:
                 extra={"tool": self.name, "state": str(breaker.state)},
             )
             return (
-                f"Tool '{self.name}' is temporarily unavailable "
-                f"(circuit breaker {breaker.state.value}). "
-                f"Auto-retry after cooldown."
+                f"Error: [CircuitBreakerOpen] Tool '{self.name}' is temporarily "
+                f"unavailable (breaker {breaker.state.value}). Auto-retry after "
+                f"cooldown."
             )
 
         should_cache = self.cacheable and not self.dangerous
