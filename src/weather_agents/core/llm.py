@@ -591,28 +591,71 @@ class LLMClient:
         - StreamEvent(type="tool_call", tool_call={...}) when a tool call is complete
         - StreamEvent(type="done", usage={...}) at end of stream
 
+        Fallback chains apply only BEFORE the first chunk is yielded — once any
+        content/tool_call has streamed out we cannot switch models without
+        corrupting the response, so any later error becomes a terminal "error"
+        event for the caller to handle.
+
         If overrides are provided, they take precedence over agent config:
         overrides = {"model": "claude-opus-4-7", "temperature": 0.3, "max_tokens": 32000}
         """
         self._check_budget()
         ov = overrides or {}
         raw_model = ov.get("model")
-        model: str = raw_model if isinstance(raw_model, str) else self._get_model(agent_name)
-        provider, _stripped = _split_provider(model)
+        primary_model: str = (
+            raw_model if isinstance(raw_model, str) else self._get_model(agent_name)
+        )
+        fallback_models = [
+            m for m in _FALLBACK_CHAINS.get(primary_model, []) if self._has_key_for_model(m)
+        ]
+        models_to_try = [primary_model] + fallback_models
 
-        stream_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": ov.get("temperature", self.config.llm.temperature),
-            "max_tokens": ov.get("max_tokens", self.config.llm.max_tokens),
-            "timeout": self.config.llm.timeout,
-            "stream": True,
-        }
-        if provider:
-            stream_kwargs["custom_llm_provider"] = provider
+        # Phase A: try to establish the stream against each model in turn. Only
+        # acompletion() failures (auth, 5xx, connection refused, etc.) trigger
+        # fallback; once we have an iterator we commit to that model.
+        response = None
+        used_model = primary_model
+        provider = None
+        primary_error: Exception | None = None
+        for i, attempt_model in enumerate(models_to_try):
+            ap, _ = _split_provider(attempt_model)
+            stream_kwargs: dict[str, Any] = {
+                "model": attempt_model,
+                "messages": messages,
+                "temperature": ov.get("temperature", self.config.llm.temperature),
+                "max_tokens": ov.get("max_tokens", self.config.llm.max_tokens),
+                "timeout": self.config.llm.timeout,
+                "stream": True,
+            }
+            if ap:
+                stream_kwargs["custom_llm_provider"] = ap
+            if tools and tool_registry:
+                stream_kwargs["tools"] = tool_registry.get_schemas(tools)
+            try:
+                response = await _get_litellm().acompletion(**stream_kwargs)
+                used_model = attempt_model
+                provider = ap
+                break
+            except Exception as e:
+                if i == 0:
+                    primary_error = e
+                log.warning(
+                    "stream_fallback",
+                    extra={"model": attempt_model, "agent": agent_name, "error": str(e)},
+                )
+                continue
 
-        if tools and tool_registry:
-            stream_kwargs["tools"] = tool_registry.get_schemas(tools)
+        if response is None:
+            # Every model failed before streaming even started. Report the
+            # primary model's error (the chain's last error is usually less
+            # actionable, e.g. a fallback's missing key).
+            yield StreamEvent(
+                type="error", text=_format_user_facing_error(primary_model, primary_error)
+            )
+            return
+
+        model = used_model
+        _ = provider  # already baked into stream_kwargs
 
         full_content = ""
         reasoning_content: str | None = None
@@ -620,7 +663,6 @@ class LLMClient:
         start = time.monotonic()
 
         try:
-            response = await _get_litellm().acompletion(**stream_kwargs)
             async with asyncio.timeout(self.config.llm.timeout):
                 async for chunk in response:
                     delta = chunk.choices[0].delta

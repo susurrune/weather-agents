@@ -52,6 +52,10 @@ class MCPClient:
         self._next_id = 0
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._reader_task: asyncio.Task | None = None
+        # Separate task that drains the subprocess's stderr pipe. Without
+        # this an MCP server that logs more than ~64KB of debug output to
+        # stderr eventually blocks on write() and the whole server hangs.
+        self._stderr_task: asyncio.Task | None = None
         self._send_lock = asyncio.Lock()
         # SSE-specific state
         self._http_client: httpx.AsyncClient | None = None
@@ -106,6 +110,7 @@ class MCPClient:
             env=env,
         )
         self._reader_task = asyncio.create_task(self._read_stdio_loop())
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
 
         try:
             init_response = await self._request_stdio(
@@ -172,6 +177,35 @@ class MCPClient:
                 "mcp_stdio_read_error",
                 extra={"server": self.config.name, "error": str(e)},
             )
+
+    async def _drain_stderr(self) -> None:
+        """Continuously drain the subprocess's stderr pipe so it never
+        blocks on a full kernel buffer. We log a sample so server-side
+        crashes are debuggable but discard the rest to keep memory bounded.
+        """
+        if not self._process or not self._process.stderr:
+            return
+        stderr = self._process.stderr
+        try:
+            while True:
+                line = await stderr.readline()
+                if not line:
+                    break
+                # Only log the first few stderr lines; many MCP servers spam
+                # debug output that would otherwise drown out the logs.
+                _log.debug(
+                    "mcp_stderr",
+                    extra={
+                        "server": self.config.name,
+                        "line": line.decode("utf-8", errors="replace").rstrip(),
+                    },
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Stderr drain must never crash the client; pipe closure during
+            # shutdown surfaces as a generic OSError on Windows.
+            return
         finally:
             for fut in self._pending.values():
                 if not fut.done():
@@ -442,11 +476,13 @@ class MCPClient:
     # ── Cleanup ─────────────────────────────────────────────────────────
 
     async def close(self) -> None:
-        if self._reader_task and not self._reader_task.done():
-            self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._reader_task
-        self._reader_task = None
+        for task_attr in ("_reader_task", "_stderr_task"):
+            task = getattr(self, task_attr, None)
+            if task and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+            setattr(self, task_attr, None)
 
         proc = self._process
         if proc:
@@ -579,6 +615,15 @@ class MCPManager:
         return handler
 
     async def close_all(self) -> None:
+        # Close every client even if one of them raises during shutdown.
+        # Previously a single client.close() exception would leave the rest
+        # of the subprocesses orphaned.
         for client in self.clients.values():
-            await client.close()
+            try:
+                await client.close()
+            except Exception as e:
+                _log.warning(
+                    "mcp_close_failed",
+                    extra={"server": client.config.name, "error": str(e)},
+                )
         self.clients.clear()

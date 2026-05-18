@@ -321,8 +321,7 @@ async def _run_orchestration(
             # running one of them without its upstream context.
             for t in pending:
                 missing = [d for d in t.all_deps if d not in completed]
-                with contextlib.suppress(ValueError):
-                    t.transition_to(TaskState.FAILED)
+                t.transition_to(TaskState.FAILED)
                 r = TaskExecutionResult(
                     id=t.id,
                     agent=t.assigned_to or "",
@@ -341,8 +340,7 @@ async def _run_orchestration(
 
         # Mark ready tasks as RUNNING
         for t in ready:
-            with contextlib.suppress(ValueError):
-                t.transition_to(TaskState.RUNNING)
+            t.transition_to(TaskState.RUNNING)
 
         async def _execute_one(t):
             agent = agent_map.get(t.assigned_to)
@@ -392,13 +390,10 @@ async def _run_orchestration(
             result = await _execute_with_retry(agent, a_task, max_attempts=max_task_retries)
 
             # State transition based on result
-            try:
-                if result.success:
-                    t.transition_to(TaskState.COMPLETED)
-                else:
-                    t.transition_to(TaskState.FAILED)
-            except ValueError:
-                pass
+            if result.success:
+                t.transition_to(TaskState.COMPLETED)
+            else:
+                t.transition_to(TaskState.FAILED)
 
             full = result.content or ""
             if full:

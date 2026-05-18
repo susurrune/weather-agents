@@ -61,28 +61,32 @@ class AgentState(StrEnum):
 
 
 class TaskState(StrEnum):
-    """Formal task lifecycle with validation gate."""
+    """Task lifecycle states actually used in execution.
+
+    Prior versions defined QUEUED/ASSIGNED/VALIDATING/RETRYING here but no
+    code path ever transitioned tasks into those states, so the validation
+    gate they implied was a fiction. The current set reflects what the
+    orchestrator and retry logic really do.
+    """
 
     PENDING = "pending"
-    QUEUED = "queued"
-    ASSIGNED = "assigned"
     RUNNING = "running"
-    VALIDATING = "validating"
     COMPLETED = "completed"
     FAILED = "failed"
-    RETRYING = "retrying"
     SKIPPED = "skipped"
 
 
 _VALID_TRANSITIONS: dict[TaskState, set[TaskState]] = {
-    TaskState.PENDING: {TaskState.QUEUED, TaskState.RUNNING, TaskState.SKIPPED},
-    TaskState.QUEUED: {TaskState.ASSIGNED, TaskState.SKIPPED},
-    TaskState.ASSIGNED: {TaskState.RUNNING, TaskState.SKIPPED},
-    TaskState.RUNNING: {TaskState.VALIDATING, TaskState.FAILED, TaskState.COMPLETED},
-    TaskState.VALIDATING: {TaskState.COMPLETED, TaskState.FAILED, TaskState.RETRYING},
-    TaskState.RETRYING: {TaskState.RUNNING, TaskState.FAILED},
+    TaskState.PENDING: {TaskState.RUNNING, TaskState.SKIPPED, TaskState.FAILED},
+    # RUNNING -> RUNNING is allowed: orchestrator marks the outer plan task
+    # RUNNING, and the inner execute_task_impl also wants to mark its own
+    # task RUNNING. Without the self-loop one of them would raise and the
+    # call site had to suppress(ValueError).
+    TaskState.RUNNING: {TaskState.RUNNING, TaskState.COMPLETED, TaskState.FAILED},
+    # FAILED -> RUNNING enables retries to actually move the state forward
+    # instead of silently swallowing transition errors.
+    TaskState.FAILED: {TaskState.RUNNING, TaskState.SKIPPED},
     TaskState.COMPLETED: set(),
-    TaskState.FAILED: {TaskState.RETRYING, TaskState.SKIPPED},
     TaskState.SKIPPED: set(),
 }
 
@@ -1433,8 +1437,7 @@ class BaseAgent:
         on_status: Callable[[str], None] | None,
     ) -> TaskResult:
         await self._set_state(AgentState.THINKING)
-        with contextlib.suppress(ValueError):
-            task.transition_to(TaskState.RUNNING)
+        task.transition_to(TaskState.RUNNING)
         self.memory.set_working("current_task", task)
 
         prompt = (
@@ -1458,14 +1461,12 @@ class BaseAgent:
                 tool_calls=response.tool_calls,
                 reasoning_content=response.reasoning_content,
             )
-            with contextlib.suppress(ValueError):
-                task.transition_to(TaskState.COMPLETED)
+            task.transition_to(TaskState.COMPLETED)
             task.result = response.content
             await self._set_state(AgentState.IDLE)
             return TaskResult(success=True, content=response.content)
         except Exception as e:
-            with contextlib.suppress(ValueError):
-                task.transition_to(TaskState.FAILED)
+            task.transition_to(TaskState.FAILED)
             task.result = str(e)
             self.memory._prune_dangling_tool_calls()
             await self._set_state(AgentState.ERROR)

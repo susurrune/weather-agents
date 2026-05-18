@@ -2607,13 +2607,9 @@ def _handle_apikey_command(cmd: str, ctx) -> None:
 
 TASK_STATE_ICONS: dict[TaskState, tuple[str, str]] = {
     TaskState.PENDING: ("◌", "dim"),
-    TaskState.QUEUED: ("…", "yellow"),
-    TaskState.ASSIGNED: ("→", "cyan"),
     TaskState.RUNNING: ("●", "cyan"),
-    TaskState.VALIDATING: ("?", "yellow"),
     TaskState.COMPLETED: ("✓", "green"),
     TaskState.FAILED: ("✗", "red"),
-    TaskState.RETRYING: ("↻", "yellow"),
     TaskState.SKIPPED: ("–", "dim"),
 }
 
