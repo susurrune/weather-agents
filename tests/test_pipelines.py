@@ -168,22 +168,18 @@ class TestFactoryShortCircuits:
         snow = _fake_agent("snow", chat_result="summary")
         fog = _fake_agent("fog", chat_result=big)
         rain = _fake_agent("rain", chat_result="writeup")
-        # Wire write_shared so we can assert it was called.
         for a in (snow, fog, rain):
             a.memory = MagicMock()
             a.memory.get_active_session = MagicMock(return_value="sid-test")
-            a.memory.write_shared = AsyncMock(return_value=True)
         agent_map = {"snow": snow, "fog": fog, "rain": rain}
 
         await orchestrate_task("先调研再写一篇", agent_map, snow)
 
         rain_task = rain.execute_task.call_args[0][0]
-        # Truncated to ~500 chars in the description + a pointer message.
-        assert "task_1_output" in rain_task.description
-        assert "read_shared_memory" in rain_task.description
-        # And the FULL value was published to shared memory under the
-        # orchestration session id.
-        fog.memory.write_shared.assert_any_call("task_1_output", big, session_id="sid-test")
+        # Full upstream content is passed directly in the description.
+        assert "上游产出" in rain_task.description
+        # All of the big content must be present (no truncation for shared mem).
+        assert big in rain_task.description
 
 
 class TestTaskRetry:

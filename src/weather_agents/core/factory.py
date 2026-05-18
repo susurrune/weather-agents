@@ -17,15 +17,15 @@ from weather_agents.agents.fog import FogAgent
 from weather_agents.agents.frost import FrostAgent
 from weather_agents.agents.rain import RainAgent
 from weather_agents.agents.snow import SnowAgent
-from weather_agents.core.agent import BaseAgent, TaskState, _orch_session_var
+from weather_agents.core.agent import BaseAgent, TaskState
 from weather_agents.core.agent import Task as AgentTask
 from weather_agents.core.bus import MessageBus
 from weather_agents.core.config import AppConfig, load_config
 from weather_agents.core.llm import LLMClient
 from weather_agents.core.logger import get_logger
 from weather_agents.core.mcp import MCPManager
-from weather_agents.core.skill import global_skill_registry
-from weather_agents.core.tool import global_registry
+from weather_agents.core.skill import SkillRegistry
+from weather_agents.core.tool import ToolRegistry
 from weather_agents.core.workspace import init_workspace, resolve_workspace_path
 from weather_agents.plugins.loader import PluginLoader
 from weather_agents.skills.loader import register_all_skills
@@ -64,19 +64,22 @@ AGENT_COLORS: dict[str, str] = {
 
 @dataclass
 class SystemContext:
-    """Wires together all shared services for an agent system instance."""
+    """Wires together all services for an agent system instance.
+
+    Each agent now owns independent registries and LLM client for full
+    multi-agent isolation.
+    """
 
     config: AppConfig
     bus: MessageBus
     llm: LLMClient
     agent_map: dict[str, BaseAgent]
+    tool_registry: ToolRegistry  # builtin + MCP tools (shared, read-only after init)
     workspace_path: str = ""
     mcp: MCPManager | None = None
     mcp_status: list[str] = field(default_factory=list)
 
     async def init_all(self) -> None:
-        # Connect MCP servers first so their tools are registered before agents
-        # snapshot the tool registry.
         if self.mcp is not None:
             try:
                 self.mcp_status = await self.mcp.connect_all()
@@ -101,7 +104,11 @@ class SystemContext:
 
 
 def create_system_context() -> SystemContext:
-    """Bootstrap the full system: config, bus, LLM, tools, skills, plugins, agents."""
+    """Bootstrap the full system: config, bus, LLM, tools, skills, plugins, agents.
+
+    Each agent gets its own ToolRegistry, SkillRegistry, and LLMClient so
+    they operate fully independently — no shared global singletons.
+    """
     config = load_config()
     workspace_root = resolve_workspace_path(config.workspace.path)
     init_workspace(workspace_root)
@@ -109,40 +116,54 @@ def create_system_context() -> SystemContext:
     _log.info("workspace: %s", workspace_path)
 
     bus = MessageBus()
-    register_builtin_tools()
-    register_all_skills()
 
-    # Load plugins
-    plugin_loader = PluginLoader(global_registry)
+    # Shared base registry for builtin tools and MCP (cloned per agent later).
+    base_tool_registry = ToolRegistry()
+    register_builtin_tools(base_tool_registry)
+
+    # Skills: register into a base registry, then clone per agent.
+    base_skill_registry = SkillRegistry()
+    register_all_skills(base_skill_registry)
+
+    # Load plugins into the base registry
+    plugin_loader = PluginLoader(base_tool_registry)
     plugin_dirs = config.plugins.directories if config.plugins.enabled else []
     plugin_loader.load_from_directories(plugin_dirs)
 
-    # Configure MCP manager (servers connect during init_all so async I/O
-    # happens inside the event loop, not at construction time).
+    # Configure MCP manager (servers connect during init_all)
     mcp_manager: MCPManager | None = None
     if config.mcp.servers:
-        mcp_manager = MCPManager(global_registry)
+        mcp_manager = MCPManager(base_tool_registry)
         mcp_manager.configure(config.mcp.servers)
 
-    llm = LLMClient(config, global_registry)
-    agents = {
-        name: cls(
+    # Shared LLM client (cost tracking is global; rate limiting is per-client)
+    llm = LLMClient(config, base_tool_registry)
+
+    # Per-agent registries: clone from base, then add agent-specific tools.
+    agents: dict[str, BaseAgent] = {}
+    for name, cls in AGENT_CLASSES.items():
+        agent_registry = ToolRegistry()
+        agent_registry.merge(base_tool_registry)
+        agent_skills = SkillRegistry()
+        agent_skills.merge(base_skill_registry)
+
+        agent = cls(
             config=config,
             llm=llm,
             bus=bus,
-            tool_registry=global_registry,
-            skill_registry=global_skill_registry,
+            tool_registry=agent_registry,
+            skill_registry=agent_skills,
         )
-        for name, cls in AGENT_CLASSES.items()
-    }
-
-    global_registry.register(create_delegate_tool(agents))
+        # Register delegate_to tool for this specific agent
+        agent_registry.register(create_delegate_tool(agents, calling_agent=agent))
+        agents[name] = agent
 
     return SystemContext(
         config=config,
         bus=bus,
         llm=llm,
         agent_map=agents,
+        tool_registry=base_tool_registry,
         workspace_path=workspace_path,
         mcp=mcp_manager,
     )
@@ -215,43 +236,23 @@ async def orchestrate_task(
     if snow is None:
         return [], [], "Snow agent not available"
 
-    # Pin a single shared-memory session id for the entire orchestration.
-    # Each agent's own _active_session is fine for that agent's chat history,
-    # but shared scratch writes (write_shared / read_shared) MUST go through
-    # one common sid or two agents in the same DAG will write/read different
-    # rows and the "upstream output in shared memory" contract silently fails.
-    # We prefer snow's session (snow is the orchestrator) and fall back to the
-    # first agent that has one. The ContextVar is read by tool handlers.
-    orch_sid: str | None = snow.memory.get_active_session()
-    if orch_sid is None:
-        for _a in agent_map.values():
-            sid = _a.memory.get_active_session()
-            if sid:
-                orch_sid = sid
-                break
-    _orch_token = _orch_session_var.set(orch_sid)
-    try:
-        return await _run_orchestration(
-            goal,
-            agent_map,
-            snow,
-            orch_sid,
-            on_task_start=on_task_start,
-            on_task_done=on_task_done,
-            on_planned=on_planned,
-            result_truncate=result_truncate,
-            summary_prompt_template=summary_prompt_template,
-            max_task_retries=max_task_retries,
-        )
-    finally:
-        _orch_session_var.reset(_orch_token)
+    return await _run_orchestration(
+        goal,
+        agent_map,
+        snow,
+        on_task_start=on_task_start,
+        on_task_done=on_task_done,
+        on_planned=on_planned,
+        result_truncate=result_truncate,
+        summary_prompt_template=summary_prompt_template,
+        max_task_retries=max_task_retries,
+    )
 
 
 async def _run_orchestration(
     goal: str,
     agent_map: dict[str, BaseAgent],
     snow: BaseAgent,
-    orch_sid: str | None,
     *,
     on_task_start: Callable[[Any], Awaitable[None]] | None,
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None,
@@ -260,8 +261,7 @@ async def _run_orchestration(
     summary_prompt_template: str,
     max_task_retries: int,
 ) -> tuple[list[Any], list[TaskExecutionResult], str]:
-    """Inner orchestration loop. Extracted so orchestrate_task can wrap it
-    in a try/finally that always resets the orchestration ContextVar."""
+    """Inner orchestration loop -- executes planned tasks in DAG order."""
     # Try pipeline match first — skips Snow's decomposition LLM call entirely
     # (~2-3k tokens saved) when the goal matches a known collaboration shape.
     from weather_agents.core.pipelines import build_tasks_from_pipeline, match_pipeline
@@ -355,27 +355,18 @@ async def _run_orchestration(
             if on_task_start:
                 await on_task_start(t)
 
-            # Inject upstream results from ALL dependencies
+            # Inject upstream results from ALL dependencies.
+            # Each agent has its own database — no shared storage, so pass
+            # the full upstream content directly in the description.
             description = t.description
             upstream_sections: list[str] = []
             for dep_id in t.all_deps:
                 if dep_id in results_by_id:
                     parent_result = results_by_id[dep_id]
                     full_content = full_contents_by_id.get(dep_id, parent_result.content or "")
-                    excerpt = full_content
-                    truncated = False
-                    if len(excerpt) > 500:
-                        excerpt = excerpt[:500]
-                        truncated = True
-                    tail = (
-                        "\n\n[完整内容存于 shared memory · key=task_{pid}_output · "
-                        "调用 read_shared_memory 拉取]"
-                        if truncated
-                        else ""
-                    ).format(pid=parent_result.id)
                     upstream_sections.append(
                         f"## 上游产出 (task {parent_result.id} · {parent_result.agent})\n"
-                        f"{excerpt}{tail}"
+                        f"{full_content}"
                     )
             if upstream_sections:
                 description = f"{t.description}\n\n" + "\n\n".join(upstream_sections)
@@ -396,11 +387,6 @@ async def _run_orchestration(
                 t.transition_to(TaskState.FAILED)
 
             full = result.content or ""
-            if full:
-                with contextlib.suppress(Exception):
-                    await agent.memory.write_shared(
-                        f"task_{t.id}_output", full, session_id=orch_sid
-                    )
             full_contents_by_id[t.id] = full
             tr = full
             if result_truncate is not None and len(tr) > result_truncate:

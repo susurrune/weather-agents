@@ -85,5 +85,5 @@ class TestSelectRelevantTools:
         # Verify the module-level always-include set has the infra tools we
         # expect — guards against accidental removal.
         assert "delegate_to" in _ALWAYS_INCLUDE
-        assert "read_shared_memory" in _ALWAYS_INCLUDE
-        assert "list_shared_memory" in _ALWAYS_INCLUDE
+        assert "list_skills" in _ALWAYS_INCLUDE
+        assert "recall_facts" in _ALWAYS_INCLUDE

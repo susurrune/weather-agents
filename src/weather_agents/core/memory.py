@@ -100,7 +100,10 @@ class Memory:
         self.agent_name = agent_name
         self.short_term: list[Message] = []
         self.working: dict[str, Any] = {}
-        self._db_path = Path(config.db_path).expanduser()
+        # Each agent gets its own database file for full isolation.
+        # e.g. ~/.weather-agents/memory/fog.db  (from memory.db parent dir)
+        base = Path(config.db_path).expanduser()
+        self._db_path = base.parent / f"{agent_name}.db"
         self._db: _RetryDB | None = None
         self._loaded = False
         self._pending_persists: set[asyncio.Task] = set()
@@ -225,26 +228,6 @@ class Memory:
                 PRIMARY KEY (agent, key)
             )
             """
-        )
-        # shared_working: cross-agent scratchpad keyed by session_id. Used by
-        # multi-step pipelines so a downstream agent can pull the upstream
-        # agent's full output via read_shared_memory tool instead of relying
-        # on the orchestrator to splice it into the description (which gets
-        # truncated at 500 chars).
-        await self._db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS shared_working (
-                session_id TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                written_by TEXT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (session_id, key)
-            )
-            """
-        )
-        await self._db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_shared_session ON shared_working(session_id, updated_at DESC)"
         )
         await self._db.commit()
         await self._load_short_term()
@@ -703,96 +686,6 @@ class Memory:
             (self.agent_name, key),
         )
         await self._db.commit()
-
-    # -- Shared working memory (cross-agent, session-scoped) --
-
-    async def write_shared(
-        self,
-        key: str,
-        value: Any,
-        *,
-        session_id: str | None = None,
-    ) -> bool:
-        """Store a value in the session-scoped shared scratchpad.
-
-        Any agent in the same session can read it via ``read_shared``.
-        Returns False when no session is active and none was supplied —
-        shared memory is intentionally session-bound so cross-session
-        bleed-through is impossible.
-        """
-        sid = session_id or self._active_session
-        if not self._db or not sid:
-            return False
-        payload = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-        await self._db.execute(
-            "INSERT INTO shared_working (session_id, key, value, written_by) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(session_id, key) DO UPDATE SET "
-            "value = excluded.value, written_by = excluded.written_by, "
-            "updated_at = CURRENT_TIMESTAMP",
-            (sid, key, payload, self.agent_name),
-        )
-        await self._db.commit()
-        return True
-
-    async def read_shared(
-        self,
-        key: str,
-        *,
-        session_id: str | None = None,
-    ) -> Any | None:
-        """Read a value from the shared scratchpad. None when missing."""
-        sid = session_id or self._active_session
-        if not self._db or not sid:
-            return None
-        cursor = await self._db.execute(
-            "SELECT value FROM shared_working WHERE session_id = ? AND key = ?",
-            (sid, key),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        with contextlib.suppress(json.JSONDecodeError, TypeError):
-            return json.loads(row[0])
-        return row[0]
-
-    async def list_shared(
-        self,
-        *,
-        session_id: str | None = None,
-    ) -> list[dict]:
-        """List all shared keys in this session with their writer + timestamp.
-
-        Returns ``[]`` when no session is active. Values are NOT included —
-        callers can ``read_shared`` for those once they pick a key.
-        """
-        sid = session_id or self._active_session
-        if not self._db or not sid:
-            return []
-        cursor = await self._db.execute(
-            "SELECT key, written_by, updated_at FROM shared_working "
-            "WHERE session_id = ? ORDER BY updated_at DESC",
-            (sid,),
-        )
-        rows = await cursor.fetchall()
-        return [{"key": r[0], "written_by": r[1], "updated_at": r[2]} for r in rows]
-
-    async def delete_shared(
-        self,
-        key: str,
-        *,
-        session_id: str | None = None,
-    ) -> bool:
-        """Delete a shared entry. Returns True iff a row was removed."""
-        sid = session_id or self._active_session
-        if not self._db or not sid:
-            return False
-        cursor = await self._db.execute(
-            "DELETE FROM shared_working WHERE session_id = ? AND key = ?",
-            (sid, key),
-        )
-        await self._db.commit()
-        return (cursor.rowcount or 0) > 0
 
     # -- Retrieval-injection helpers (used by BaseAgent._messages_with_recall) --
 

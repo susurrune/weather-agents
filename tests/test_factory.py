@@ -67,7 +67,7 @@ class TestSystemContext:
             ag.close = AsyncMock()
             agents[name] = ag
 
-        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents)
+        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, tool_registry=registry)
         await ctx.init_all()
 
         for ag in agents.values():
@@ -89,7 +89,7 @@ class TestSystemContext:
             ag.close = AsyncMock()
             agents[name] = ag
 
-        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents)
+        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, tool_registry=registry)
         await ctx.close_all()
 
         for ag in agents.values():
@@ -107,7 +107,7 @@ class TestSystemContext:
         mcp.connect_all = AsyncMock(return_value=["server1"])
 
         agents = {"snow": Mock(init=AsyncMock(), close=AsyncMock())}
-        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp)
+        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp, tool_registry=registry)
         await ctx.init_all()
 
         mcp.connect_all.assert_awaited_once()
@@ -125,7 +125,7 @@ class TestSystemContext:
         mcp.connect_all = AsyncMock(side_effect=Exception("boom"))
 
         agents = {"snow": Mock(init=AsyncMock(), close=AsyncMock())}
-        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp)
+        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp, tool_registry=registry)
         # Should not raise
         await ctx.init_all()
         agents["snow"].init.assert_awaited_once()
@@ -257,43 +257,42 @@ class TestOrchestrateTask:
         assert "not found" in results[0].content
 
     @pytest.mark.asyncio
-    async def test_orch_session_var_is_set_during_run(self):
-        """During orchestrate_task, _orch_session_var should reflect snow's
-        session id so cross-agent shared memory tools can find each other.
-        Resets to None when the function returns."""
-        from weather_agents.core.agent import Task, _orch_session_var
-
-        captured: dict[str, str | None] = {}
-
-        async def _spy_orchestrate(_goal):
-            captured["during_plan"] = _orch_session_var.get()
-            return [Task(id="1", description="x", assigned_to="rain")]
+    async def test_upstream_data_passed_directly_to_downstream(self):
+        """Upstream agent's full output is passed in the task description
+        (no shared memory lookup needed)."""
+        from weather_agents.core.agent import Task
 
         snow = Mock()
-        snow.orchestrate = AsyncMock(side_effect=_spy_orchestrate)
-        snow.chat = AsyncMock(return_value="ok")
+        snow.orchestrate = AsyncMock(
+            return_value=[
+                Task(id="1", description="step one", assigned_to="rain"),
+                Task(id="2", description="step two", assigned_to="fog", depends_on=["1"]),
+            ]
+        )
+        snow.chat = AsyncMock(return_value="summary")
         snow.memory = Mock()
-        snow.memory.get_active_session = Mock(return_value="orch-sid-xyz")
-
-        async def _spy_execute(_t):
-            captured["during_execute"] = _orch_session_var.get()
-            return Mock(success=True, content="done")
+        snow.memory.get_active_session = Mock(return_value=None)
 
         rain = Mock()
-        rain.execute_task = AsyncMock(side_effect=_spy_execute)
-        rain.memory = Mock()
-        rain.memory.write_shared = AsyncMock()
+        rain.execute_task = AsyncMock(return_value=Mock(success=True, content="rain output"))
 
-        await orchestrate_task("goal", agent_map={"rain": rain, "snow": snow})
+        executed_desc: list[str] = []
 
-        assert captured["during_plan"] == "orch-sid-xyz"
-        assert captured["during_execute"] == "orch-sid-xyz"
-        # After return, ContextVar must be reset
-        assert _orch_session_var.get() is None
-        # write_shared must be called with the orchestration sid
-        rain.memory.write_shared.assert_awaited_once()
-        kwargs = rain.memory.write_shared.await_args.kwargs
-        assert kwargs.get("session_id") == "orch-sid-xyz"
+        async def _fog_execute(task):
+            executed_desc.append(task.description)
+            return Mock(success=True, content="fog output")
+
+        fog = Mock()
+        fog.execute_task = AsyncMock(side_effect=_fog_execute)
+        fog.memory = Mock()
+
+        await orchestrate_task(
+            "goal",
+            agent_map={"rain": rain, "fog": fog, "snow": snow},
+        )
+
+        # fog's task must include rain's full output in the description
+        assert any("rain output" in desc for desc in executed_desc)
 
     @pytest.mark.asyncio
     async def test_dangling_dependency_fails_fast(self):

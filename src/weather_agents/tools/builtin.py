@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from weather_agents.core.tool import Tool, ToolParameter, global_registry
+from weather_agents.core.tool import Tool, ToolParameter, ToolRegistry
 
 _MAX_FILE_BYTES = 50_000
 _MAX_SHELL_OUTPUT = 20_000
@@ -1151,11 +1151,11 @@ async def _bing_search(query: str, num_results: int, api_key: str) -> list[dict]
 _registered = False
 
 
-def register_builtin_tools() -> None:
+def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
     global _registered
-    if _registered:
+    if _registered and registry is None:
         return
-    _registered = True
+    reg = registry or ToolRegistry()
 
     tools = [
         Tool(
@@ -1599,7 +1599,7 @@ def register_builtin_tools() -> None:
     ]
 
     for tool in tools:
-        global_registry.register(tool)
+        reg.register(tool)
 
 
 async def close_http_client() -> None:

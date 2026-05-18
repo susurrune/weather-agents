@@ -1278,40 +1278,6 @@ async def _interactive(agent_name: str | None = None) -> None:
                     await agent.memory.forget(key)
                     console.print(f"  [green]- forgot[/green] [cyan]{key}[/cyan]")
                 continue
-            if cmd_lower == "/shared":
-                # Show keys + writers in the session-scoped shared scratchpad.
-                await _init_agent_lazy(agent, ctx)
-                items = await agent.memory.list_shared()
-                if not items:
-                    console.print(
-                        "  [dim]shared memory empty — populated by `wa task` "
-                        "during multi-step orchestration[/dim]"
-                    )
-                else:
-                    for it in items:
-                        console.print(
-                            f"  [cyan]{it['key']}[/cyan]  "
-                            f"[dim]by {it['written_by']}, {it['updated_at']}[/dim]"
-                        )
-                continue
-            if cmd_lower.startswith("/shared "):
-                # /shared <key>  → print the full value
-                key = cmd[len("/shared ") :].strip()
-                if not key:
-                    console.print("  [red]usage: /shared <key>  or  /shared[/red]")
-                else:
-                    await _init_agent_lazy(agent, ctx)
-                    shared_val = await agent.memory.read_shared(key)
-                    if shared_val is None:
-                        console.print(f"  [dim]no entry for [cyan]{key}[/cyan][/dim]")
-                    else:
-                        if not isinstance(shared_val, str):
-                            import json as _json
-
-                            shared_val = _json.dumps(shared_val, ensure_ascii=False, indent=2)
-                        console.print(f"  [cyan]{key}[/cyan]:")
-                        console.print(Padding(shared_val, pad=(0, 0, 0, 4)))
-                continue
             if cmd_lower == "/compact":
                 await _init_agent_lazy(agent, ctx)
                 result = await agent.compact()

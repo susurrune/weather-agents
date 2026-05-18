@@ -53,11 +53,17 @@ AGENT_SPECIALTIES: dict[str, str] = {
 _MAX_RESULT_CHARS = 4000
 
 
-def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
+def create_delegate_tool(
+    agent_map: dict[str, BaseAgent], *, calling_agent: BaseAgent | None = None
+) -> Tool:
     """Build a ``delegate_to`` tool whose handler closes over *agent_map*.
 
     Call this **after** all agents have been constructed so the handler
     can look up target agents at execution time.
+
+    *calling_agent* is the agent that owns this tool instance (set when
+    per-agent registries are used). When None, shared context building
+    is skipped (safe fallback for backward compatibility).
     """
     from weather_agents.core.agent import AgentState, Task
 
@@ -83,12 +89,7 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
         try:
             await target.init()
 
-            # Build shared context from the calling agent. Read via ContextVar
-            # (not a module global) so concurrent delegations from different
-            # callers don't clobber each other.
-            from weather_agents.core.agent import get_call_agent
-
-            shared_ctx = _build_shared_context(get_call_agent(), context)
+            shared_ctx = _build_shared_context(calling_agent, context)
 
             task_obj = Task(
                 id=f"dlg-{id(task) & 0xFFFF:04x}",

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import contextvars
 import json
 import re
 import time
@@ -23,34 +22,6 @@ from weather_agents.core.skill import Skill, SkillRegistry
 from weather_agents.core.tool import Tool, ToolRegistry
 
 _log = get_logger("agent")
-
-# ContextVar (not module global): each chat_stream/execute_task call binds the
-# active agent only within its own async context. A module global would be
-# clobbered by concurrent calls (e.g. asyncio.gather across agents) and leak
-# one agent's identity into another's tool handlers — the root of cross-agent
-# voice contamination in delegation.
-_call_agent_var: contextvars.ContextVar[BaseAgent | None] = contextvars.ContextVar(
-    "_call_agent", default=None
-)
-
-# Orchestration-scoped shared-memory session id. When set (by
-# factory.orchestrate_task), tool handlers and write_shared/read_shared
-# callers prefer this over each agent's individual _active_session — without
-# it, two agents in the same orchestration write to different sids and never
-# see each other's outputs, which silently broke cross-agent collaboration.
-_orch_session_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "_orch_session", default=None
-)
-
-
-def get_call_agent() -> BaseAgent | None:
-    """Return the agent that owns the current async context, if any."""
-    return _call_agent_var.get()
-
-
-def get_orch_session() -> str | None:
-    """Return the orchestration-shared session id when one is active."""
-    return _orch_session_var.get()
 
 
 class AgentState(StrEnum):
@@ -370,20 +341,14 @@ class BaseAgent:
         from weather_agents.core.tool import ToolParameter
 
         async def _use(name: str) -> str:
-            agent = get_call_agent()
-            if agent is None:
-                return "Error: no active agent"
-            if agent.activate_skill(name):
-                skill = next((s for s in agent._skills if s.name == name), None)
+            if self.activate_skill(name):
+                skill = next((s for s in self._skills if s.name == name), None)
                 desc = skill.description if skill else ""
                 return f"✓ Skill '{name}' activated: {desc}"
             return f"✗ Skill '{name}' not found. Call list_skills to see available options."
 
         async def _list() -> str:
-            agent = get_call_agent()
-            if agent is None:
-                return "Error: no active agent"
-            skills = agent.get_available_skills()
+            skills = self.get_available_skills()
             if not skills:
                 return "No skills available."
             lines = [f"• {s['name']}: {s['description']}" for s in skills]
@@ -398,70 +363,6 @@ class BaseAgent:
                 ),
                 parameters=[],
                 handler=_list,
-            )
-        )
-
-        async def _read_shared(key: str) -> str:
-            agent = get_call_agent()
-            if agent is None:
-                return "Error: no active agent"
-            # Prefer the orchestration session id when one is active; otherwise
-            # fall back to this agent's own _active_session.
-            sid = get_orch_session()
-            value = await agent.memory.read_shared(key, session_id=sid)
-            if value is None:
-                return f"No shared memory entry for key '{key}'."
-            if not isinstance(value, str):
-                import json as _json
-
-                value = _json.dumps(value, ensure_ascii=False)
-            return value
-
-        async def _list_shared() -> str:
-            agent = get_call_agent()
-            if agent is None:
-                return "Error: no active agent"
-            sid = get_orch_session()
-            items = await agent.memory.list_shared(session_id=sid)
-            if not items:
-                return "Shared memory is empty for this session."
-            lines = ["Shared memory in this session:"]
-            for it in items:
-                lines.append(f"  - {it['key']}  (by {it['written_by']}, {it['updated_at']})")
-            lines.append("\nUse read_shared_memory(key) to fetch a value.")
-            return "\n".join(lines)
-
-        self.tool_registry.register(
-            Tool(
-                name="list_shared_memory",
-                description=(
-                    "List keys in the session-shared scratchpad written by other "
-                    "agents in this orchestration. Call this first to discover what "
-                    "upstream agents produced; then call read_shared_memory(key) for "
-                    "the full content. Use this when your task description references "
-                    "an upstream task's output."
-                ),
-                parameters=[],
-                handler=_list_shared,
-            )
-        )
-        self.tool_registry.register(
-            Tool(
-                name="read_shared_memory",
-                description=(
-                    "Read the full value of a shared-memory key written by an "
-                    "upstream agent. Use this to fetch large upstream outputs that "
-                    "did not fit in your task description."
-                ),
-                parameters=[
-                    ToolParameter(
-                        name="key",
-                        type="string",
-                        description="The shared memory key, e.g. 'task_1_output'",
-                        required=True,
-                    ),
-                ],
-                handler=_read_shared,
             )
         )
 
@@ -674,16 +575,7 @@ class BaseAgent:
             on_status: Called with a status string when state changes
                        (e.g. "thinking...", "calling read_file...").
         """
-        # Bind active-agent ContextVar so tool handlers (use_skill,
-        # list_skills) can reach us even on the non-streaming path used by
-        # one-shot CLI invocations (``wa <agent> "msg"``). Without this
-        # the handlers see None and return "no active agent".
-        _token = _call_agent_var.set(self)
-        try:
-            return await self._chat_impl(message, on_status)
-        finally:
-            with contextlib.suppress(ValueError):
-                _call_agent_var.reset(_token)
+        return await self._chat_impl(message, on_status)
 
     async def _chat_impl(
         self,
@@ -735,10 +627,6 @@ class BaseAgent:
         # when the skill isn't already active, so explicit /skill activation
         # still takes precedence.
         self._auto_activate_skills(message)
-        # Bind this agent as the call-context owner. Reset on exit so a
-        # delegate target restored after delegation cannot leak its identity
-        # back into its caller's context.
-        _token = _call_agent_var.set(self)
         try:
             async for ev in self._chat_stream_impl(message):
                 yield ev
@@ -750,9 +638,6 @@ class BaseAgent:
             if self.memory.short_term and self.memory.short_term[-1].role == "user":
                 self._pop_last_user_message()
             raise
-        finally:
-            with contextlib.suppress(ValueError):
-                _call_agent_var.reset(_token)
 
     async def _chat_stream_impl(self, message: str) -> AsyncIterator[dict]:
         await self._set_state(AgentState.THINKING)
@@ -1539,16 +1424,7 @@ class BaseAgent:
         on_status: Callable[[str], None] | None = None,
     ) -> TaskResult:
         """Execute a specific task using agent specialty."""
-        # Rebind the active-agent ContextVar so tool handlers called from
-        # this agent's _llm_loop see *this* agent — not whichever caller
-        # invoked us via delegate_to. Reset on return so the caller's
-        # context is restored even if execute_task raises.
-        _token = _call_agent_var.set(self)
-        try:
-            return await self._execute_task_impl(task, on_status)
-        finally:
-            with contextlib.suppress(ValueError):
-                _call_agent_var.reset(_token)
+        return await self._execute_task_impl(task, on_status)
 
     async def _execute_task_impl(
         self,

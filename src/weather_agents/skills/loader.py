@@ -5,19 +5,24 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from weather_agents.core.skill import Skill, global_skill_registry
+from weather_agents.core.skill import Skill, SkillRegistry
 
 
-def register_all_skills() -> None:
-    """Discover and register all built-in skills from Python, Markdown, and Claude Code sources."""
+def register_all_skills(registry: SkillRegistry | None = None) -> None:
+    """Discover and register all built-in skills.
+
+    When *registry* is None a new SkillRegistry is created. Kept for backward
+    compatibility; factory.py always passes the per-agent registry.
+    """
+    reg = registry or SkillRegistry()
     for skill in _get_python_skills():
-        global_skill_registry.register(skill)
-    for skill in _get_markdown_skills():
-        if skill.name not in global_skill_registry.list_names():
-            global_skill_registry.register(skill)
+        reg.register(skill)
+    for skill in _get_markdown_skills(reg):
+        if skill.name not in reg.list_names():
+            reg.register(skill)
     for skill in _get_claude_skills():
-        if skill.name not in global_skill_registry.list_names():
-            global_skill_registry.register(skill)
+        if skill.name not in reg.list_names():
+            reg.register(skill)
 
 
 def _get_python_skills() -> list[Skill]:
@@ -61,7 +66,7 @@ def _get_python_skills() -> list[Skill]:
     ]
 
 
-def _get_markdown_skills() -> list[Skill]:
+def _get_markdown_skills(registry: SkillRegistry) -> list[Skill]:
     """Load skills from .md files in the skills config directory.
 
     These complement the Python-defined skills and follow the
@@ -73,7 +78,7 @@ def _get_markdown_skills() -> list[Skill]:
         ref = importlib.resources.files("weather_agents") / "config" / "skills"
         path = Path(str(ref))
         if path.is_dir():
-            return global_skill_registry.load_skills_from_directory(path)
+            return registry.load_skills_from_directory(path)
     except Exception:
         pass
     return []

@@ -21,14 +21,12 @@ if TYPE_CHECKING:
 
 
 # Infrastructure tools that must ALWAYS be visible to the LLM regardless of
-# query content — without them the agent loses delegation, shared-memory I/O,
-# skill discovery, and long-term recall. These are cheap (the LLM rarely
-# misfires them) so always-include is the safe default.
+# query content — without them the agent loses delegation, skill discovery,
+# and long-term recall. These are cheap (the LLM rarely misfires them) so
+# always-include is the safe default.
 _ALWAYS_INCLUDE: frozenset[str] = frozenset(
     {
         "delegate_to",
-        "read_shared_memory",
-        "list_shared_memory",
         "list_skills",
         "use_skill",
         "recall_facts",

@@ -114,10 +114,11 @@ class TestAgentInitChatToolResponse:
     async def test_skill_activation_flow(self, tool_registry, mock_llm, bus):
         """Activate a skill, verify it modifies behavior."""
         from weather_agents.agents.frost import FrostAgent
-        from weather_agents.core.skill import Skill, SkillRegistry, global_skill_registry
+        from weather_agents.core.skill import Skill, SkillRegistry
 
         # Register a skill so activation works
-        global_skill_registry.register(
+        skill_reg = SkillRegistry()
+        skill_reg.register(
             Skill(
                 name="code_reviewer",
                 description="Review code for issues",
@@ -125,9 +126,6 @@ class TestAgentInitChatToolResponse:
                 required_tools=[],
             )
         )
-
-        skill_reg = SkillRegistry()
-        skill_reg.register(global_skill_registry.get("code_reviewer"))
 
         agent = FrostAgent(
             config=AppConfig(),

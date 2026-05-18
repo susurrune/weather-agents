@@ -16,11 +16,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from weather_agents.core.agent import (
-    _call_agent_var,
-    _synthesize_delegation_summary,
-    get_call_agent,
-)
+from weather_agents.core.agent import _synthesize_delegation_summary
 from weather_agents.core.config import AppConfig, MemoryConfig
 
 
@@ -87,36 +83,6 @@ class TestInitCreatesSession:
         finally:
             await mem2.close()
             await agent.close()
-
-
-class TestCallAgentContextVar:
-    """``_call_agent_var`` must be per-async-context, not a shared global."""
-
-    def test_default_is_none(self):
-        assert get_call_agent() is None
-
-    @pytest.mark.asyncio
-    async def test_concurrent_bindings_do_not_clobber(self):
-        observed: dict[str, object] = {}
-
-        async def _bind_and_observe(label: str) -> None:
-            sentinel = Mock(name=f"agent-{label}")
-            token = _call_agent_var.set(sentinel)
-            try:
-                # Yield to event loop so the sibling task also runs while
-                # this task's binding is "active".
-                await asyncio.sleep(0)
-                observed[label] = get_call_agent()
-            finally:
-                _call_agent_var.reset(token)
-
-        await asyncio.gather(_bind_and_observe("rain"), _bind_and_observe("fog"))
-
-        # Each task must observe its own binding — proving they didn't
-        # clobber each other via shared global.
-        assert observed["rain"] is not observed["fog"]
-        # After both tasks complete, no binding remains in the outer scope.
-        assert get_call_agent() is None
 
 
 class TestCompactPreservesDirectives:
@@ -311,34 +277,6 @@ class TestSynthesizeDelegationSummary:
         out = _synthesize_delegation_summary([("fog", True), ("rain", False)])
         assert "Delegated: fog" in out
         assert "Failed: rain" in out
-
-
-class TestChatBindsContextVar:
-    """The non-streaming ``chat()`` entrypoint must bind the ContextVar.
-
-    Without this binding, the one-shot CLI path (``wa <agent> "msg"``)
-    leaves tool handlers (``use_skill``, ``list_skills``) with no agent
-    reference and they return "no active agent".
-    """
-
-    @pytest.mark.asyncio
-    async def test_chat_binds_call_agent(self, isolated_config, mock_llm, bus, tool_registry):
-        from weather_agents.agents.fog import FogAgent
-
-        seen: dict[str, object] = {}
-
-        async def _capture_complete(*args, **kwargs):
-            seen["agent"] = get_call_agent()
-            return Mock(content="ok", tool_calls=[], model="x", usage={}, reasoning_content=None)
-
-        mock_llm.complete = _capture_complete
-        agent = FogAgent(config=isolated_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
-        await agent.init()
-        await agent.chat("hi")
-        assert seen["agent"] is agent
-        # Binding cleaned up after return.
-        assert get_call_agent() is None
-        await agent.close()
 
 
 class TestClearShortTermScope:
