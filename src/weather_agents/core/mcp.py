@@ -445,16 +445,48 @@ class MCPClient:
 
     # ── Tool execution ──────────────────────────────────────────────────
 
+    # Tools whose ``description`` or ``name`` matches any of these substrings
+    # are treated as potentially long-running and granted the full 120s window.
+    # Everything else gets a 15s default — quick read/list/status calls have
+    # no business blocking the chat loop for a full minute when the server
+    # hangs.
+    _LONG_RUNNING_HINTS = (
+        "deploy",
+        "build",
+        "render",
+        "compile",
+        "install",
+        "train",
+        "fetch",
+        "download",
+        "upload",
+        "generate",
+    )
+
+    def _timeout_for(self, tool_name: str) -> float:
+        tool_def = next(
+            (t for t in self._server_tools if t.get("name") == tool_name),
+            None,
+        )
+        haystack = tool_name.lower()
+        if tool_def:
+            haystack += " " + str(tool_def.get("description", "")).lower()
+        for hint in self._LONG_RUNNING_HINTS:
+            if hint in haystack:
+                return 120.0
+        return 15.0
+
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Call a tool on the MCP server. Uses the active transport."""
         response = None
+        timeout = self._timeout_for(name)
         if self.config.command:
             response = await self._request_stdio(
-                "tools/call", {"name": name, "arguments": arguments}, timeout=60.0
+                "tools/call", {"name": name, "arguments": arguments}, timeout=timeout
             )
         elif self.config.url:
             response = await self._request_sse(
-                "tools/call", {"name": name, "arguments": arguments}, timeout=60.0
+                "tools/call", {"name": name, "arguments": arguments}, timeout=timeout
             )
 
         if response and "result" in response:

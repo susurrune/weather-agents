@@ -881,3 +881,69 @@ class TestBackgroundTaskTracking:
 
         assert len(agent._bg_tasks) == 0
         await agent.close()
+
+
+class TestSkillAutoActivation:
+    """Skills with `triggers` should auto-activate on matching user messages."""
+
+    def test_trigger_activates_skill(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import Skill, SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        reg = SkillRegistry()
+        reg.register(
+            Skill(
+                name="coder",
+                description="Code review skill",
+                system_prompt="Focus on quality.",
+                triggers=["code review", "review the code"],
+            )
+        )
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=reg,
+        )
+        activated = agent._auto_activate_skills("please code review this PR")
+        assert "coder" in activated
+        assert "coder" in agent._active_skills
+
+    def test_already_active_skill_not_re_activated(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import Skill, SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        reg = SkillRegistry()
+        reg.register(
+            Skill(name="s1", description="x", triggers=["build"]),
+        )
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=reg,
+        )
+        agent.activate_skill("s1")
+        # Already active — auto-activation must skip it
+        activated = agent._auto_activate_skills("let's build it")
+        assert activated == []
+
+    def test_no_trigger_no_activation(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import Skill, SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        reg = SkillRegistry()
+        reg.register(Skill(name="nope", description="x", triggers=["xyz"]))
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=reg,
+        )
+        assert agent._auto_activate_skills("hello there") == []

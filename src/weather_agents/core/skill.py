@@ -48,6 +48,12 @@ class Skill:
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    # Keyword/phrase substrings — when any appears in the user's message
+    # (case-insensitive substring match) the agent auto-activates this
+    # skill on entry to chat_stream. Cuts the LLM round-trip cost of
+    # ``list_skills + use_skill`` for common patterns. Empty list = no
+    # auto-trigger (skill is only activatable explicitly).
+    triggers: list[str] = field(default_factory=list)
 
     @classmethod
     def from_markdown(cls, path: Path) -> Skill | None:
@@ -85,6 +91,13 @@ class Skill:
         temperature = fm.get("temperature")
         max_tokens = fm.get("max_tokens")
 
+        triggers_raw = fm.get("triggers", [])
+        triggers = (
+            [t for t in triggers_raw if isinstance(t, str)]
+            if isinstance(triggers_raw, list)
+            else []
+        )
+
         return cls(
             name=name,
             description=description,
@@ -93,6 +106,7 @@ class Skill:
             model=model if isinstance(model, str) else None,
             temperature=temperature if isinstance(temperature, (int, float)) else None,
             max_tokens=max_tokens if isinstance(max_tokens, int) else None,
+            triggers=triggers,
         )
 
 
