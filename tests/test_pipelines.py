@@ -171,6 +171,7 @@ class TestFactoryShortCircuits:
         # Wire write_shared so we can assert it was called.
         for a in (snow, fog, rain):
             a.memory = MagicMock()
+            a.memory.get_active_session = MagicMock(return_value="sid-test")
             a.memory.write_shared = AsyncMock(return_value=True)
         agent_map = {"snow": snow, "fog": fog, "rain": rain}
 
@@ -180,8 +181,11 @@ class TestFactoryShortCircuits:
         # Truncated to ~500 chars in the description + a pointer message.
         assert "task_1_output" in rain_task.description
         assert "read_shared_memory" in rain_task.description
-        # And the FULL value was published to shared memory.
-        fog.memory.write_shared.assert_any_call("task_1_output", big)
+        # And the FULL value was published to shared memory under the
+        # orchestration session id.
+        fog.memory.write_shared.assert_any_call(
+            "task_1_output", big, session_id="sid-test"
+        )
 
 
 class TestTaskRetry:
