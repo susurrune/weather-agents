@@ -110,18 +110,23 @@ class Memory:
         if self._db is not None:
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Windows-only: a hard-killed wa process can leave its WAL/SHM in a
-        # state where the next run fails with "database is locked" even after
-        # busy_timeout retries. Windows opens these files without
-        # FILE_SHARE_DELETE, so os.remove fails when another wa instance
-        # holds them — making the cleanup safe (suppressed OSError means
-        # "still in use, leave alone"). On POSIX, os.remove succeeds even
-        # with live handles and can corrupt a concurrent writer, so we skip.
+        # Windows-only: hard-killed wa processes leave stale WAL/SHM that lock
+        # the next startup.  os.remove fails on these (no FILE_SHARE_DELETE), so
+        # fall back to cmd.exe /c del which can force-delete locked files.
+        # On POSIX os.remove succeeds even with live handles and can corrupt a
+        # concurrent writer, so the entire block is Windows-only.
         if os.name == "nt":
-            with contextlib.suppress(OSError):
-                os.remove(str(self._db_path) + "-wal")
-            with contextlib.suppress(OSError):
-                os.remove(str(self._db_path) + "-shm")
+            import subprocess as _sp
+            for _suf in ("-wal", "-shm"):
+                _p = str(self._db_path) + _suf
+                if os.path.exists(_p):
+                    try:
+                        os.remove(_p)
+                    except OSError:
+                        _sp.run(
+                            ["cmd.exe", "/c", "del", "/f", "/q", _p],
+                            capture_output=True, timeout=5,
+                        )
         raw = await aiosqlite.connect(str(self._db_path))
         await raw.execute("PRAGMA journal_mode=WAL")
         # Short C-level timeout: Python retry loop (below) handles backoff.
