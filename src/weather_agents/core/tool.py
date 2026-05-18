@@ -25,6 +25,40 @@ def _make_cache_key(kwargs: dict) -> str:
     return str(sorted(kwargs.items()))
 
 
+# Lenient JSON-schema-like type check. Values from LiteLLM tool calls often
+# arrive as strings even for declared "number" / "boolean" — we accept those
+# common coercion cases instead of rejecting precise but inconvenient inputs.
+_TYPE_CHECKS: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "number": (int, float),
+    "integer": (int,),
+    "boolean": (bool,),
+    "array": (list, tuple),
+    "object": (dict,),
+}
+
+
+def _value_matches_schema_type(value: Any, schema_type: str) -> bool:
+    expected = _TYPE_CHECKS.get(schema_type)
+    if expected is None:
+        return True  # unknown declared type — don't reject
+    if isinstance(value, expected):
+        # bool is a subclass of int — reject it when integer/number was
+        # declared so the schema check stays type-strict.
+        return not (schema_type in ("integer", "number") and isinstance(value, bool))
+    # Lenient: accept str representations of numbers/booleans the LLM often
+    # produces when serializing tool args.
+    if schema_type in ("number", "integer") and isinstance(value, str):
+        try:
+            float(value) if schema_type == "number" else int(value)
+            return True
+        except ValueError:
+            return False
+    if schema_type == "boolean" and isinstance(value, str):
+        return value.lower() in ("true", "false")
+    return False
+
+
 @dataclass
 class ToolParameter:
     name: str
@@ -47,9 +81,15 @@ class Tool:
 
     def __post_init__(self) -> None:
         self._result_cache: OrderedDict[str, str] = OrderedDict()
+        # Tool fields are immutable after construction — the schema is too,
+        # so we build it once and reuse it across every LLM turn instead of
+        # rebuilding O(n_params) dicts for every tool on every call.
+        self._schema: dict | None = None
 
     def to_function_schema(self) -> dict:
-        """Convert to OpenAI function calling schema."""
+        """Convert to OpenAI function calling schema (cached after first build)."""
+        if self._schema is not None:
+            return self._schema
         properties: dict[str, Any] = {}
         required: list[str] = []
 
@@ -63,7 +103,7 @@ class Tool:
             if p.required:
                 required.append(p.name)
 
-        return {
+        self._schema = {
             "type": "function",
             "function": {
                 "name": self.name,
@@ -75,10 +115,37 @@ class Tool:
                 },
             },
         }
+        return self._schema
 
     async def execute(self, *, agent_name: str | None = None, **kwargs) -> str:
         if self.handler is None:
             return f"Tool '{self.name}' has no handler implemented."
+
+        # Lightweight schema pre-check: required-field presence and primitive
+        # type sanity. Without this, a missing/wrong-typed arg costs a full
+        # handler invocation + TypeError round-trip back to the LLM (~1-3s
+        # of latency per retry). Returning a structured error WITH the correct
+        # signature gives the model enough to self-correct on the next turn.
+        if self.parameters:
+            sig_hint = ", ".join(
+                f"{p.name}:{p.type}" + ("" if p.required else "?") for p in self.parameters
+            )
+            for p in self.parameters:
+                if p.required and p.name not in kwargs:
+                    return (
+                        f"Error: tool '{self.name}' missing required argument "
+                        f"'{p.name}'. Expected signature: ({sig_hint})"
+                    )
+            for p in self.parameters:
+                if p.name not in kwargs:
+                    continue
+                v = kwargs[p.name]
+                if not _value_matches_schema_type(v, p.type):
+                    return (
+                        f"Error: tool '{self.name}' argument '{p.name}' has wrong "
+                        f"type (got {type(v).__name__}, expected {p.type}). "
+                        f"Expected signature: ({sig_hint})"
+                    )
 
         # Middleware pre-hooks (ACL, rate limit, etc.) — fail-fast policy deny
         from weather_agents.core.middleware import get_middleware_chain

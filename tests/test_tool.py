@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from weather_agents.core.tool import Tool, ToolParameter, ToolRegistry
 
 
@@ -173,3 +175,81 @@ class TestToolRegistry:
         r = ToolRegistry()
         removed = r.unregister("nonexistent")
         assert removed is False
+
+
+class TestSchemaPreValidation:
+    """Tool.execute must short-circuit on bad args without invoking the handler."""
+
+    @pytest.mark.asyncio
+    async def test_missing_required_arg_returns_error(self):
+        from weather_agents.core.tool import Tool, ToolParameter
+
+        called = {"n": 0}
+
+        async def _h(**_kw):
+            called["n"] += 1
+            return "ok"
+
+        t = Tool(
+            name="needs_path",
+            description="x",
+            parameters=[ToolParameter(name="path", type="string", description="p")],
+            handler=_h,
+        )
+        result = await t.execute()
+        assert "missing required argument 'path'" in result
+        assert "needs_path" in result
+        assert called["n"] == 0  # handler never invoked
+
+    @pytest.mark.asyncio
+    async def test_wrong_type_returns_error(self):
+        from weather_agents.core.tool import Tool, ToolParameter
+
+        called = {"n": 0}
+
+        async def _h(**_kw):
+            called["n"] += 1
+            return "ok"
+
+        t = Tool(
+            name="needs_count",
+            description="x",
+            parameters=[ToolParameter(name="count", type="integer", description="c")],
+            handler=_h,
+        )
+        # dict is not coercible to integer — expect rejection
+        result = await t.execute(count={"oops": True})
+        assert "wrong type" in result
+        assert called["n"] == 0
+
+    @pytest.mark.asyncio
+    async def test_string_to_number_coerced(self):
+        """LiteLLM tool calls often pass numeric args as strings — accept them."""
+        from weather_agents.core.tool import Tool, ToolParameter
+
+        async def _h(**kw):
+            return f"got {kw['n']}"
+
+        t = Tool(
+            name="numeric",
+            description="x",
+            parameters=[ToolParameter(name="n", type="number", description="n")],
+            handler=_h,
+        )
+        result = await t.execute(n="3.14")
+        assert "got 3.14" in result
+
+
+class TestSchemaCache:
+    def test_schema_is_cached(self):
+        from weather_agents.core.tool import Tool, ToolParameter
+
+        t = Tool(
+            name="t1",
+            description="d",
+            parameters=[ToolParameter(name="a", type="string", description="a")],
+        )
+        s1 = t.to_function_schema()
+        s2 = t.to_function_schema()
+        # Identical object — the cache is being used.
+        assert s1 is s2

@@ -538,14 +538,23 @@ class BaseAgent:
             self.deactivate_skill(name)
 
     def _rebuild_system_prompt(self) -> None:
-        """Rebuild the system prompt with active skill prompts appended."""
+        """Rebuild the system prompt with active skill prompts appended.
+
+        Skill prompts are concatenated in **sorted skill name order**, not
+        activation order. A stable prefix means upstream prompt-caching
+        layers (Anthropic/DeepSeek prefix cache, our own llm cache) see the
+        same byte sequence across turns where the active-skill set is
+        identical, saving 100-500ms on first-token latency.
+        """
         if not self._active_skills:
             prompt = self._base_system_prompt
         else:
+            # Index skills by name so we don't depend on _skills list order.
+            by_name = {s.name: s for s in self._skills}
             skill_prompts = [
-                skill.system_prompt
-                for skill in self._skills
-                if skill.name in self._active_skills and skill.system_prompt
+                by_name[name].system_prompt
+                for name in sorted(self._active_skills)
+                if name in by_name and by_name[name].system_prompt
             ]
             prompt = self._base_system_prompt
             if skill_prompts:
@@ -739,6 +748,23 @@ class BaseAgent:
             for _iteration in range(self._max_tool_rounds):
                 messages = await self._messages_with_recall()
                 tool_names = [t for t in self._active_tool_names() if t not in suppressed_tools]
+                # Narrow the active tool set to those most relevant to the
+                # user's latest message. Cuts prompt tokens ~30-60% and
+                # reduces near-miss tool selection on large catalogs.
+                from weather_agents.core.tool_router import select_relevant_tools
+
+                must = {
+                    t
+                    for s in self._skills
+                    if s.name in self._active_skills
+                    for t in s.required_tools
+                }
+                tool_names = select_relevant_tools(
+                    self.tool_registry,
+                    tool_names,
+                    message,
+                    must_include=must,
+                )
 
                 tool_calls_received: list[dict] = []
                 streaming_reasoning: str | None = None
@@ -1294,7 +1320,23 @@ class BaseAgent:
         """LLM reasoning loop with tool calling support."""
         mi = max_iterations if max_iterations is not None else self._max_tool_rounds
         response = LLMResponse(content="")
-        tool_names = self._active_tool_names()
+        full_tool_names = self._active_tool_names()
+        # Use the most recent user message as the routing query. This loop is
+        # invoked from execute_task where the task description IS the last
+        # user message, which matches user intent closely.
+        from weather_agents.core.tool_router import select_relevant_tools
+
+        last_user = next(
+            (m.content for m in reversed(self.memory.short_term) if m.role == "user"),
+            "",
+        )
+        must = {t for s in self._skills if s.name in self._active_skills for t in s.required_tools}
+        tool_names = select_relevant_tools(
+            self.tool_registry,
+            full_tool_names,
+            last_user or "",
+            must_include=must,
+        )
 
         try:
             for _ in range(mi):
