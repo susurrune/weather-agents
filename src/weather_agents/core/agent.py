@@ -45,15 +45,60 @@ class AgentState(StrEnum):
     ERROR = "error"
 
 
+class TaskState(StrEnum):
+    """Formal task lifecycle with validation gate."""
+    PENDING = "pending"
+    QUEUED = "queued"
+    ASSIGNED = "assigned"
+    RUNNING = "running"
+    VALIDATING = "validating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    RETRYING = "retrying"
+    SKIPPED = "skipped"
+
+
+_VALID_TRANSITIONS: dict[TaskState, set[TaskState]] = {
+    TaskState.PENDING: {TaskState.QUEUED, TaskState.SKIPPED},
+    TaskState.QUEUED: {TaskState.ASSIGNED, TaskState.SKIPPED},
+    TaskState.ASSIGNED: {TaskState.RUNNING, TaskState.SKIPPED},
+    TaskState.RUNNING: {TaskState.VALIDATING, TaskState.FAILED, TaskState.COMPLETED},
+    TaskState.VALIDATING: {TaskState.COMPLETED, TaskState.FAILED, TaskState.RETRYING},
+    TaskState.RETRYING: {TaskState.RUNNING, TaskState.FAILED},
+    TaskState.COMPLETED: set(),
+    TaskState.FAILED: {TaskState.RETRYING, TaskState.SKIPPED},
+    TaskState.SKIPPED: set(),
+}
+
+
 @dataclass
 class Task:
     id: str
     description: str
     assigned_to: str | None = None
     parent_id: str | None = None
-    status: str = "pending"
+    depends_on: list[str] = field(default_factory=list)
+    status: TaskState = TaskState.PENDING
+    priority: int = 0
     result: str | None = None
     metadata: dict = field(default_factory=dict)
+
+    def transition_to(self, new_state: TaskState) -> None:
+        """Validate and apply state transition."""
+        allowed = _VALID_TRANSITIONS.get(self.status, set())
+        if new_state not in allowed:
+            raise ValueError(
+                f"Invalid task state transition: {self.status.value} → {new_state.value}"
+            )
+        self.status = new_state
+
+    @property
+    def all_deps(self) -> list[str]:
+        """Return all dependency IDs (depends_on + legacy parent_id)."""
+        deps = list(self.depends_on)
+        if self.parent_id and self.parent_id not in deps:
+            deps.append(self.parent_id)
+        return deps
 
 
 @dataclass

@@ -2660,9 +2660,10 @@ async def _run_task(goal: str, agents=None) -> None:
             console.print()
             console.print(f"  [bold]== Plan[/bold]  [dim]{len(tasks)} tasks[/dim]")
             for i, t in enumerate(tasks, 1):
-                dep = f"  [dim]← #{t.parent_id}[/dim]" if t.parent_id else ""
+                deps = t.all_deps
+                dep_str = f" [dim]← #{','.join(deps)}[/dim]" if deps else ""
                 ict = icon_text(t.assigned_to or "")
-                console.print(f"  [{i}] {ict} [bold]{t.description}[/bold]{dep}")
+                console.print(f"  [{i}] {ict} [bold]{t.description}[/bold]{dep_str}")
 
         async def _on_start(t):
             _print_tool_in(

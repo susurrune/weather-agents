@@ -68,6 +68,28 @@ _PIPELINES: tuple[Pipeline, ...] = (
         ),
     ),
     Pipeline(
+        name="research_review_write",
+        triggers=(
+            "调研审查后写",
+            "research review write",
+            "先调研审查再写",
+            "调研并审查后生成",
+        ),
+        steps=(
+            PipelineStep(id="1", agent="fog", description_template="调研: {goal}"),
+            PipelineStep(
+                id="2", agent="frost",
+                description_template="审查第 1 步的调研结果,确认可行性",
+                depends_on=("1",),
+            ),
+            PipelineStep(
+                id="3", agent="rain",
+                description_template="基于第 1 步调研和第 2 步审查意见撰写: {goal}",
+                depends_on=("2",),
+            ),
+        ),
+    ),
+    Pipeline(
         name="implement_and_review",
         triggers=(
             "实现并审查",
@@ -87,21 +109,118 @@ _PIPELINES: tuple[Pipeline, ...] = (
         ),
     ),
     Pipeline(
+        name="fix_and_verify",
+        triggers=(
+            "修复并验证",
+            "fix and verify",
+            "修复bug并验证",
+            "修复后审查",
+            "bugfix review",
+        ),
+        steps=(
+            PipelineStep(id="1", agent="rain", description_template="修复: {goal}"),
+            PipelineStep(
+                id="2",
+                agent="frost",
+                description_template="验证第 1 步的修复是否正确",
+                depends_on=("1",),
+            ),
+        ),
+    ),
+    Pipeline(
         name="implement_test_deploy",
         triggers=("实现测试部署", "实现并部署", "写完测试再部署", "implement test deploy"),
         steps=(
             PipelineStep(id="1", agent="rain", description_template="实现: {goal}"),
             PipelineStep(
-                id="2",
-                agent="frost",
+                id="2", agent="frost",
                 description_template="审查第 1 步的实现",
                 depends_on=("1",),
             ),
             PipelineStep(
-                id="3",
-                agent="dew",
+                id="3", agent="dew",
                 description_template="部署第 1 步的实现",
                 depends_on=("2",),
+            ),
+        ),
+    ),
+    Pipeline(
+        name="design_implement_review_deploy",
+        triggers=(
+            "设计实现审查部署",
+            "设计开发测试上线",
+            "design implement review deploy",
+            "完整开发流程",
+        ),
+        steps=(
+            PipelineStep(id="1", agent="fog", description_template="设计方案: {goal}"),
+            PipelineStep(
+                id="2", agent="rain",
+                description_template="根据第 1 步的设计实现: {goal}",
+                depends_on=("1",),
+            ),
+            PipelineStep(
+                id="3", agent="frost",
+                description_template="审查第 2 步的实现代码",
+                depends_on=("2",),
+            ),
+            PipelineStep(
+                id="4", agent="dew",
+                description_template="部署第 2 步的实现到生产环境",
+                depends_on=("3",),
+            ),
+        ),
+    ),
+    Pipeline(
+        name="research_then_fair",
+        triggers=(
+            "调研后解释",
+            "调研后总结",
+            "research and explain",
+            "调研后讲解",
+            "调研后汇报",
+        ),
+        steps=(
+            PipelineStep(id="1", agent="fog", description_template="调研: {goal}"),
+            PipelineStep(
+                id="2", agent="fair",
+                description_template="用通俗语言总结第 1 步的调研结果: {goal}",
+                depends_on=("1",),
+            ),
+        ),
+    ),
+    Pipeline(
+        name="investigate_report",
+        triggers=(
+            "安全审计",
+            "security audit",
+            "漏洞扫描",
+            "vulnerability scan",
+            "安全检测",
+        ),
+        steps=(
+            PipelineStep(id="1", agent="fog", description_template="安全调研: {goal}"),
+            PipelineStep(
+                id="2", agent="frost",
+                description_template="基于第 1 步的调研生成安全报告",
+                depends_on=("1",),
+            ),
+        ),
+    ),
+    Pipeline(
+        name="debug_and_deploy",
+        triggers=(
+            "调试部署",
+            "debug and deploy",
+            "修复并上线",
+            "hotfix deploy",
+        ),
+        steps=(
+            PipelineStep(id="1", agent="rain", description_template="调试修复: {goal}"),
+            PipelineStep(
+                id="2", agent="dew",
+                description_template="部署第 1 步的修复",
+                depends_on=("1",),
             ),
         ),
     ),
@@ -126,21 +245,19 @@ def match_pipeline(goal: str) -> Pipeline | None:
 
 
 def build_tasks_from_pipeline(pipeline: Pipeline, goal: str) -> list[Task]:
-    """Materialize a pipeline into runtime Task objects.
-
-    Substitutes `{goal}` and sets parent_id for the first dependency so the
-    factory's existing DAG executor can run them as-is.
-    """
+    """Materialize a pipeline into runtime Task objects (full DAG)."""
     tasks: list[Task] = []
     for step in pipeline.steps:
         description = step.description_template.format(goal=goal)
-        parent_id = step.depends_on[0] if step.depends_on else None
+        depends = list(step.depends_on)
+        parent_id = depends[0] if depends else None
         tasks.append(
             Task(
                 id=step.id,
                 description=description,
                 assigned_to=step.agent,
                 parent_id=parent_id,
+                depends_on=depends,
                 metadata={"goal": goal, "pipeline": pipeline.name},
             )
         )

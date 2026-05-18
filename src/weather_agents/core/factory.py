@@ -17,7 +17,7 @@ from weather_agents.agents.fog import FogAgent
 from weather_agents.agents.frost import FrostAgent
 from weather_agents.agents.rain import RainAgent
 from weather_agents.agents.snow import SnowAgent
-from weather_agents.core.agent import BaseAgent
+from weather_agents.core.agent import BaseAgent, TaskState
 from weather_agents.core.agent import Task as AgentTask
 from weather_agents.core.bus import MessageBus
 from weather_agents.core.config import AppConfig, load_config
@@ -233,79 +233,97 @@ async def orchestrate_task(
     completed: set[str] = set()
     results: list[TaskExecutionResult] = []
     results_by_id: dict[str, TaskExecutionResult] = {}
-    # Original, un-truncated content keyed by task id — used so downstream
-    # description-injection can know when the excerpt is incomplete and
-    # so shared_working stores the full value (not the 500-char excerpt).
     full_contents_by_id: dict[str, str] = {}
     pending = [t for t in tasks if t.assigned_to and t.assigned_to != "snow"]
 
-    while pending:
-        # Find tasks whose dependencies are satisfied
-        ready = [t for t in pending if not t.parent_id or t.parent_id in completed]
-        if not ready:
-            ready = pending[:1]  # break deadlock
+    # Cycle detection: verify DAG is acyclic before execution
+    _visiting: set[str] = set()
 
-        # Execute ready tasks concurrently
+    def _has_cycle(t: Any, path: set[str]) -> bool:
+        if t.id in path:
+            return True
+        path.add(t.id)
+        for dep_id in t.all_deps:
+            dep_task = next((x for x in tasks if x.id == dep_id), None)
+            if dep_task and _has_cycle(dep_task, path.copy()):
+                return True
+        return False
+
+    for t in pending:
+        if _has_cycle(t, set()):
+            results.append(
+                TaskExecutionResult(
+                    id=t.id, agent=t.assigned_to or "",
+                    description=t.description, success=False,
+                    content=f"[cycle detected] task {t.id} has circular dependency",
+                )
+            )
+            completed.add(t.id)
+    pending = [t for t in pending if t.id not in completed]
+
+    while pending:
+        # Full DAG ready check: ALL dependencies must be satisfied
+        ready = [t for t in pending if all(dep in completed for dep in t.all_deps)]
+        if not ready:
+            ready = pending[:1]  # break deadlock on missing deps
+
+        # Mark ready tasks as RUNNING
+        for t in ready:
+            with contextlib.suppress(ValueError):
+                t.transition_to(TaskState.RUNNING)
+
         async def _execute_one(t):
             agent = agent_map.get(t.assigned_to)
             if not agent:
                 return TaskExecutionResult(
-                    id=t.id,
-                    agent=t.assigned_to or "",
-                    description=t.description,
-                    success=False,
+                    id=t.id, agent=t.assigned_to or "",
+                    description=t.description, success=False,
                     content=f"Agent '{t.assigned_to}' not found",
                 )
             if on_task_start:
                 await on_task_start(t)
-            # Inject upstream results so downstream agents actually see what
-            # their dependencies produced. Two complementary channels:
-            #   (1) Inline excerpt in the description so single-pass agents
-            #       without tool support still work. Capped at 500 chars to
-            #       keep the prompt small.
-            #   (2) The FULL value written to shared_working keyed by
-            #       `task_<parent_id>_output`. Downstream agents can pull it
-            #       in full via the read_shared_memory tool when the truncated
-            #       excerpt is insufficient — the "按需检索" pattern.
+
+            # Inject upstream results from ALL dependencies
             description = t.description
-            if t.parent_id and t.parent_id in results_by_id:
-                parent_result = results_by_id[t.parent_id]
-                # Prefer the un-truncated original when available — otherwise
-                # the description excerpt would be capped at the per-result
-                # truncation limit (default 500), making the "incomplete"
-                # detection useless.
-                full_content = full_contents_by_id.get(t.parent_id, parent_result.content or "")
-                excerpt = full_content
-                truncated = False
-                if len(excerpt) > 500:
-                    excerpt = excerpt[:500]
-                    truncated = True
-                tail = (
-                    "\n\n[完整内容存于 shared memory · key=task_{pid}_output · "
-                    "调用 read_shared_memory 拉取]"
-                    if truncated
-                    else ""
-                ).format(pid=parent_result.id)
-                description = (
-                    f"{t.description}\n\n"
-                    f"## 上游产出 (task {parent_result.id} · {parent_result.agent})\n"
-                    f"{excerpt}{tail}"
-                )
+            upstream_sections: list[str] = []
+            for dep_id in t.all_deps:
+                if dep_id in results_by_id:
+                    parent_result = results_by_id[dep_id]
+                    full_content = full_contents_by_id.get(dep_id, parent_result.content or "")
+                    excerpt = full_content
+                    truncated = False
+                    if len(excerpt) > 500:
+                        excerpt = excerpt[:500]
+                        truncated = True
+                    tail = (
+                        "\n\n[完整内容存于 shared memory · key=task_{pid}_output · "
+                        "调用 read_shared_memory 拉取]"
+                        if truncated else ""
+                    ).format(pid=parent_result.id)
+                    upstream_sections.append(
+                        f"## 上游产出 (task {parent_result.id} · {parent_result.agent})\n"
+                        f"{excerpt}{tail}"
+                    )
+            if upstream_sections:
+                description = f"{t.description}\n\n" + "\n\n".join(upstream_sections)
+
             a_task = AgentTask(
-                id=t.id,
-                description=description,
-                assigned_to=t.assigned_to,
-                parent_id=t.parent_id,
+                id=t.id, description=description,
+                assigned_to=t.assigned_to, parent_id=t.parent_id,
                 metadata=t.metadata,
             )
-            # Retry on failure — README has long advertised "失败任务自动重试
-            # (最多 3 轮)" but the code only awaited once. Exponential backoff
-            # is bounded to keep failure cases from dragging on too long.
             result = await _execute_with_retry(agent, a_task, max_attempts=max_task_retries)
+
+            # State transition based on result
+            try:
+                if result.success:
+                    t.transition_to(TaskState.COMPLETED)
+                else:
+                    t.transition_to(TaskState.FAILED)
+            except ValueError:
+                pass
+
             full = result.content or ""
-            # Publish FULL output to shared memory BEFORE truncation so
-            # downstream agents can fetch the original via read_shared_memory.
-            # Best-effort — DB / session errors must never break orchestration.
             if full:
                 with contextlib.suppress(Exception):
                     await agent.memory.write_shared(f"task_{t.id}_output", full)
@@ -314,11 +332,8 @@ async def orchestrate_task(
             if result_truncate is not None and len(tr) > result_truncate:
                 tr = tr[:result_truncate]
             r = TaskExecutionResult(
-                id=t.id,
-                agent=t.assigned_to or "",
-                description=t.description,
-                success=result.success,
-                content=tr,
+                id=t.id, agent=t.assigned_to or "",
+                description=t.description, success=result.success, content=tr,
             )
             if on_task_done:
                 await on_task_done(t, r)

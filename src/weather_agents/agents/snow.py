@@ -6,6 +6,12 @@ import json
 import re
 
 from weather_agents.core.agent import BaseAgent, Task
+from weather_agents.core.schemas import TaskPlanSchema
+
+# Frozen set of valid agent names — used in schema validation path.
+_VALID_AGENTS_STATIC: frozenset = frozenset(
+    {"fog", "rain", "frost", "snow", "dew", "fair"}
+)
 
 
 class SnowAgent(BaseAgent):
@@ -116,8 +122,33 @@ Like snow: silent but all-encompassing — clear structure, thorough considerati
         response = await self._llm_loop()
         self.memory.add_message("assistant", response.content)
 
-        tasks = self._parse_task_plan(response.content, goal)
+        # Try schema-validated parsing first (stricter, clearer errors)
+        from weather_agents.core.schemas import parse_task_plan
 
+        parsed = parse_task_plan(response.content)
+        if parsed is not None and parsed.steps:
+            return self._schema_to_tasks(parsed, goal)
+
+        # Fallback to heuristic parsing
+        tasks = self._parse_task_plan(response.content, goal)
+        return tasks
+
+    def _schema_to_tasks(self, plan: TaskPlanSchema, goal: str) -> list[Task]:
+        """Convert schema-validated plan to Task objects."""
+        tasks: list[Task] = []
+        for step in plan.steps:
+            sid = str(step.id)
+            depends = list(step.depends_on or [])
+            tasks.append(
+                Task(
+                    id=sid,
+                    description=step.description,
+                    assigned_to=step.agent if step.agent in _VALID_AGENTS_STATIC else "rain",
+                    parent_id=depends[0] if depends else None,
+                    depends_on=depends,
+                    metadata={"goal": goal, "priority": getattr(step, "priority", "medium")},
+                )
+            )
         return tasks
 
     def _parse_task_plan(self, content: str, goal: str) -> list[Task]:
@@ -178,6 +209,7 @@ Like snow: silent but all-encompassing — clear structure, thorough considerati
                     description=step.get("description", ""),
                     assigned_to=agent,
                     parent_id=parent_id,
+                    depends_on=list(depends) if isinstance(depends, (list, tuple)) else [],
                     metadata={
                         "goal": goal,
                         "priority": step.get("priority", "medium"),
