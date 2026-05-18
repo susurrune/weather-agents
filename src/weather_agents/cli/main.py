@@ -302,7 +302,7 @@ def _global_options(
     """Top-level Typer callback hosting global flags like --version."""
     _ = version  # Consumed by callback above.
     if ctx.invoked_subcommand is None:
-        chat(agent="fog", message=None)
+        chat(agent=None, message=None)
 
 
 def _strip_hr(markup: str) -> str:
@@ -1166,7 +1166,7 @@ async def _interactive(agent_name: str | None = None) -> None:
     set_request_id(uuid.uuid4().hex[:12])
     ctx = create_system_context()
     # Lazy init: only initialize current agent, not all 5
-    current = agent_name or "fog"
+    current = agent_name or ctx.config.cli.default_agent
     agent = ctx.agent_map[current]
     await _init_agent_lazy(agent, ctx)
     model = ctx.config.llm.default_model
@@ -2949,7 +2949,9 @@ async def _run_voice_server(
 
 @app.command()
 def chat(
-    agent: str = typer.Argument("fog", help="Agent name (fog/rain/frost/snow/dew/fair)"),
+    agent: str | None = typer.Argument(
+        None, help="Agent name (fog/rain/frost/snow/dew/fair, default from config)"
+    ),
     message: str | None = typer.Argument(None, help="Message (omit for interactive mode)"),
     new: bool = typer.Option(
         False,
@@ -2959,6 +2961,8 @@ def chat(
     ),
 ) -> None:
     """Chat with an agent. Omit message for interactive mode."""
+    if agent is None:
+        agent = load_config().cli.default_agent
     if agent not in AGENT_CLASSES:
         console.print(f"[red]Unknown agent: {agent}. Use: {', '.join(AGENT_CLASSES)}[/red]")
         raise typer.Exit(1)

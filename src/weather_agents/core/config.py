@@ -204,6 +204,8 @@ class MCPConfig:
 
 @dataclass
 class CLIConfig:
+    # Default agent used when none is specified on `wa chat`
+    default_agent: str = "fog"
     # Persisted interactive-mode pick (default | plan | auto). Read by
     # cli.mode.ModeController on startup; written when the user toggles.
     interactive_mode: str = "default"
@@ -424,6 +426,7 @@ def _load_config_uncached() -> AppConfig:
 
     # CLI (interactive mode persisted across sessions)
     if cli_cfg := merged.get("cli"):
+        cfg.cli.default_agent = cli_cfg.get("default_agent", cfg.cli.default_agent)
         cfg.cli.interactive_mode = cli_cfg.get("interactive_mode", cfg.cli.interactive_mode)
         cfg.cli.approval_mode = cli_cfg.get("approval_mode", cfg.cli.approval_mode)
         cfg.cli.circuit_failure_threshold = int(
@@ -529,6 +532,13 @@ def set_config(key: str, value: str) -> tuple[bool, str]:
         _save_user_cfg({"agents": {agent_name: {"model": value}}})
         return True, f"{agent_name} model → {value}"
 
+    # cli.default_agent — agent name used when none specified
+    if len(parts) == 2 and parts[0] == "cli" and parts[1] == "default_agent":
+        if value.lower() not in AGENT_NAMES:
+            return False, f"invalid agent '{value}', use one of: {', '.join(AGENT_NAMES)}"
+        _save_user_cfg({"cli": {"default_agent": value.lower()}})
+        return True, f"default_agent → {value}"
+
     # Simple keys under llm
     SIMPLE_LLM_KEYS = ("default_model", "temperature", "max_tokens", "timeout")
     if key in SIMPLE_LLM_KEYS:
@@ -595,6 +605,13 @@ def delete_config(key: str) -> tuple[bool, str]:
             _write_yaml(path, data)
             return True, f"{agent_name} model reset to default"
         return True, f"{agent_name} already using default"
+
+    if len(parts) == 2 and parts[0] == "cli" and parts[1] == "default_agent":
+        removed = data.get("cli", {}).pop("default_agent", None)
+        if removed:
+            _write_yaml(path, data)
+            return True, "default_agent reset to fog"
+        return True, "default_agent already at fog"
 
     SIMPLE_LLM_KEYS = ("default_model", "temperature", "max_tokens", "timeout")
     if key in SIMPLE_LLM_KEYS:
