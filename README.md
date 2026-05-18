@@ -94,7 +94,8 @@ pipx install git+https://github.com/susurrune/weather-agents.git
 
 ```bash
 wa init                              # 重新跑向导
-wa config set api_key.deepseek sk-xxx # 直接写入
+wa config set api_key.deepseek sk-xxx       # 直接写入
+wa config set cli.default_agent rain        # 设置默认启动 Agent（默认 fog）
 export DEEPSEEK_API_KEY=sk-xxx        # 或环境变量
 ```
 
@@ -185,7 +186,7 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 
 ```bash
 wa init              # 交互式配置向导
-wa chat [agent] [msg] # 对话（默认 fog）
+wa chat [agent] [msg] # 对话（默认由 cli.default_agent 指定，默认 fog）
 wa task <goal>       # 多 Agent 协作
 wa status            # 所有 Agent 状态
 wa config <action>   # 配置管理
