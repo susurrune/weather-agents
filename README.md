@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/susurrune/weather-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/susurrune/weather-agents/actions)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/susurrune/weather-agents)
-[![Tests](https://img.shields.io/badge/tests-669_🌡️-8A2BE2)](https://github.com/susurrune/weather-agents)
+[![Tests](https://img.shields.io/badge/tests-736_🌡️-8A2BE2)](https://github.com/susurrune/weather-agents)
 [![Code style](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
 </div>
@@ -217,7 +217,7 @@ wa memory <action>   # 记忆管理
 > 以下数据基于代码事实：
 
 - **代码**：56 个源文件，~34k 行 Python
-- **测试**：669 项，覆盖率 > 55%
+- **测试**：736 项，覆盖率 > 63%
 - **提交**：141 个 commits
 - **CI**：GitHub Actions — Ruff + MyPy + Pytest × 3 个 Python 版本
 
@@ -249,10 +249,10 @@ wa memory <action>   # 记忆管理
 
 | 项目 | 现状 | 目标 |
 |:-----|:------|:------|
-| **测试覆盖** | 669 tests, 55% | **90%+ 行覆盖率，-x 零容忍**。补全集成测试、边界测试、异常路径测试 |
+| **测试覆盖** | 736 tests, 63% | **90%+ 行覆盖率，-x 零容忍**。补全集成测试、边界测试、异常路径测试 |
 | **属性测试** | 无 | **引入 Hypothesis**，对 memory 读写、tool 参数校验、路由分类做基于属性的随机测试 |
 | **性能基准** | 无 | **CI 中嵌入基准测试**。`wa chat` 启动 < 500ms，简单问答 < 2s 首 token，编排 < 5s 出首任务 |
-| **类型覆盖** | mypy 通过 | 启用 `--strict`，消除所有 `Any`，补全缺失的类型标注 |
+| **类型覆盖** | mypy 通过（196 `--strict` 错误） | 启用 `--strict`，消除所有 `Any`，补全缺失的类型标注 |
 | **错误处理审计** | 分散 try/except | **统一错误类型 + 结构化日志**。每个外部调用（LLM/DB/Shell/HTTP）有明确的超时、重试、熔断策略 |
 
 ### Phase 2 · 记忆系统极致化（Q3 2026）
