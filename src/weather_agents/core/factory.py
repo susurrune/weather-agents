@@ -267,7 +267,30 @@ async def orchestrate_task(
         # Full DAG ready check: ALL dependencies must be satisfied
         ready = [t for t in pending if all(dep in completed for dep in t.all_deps)]
         if not ready:
-            ready = pending[:1]  # break deadlock on missing deps
+            # No task is ready and pending is non-empty -> at least one
+            # task depends on something that will never complete (planner bug
+            # or upstream failure that didn't propagate). Fail-fast every
+            # remaining task with an explicit reason rather than silently
+            # running one of them without its upstream context.
+            for t in pending:
+                missing = [d for d in t.all_deps if d not in completed]
+                with contextlib.suppress(ValueError):
+                    t.transition_to(TaskState.FAILED)
+                r = TaskExecutionResult(
+                    id=t.id,
+                    agent=t.assigned_to or "",
+                    description=t.description,
+                    success=False,
+                    content=(
+                        f"[dependency missing] task {t.id} requires {missing} which never completed"
+                    ),
+                )
+                results.append(r)
+                results_by_id[r.id] = r
+                completed.add(r.id)
+                if on_task_done:
+                    await on_task_done(t, r)
+            break
 
         # Mark ready tasks as RUNNING
         for t in ready:

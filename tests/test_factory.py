@@ -256,6 +256,32 @@ class TestOrchestrateTask:
         assert results[0].success is False
         assert "not found" in results[0].content
 
+    @pytest.mark.asyncio
+    async def test_dangling_dependency_fails_fast(self):
+        """Task depending on an id that never appears in the plan must fail
+        explicitly, not silently run without its upstream context."""
+        from weather_agents.core.agent import Task
+
+        # Task "2" depends on "999" which is never planned -> deadlock
+        task = Task(id="2", description="needs upstream", assigned_to="rain")
+        task.depends_on = ["999"]
+        snow = Mock()
+        snow.orchestrate = AsyncMock(return_value=[task])
+        snow.chat = AsyncMock(return_value="summary")
+
+        rain = Mock()
+        rain.execute_task = AsyncMock(return_value=Mock(success=True, content="oops"))
+
+        _, results, _ = await orchestrate_task(
+            "broken plan",
+            agent_map={"rain": rain, "snow": snow},
+        )
+        assert len(results) == 1
+        assert results[0].success is False
+        assert "dependency missing" in results[0].content
+        assert "999" in results[0].content
+        rain.execute_task.assert_not_awaited()
+
 
 class TestCreateSystemContext:
     def test_creates_all_agents(self):

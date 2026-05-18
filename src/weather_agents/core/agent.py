@@ -896,6 +896,13 @@ class BaseAgent:
                 # orphaned tool result with no assistant follow-up.
                 self.memory.add_message("assistant", synth)
                 yield {"type": "content", "text": synth}
+            # Signal that the answer is incomplete because we exhausted the
+            # tool-call budget. The CLI renders this as a dim warning so the
+            # user understands why the agent stopped mid-task.
+            yield {
+                "type": "truncated",
+                "reason": f"max tool rounds ({self._max_tool_rounds}) reached",
+            }
             yield {"type": "done"}
 
         except Exception as e:
@@ -1246,15 +1253,16 @@ class BaseAgent:
 
     async def _llm_loop(
         self,
-        max_iterations: int = 10,
+        max_iterations: int | None = None,
         on_status: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         """LLM reasoning loop with tool calling support."""
+        mi = max_iterations if max_iterations is not None else self._max_tool_rounds
         response = LLMResponse(content="")
         tool_names = self._active_tool_names()
 
         try:
-            for _ in range(max_iterations):
+            for _ in range(mi):
                 messages = await self._messages_with_recall()
                 if on_status:
                     on_status("thinking...")
@@ -1355,6 +1363,15 @@ class BaseAgent:
 
                 await self._set_state(AgentState.THINKING)
 
+            # Loop exhausted without the LLM producing a tool-call-free answer.
+            # Surface truncation in the response content so the caller knows
+            # the result is incomplete (was previously silent).
+            response.truncated = True
+            if not response.content:
+                response.content = (
+                    f"[truncated] max tool rounds ({mi}) reached without a "
+                    "final answer; latest tool calls were not followed up."
+                )
             return response
         except Exception:
             # On tool execution failure: remove any orphaned tool_calls that

@@ -224,6 +224,9 @@ class LLMResponse:
     usage: dict = field(default_factory=dict)
     cost: float = 0.0
     reasoning_content: str | None = None
+    # True when _llm_loop ran out of iterations before the LLM produced a
+    # tool-call-free answer. Callers should treat the content as incomplete.
+    truncated: bool = False
 
 
 @dataclass

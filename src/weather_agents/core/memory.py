@@ -117,6 +117,7 @@ class Memory:
         # concurrent writer, so the entire block is Windows-only.
         if os.name == "nt":
             import subprocess as _sp
+
             for _suf in ("-wal", "-shm"):
                 _p = str(self._db_path) + _suf
                 if os.path.exists(_p):
@@ -125,7 +126,8 @@ class Memory:
                     except OSError:
                         _sp.run(
                             ["cmd.exe", "/c", "del", "/f", "/q", _p],
-                            capture_output=True, timeout=5,
+                            capture_output=True,
+                            timeout=5,
                         )
         raw = await aiosqlite.connect(str(self._db_path))
         await raw.execute("PRAGMA journal_mode=WAL")

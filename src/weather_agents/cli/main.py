@@ -1565,6 +1565,9 @@ async def _interactive(agent_name: str | None = None) -> None:
                                 event.get("result", ""),
                             )
                             live.update(_build_stream_display(agent, status_text, md_content))
+                        elif event["type"] == "truncated":
+                            md_content += f"\n\n> [truncated] {event.get('reason', '')}"
+                            live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "done":
                             break
                 except KeyboardInterrupt:
