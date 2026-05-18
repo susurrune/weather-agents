@@ -194,3 +194,66 @@ class TestAgentSpecialties:
     def test_specialties_are_nonempty(self):
         for name, desc in AGENT_SPECIALTIES.items():
             assert len(desc) > 0, f"Empty specialty for {name}"
+
+
+class TestBuildSharedContext:
+    def test_without_calling_agent(self):
+        from weather_agents.tools.delegate import _build_shared_context
+
+        result = _build_shared_context(None, "")
+        assert result == ""
+
+    def test_with_context_string_only(self):
+        from weather_agents.tools.delegate import _build_shared_context
+
+        result = _build_shared_context(None, "some context")
+        assert "some context" in result
+
+    def test_with_calling_agent_messages(self):
+        from weather_agents.tools.delegate import _build_shared_context
+
+        agent = _make_agent("fog", "雾", "~~")
+        agent.memory = Mock()
+        agent.memory.short_term = []
+        # No messages — should not add context
+        result = _build_shared_context(agent, "")
+        assert result == ""
+
+    def test_with_recent_non_system_messages(self):
+        from unittest.mock import PropertyMock
+
+        from weather_agents.tools.delegate import _build_shared_context
+
+        agent = _make_agent("fog", "雾", "~~")
+        agent.memory = Mock()
+
+        msg1 = Mock()
+        msg1.role = "user"
+        msg1.content = "hello from user"
+        msg2 = Mock()
+        msg2.role = "assistant"
+        msg2.content = "hello from agent"
+
+        agent.memory.short_term = [msg1, msg2]
+        result = _build_shared_context(agent, "extra info")
+        assert "extra info" in result
+        assert "hello from user" in result
+        assert "hello from agent" in result
+
+    def test_system_messages_filtered_out(self):
+        from weather_agents.tools.delegate import _build_shared_context
+
+        agent = _make_agent("fog", "雾", "~~")
+        agent.memory = Mock()
+
+        sys_msg = Mock()
+        sys_msg.role = "system"
+        sys_msg.content = "system prompt"
+        user_msg = Mock()
+        user_msg.role = "user"
+        user_msg.content = "user query"
+
+        agent.memory.short_term = [sys_msg, user_msg]
+        result = _build_shared_context(agent, "")
+        assert "system prompt" not in result
+        assert "user query" in result

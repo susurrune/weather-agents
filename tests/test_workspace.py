@@ -125,6 +125,52 @@ class TestWorkspaceInit:
         assert "MB" in format_bytes(5_000_000)
         assert "GB" in format_bytes(10_000_000_000)
 
+    def test_format_bytes_petabytes(self):
+        from weather_agents.core.workspace import format_bytes
+
+        result = format_bytes(2_500_000_000_000_000)  # 2.5 PB
+        assert "PB" in result
+
+    def test_format_bytes_negative(self):
+        from weather_agents.core.workspace import format_bytes
+
+        result = format_bytes(-500)
+        assert "B" in result
+
+
+class TestWorkspaceDriveList:
+    def test_oserror_on_drive_skipped(self):
+        from weather_agents.core.workspace import _get_drive_list
+
+        drives = _get_drive_list()
+        # Should not crash; should return valid drives
+        assert isinstance(drives, list)
+        for d in drives:
+            assert d.path
+
+
+class TestWorkspaceDetectRoot:
+    def test_unix_uses_home(self):
+        import os as _os
+        from pathlib import Path
+
+        from weather_agents.core.workspace import detect_best_workspace_root
+
+        if _os.name != "nt":
+            root = detect_best_workspace_root()
+            expected = Path.home() / "workspace"
+            assert root == expected
+
+    @pytest.mark.skipif(os.name != "posix", reason="Unix-specific code path")
+    def test_get_drive_list_oserror_on_unix(self):
+        from unittest.mock import patch
+
+        from weather_agents.core.workspace import _get_drive_list
+
+        with patch("weather_agents.core.workspace.shutil.disk_usage", side_effect=OSError("no disk")):
+            drives = _get_drive_list()
+            assert drives == []
+
 
 class TestWorkspaceConfig:
     def test_default_config_is_auto(self):

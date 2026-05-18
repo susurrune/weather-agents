@@ -157,3 +157,43 @@ class TestLLMCacheKey:
         msgs = [{"role": "user", "content": "hi"}]
         cache.set("gpt-4o", msgs, "ok", {"temperature": 0.5})  # 2 chars — refused
         assert cache.get("gpt-4o", msgs, {"temperature": 0.5}) is None
+
+
+class TestLLMCacheLifecycle:
+    def test_expired_entry_returns_none(self):
+        import time as _time
+
+        from weather_agents.core.cache import LLMCache
+
+        cache = LLMCache(max_size=10, ttl_seconds=0)  # 0-second TTL
+        msgs = [{"role": "user", "content": "hi"}]
+        cache.set("gpt-4o", msgs, "test answer", {"temperature": 0.5})
+        # No need to sleep — cache lookup will see elapsed >= 0 and
+        # treat the entry as expired (time.time() - ts > 0).
+        assert cache.get("gpt-4o", msgs, {"temperature": 0.5}) is None
+
+    def test_eviction_when_over_max_size(self):
+        from weather_agents.core.cache import LLMCache
+
+        cache = LLMCache(max_size=2, ttl_seconds=300)
+        msgs = [{"role": "user", "content": "hi"}]
+        cache.set("model-a", msgs, "long answer aaa")  # 15 chars, accepted
+        cache.set("model-b", msgs, "long answer bbb")
+        cache.set("model-c", msgs, "long answer ccc")  # evicts the oldest
+        # model-a should have been evicted (LRU)
+        assert cache.get("model-a", msgs) is None
+        # model-b and model-c should still be present
+        assert cache.get("model-b", msgs) == "long answer bbb"
+        assert cache.get("model-c", msgs) == "long answer ccc"
+        assert cache.size == 2
+
+    def test_clear_empties_cache(self):
+        from weather_agents.core.cache import LLMCache
+
+        cache = LLMCache(max_size=10, ttl_seconds=300)
+        msgs = [{"role": "user", "content": "hi"}]
+        cache.set("gpt-4o", msgs, "some answer")
+        assert cache.size == 1
+        cache.clear()
+        assert cache.size == 0
+        assert cache.get("gpt-4o", msgs) is None
