@@ -385,6 +385,84 @@ def _build_response_panel(
     )
 
 
+# ── Claude Code-style IN/OUT tool status display ─────────────────────────
+
+
+_TOOL_CATEGORIES: dict[str, str] = {
+    "read_file": "File",
+    "write_file": "File",
+    "edit_file": "File",
+    "move_file": "File",
+    "copy_file": "File",
+    "delete_file": "File",
+    "list_directory": "File",
+    "file_search": "File",
+    "tree": "File",
+    "grep": "Search",
+    "code_search": "Search",
+    "web_search": "Search",
+    "fetch_page": "Web",
+    "http_get": "Web",
+    "http_post": "Web",
+    "shell_exec": "Bash",
+    "get_cwd": "Bash",
+    "lint_file": "Lint",
+    "scan_deps": "Scan",
+    "delegate_to": "Delegate",
+    "use_skill": "Skill",
+    "list_skills": "Skill",
+    "git_status": "Git",
+    "git_diff": "Git",
+    "git_log": "Git",
+    "git_add": "Git",
+    "git_commit": "Git",
+    "git_checkout": "Git",
+}
+
+
+def _tool_category(tool_name: str) -> str:
+    """Map tool name to display category (Bash / File / Git / Search / Web / ...)."""
+    return _TOOL_CATEGORIES.get(tool_name, "Tool")
+
+
+def _print_tool_in(label: str, tool_name: str, args: dict) -> None:
+    """Print Claude Code-style IN block when a tool starts."""
+    cat = _tool_category(tool_name)
+    label_short = label if len(label) < 50 else label[:47] + "..."
+    icon = "●" if cat == "Bash" else "·"
+    console.print(f"  [{cat.lower()}]{icon} {cat}[/] [bold]{label_short}")
+    if args:
+        # Format args into key: value lines, single level
+        for k, v in args.items():
+            if v is None or v == "":
+                continue
+            v_str = str(v)
+            if len(v_str) > 120:
+                v_str = v_str[:117] + "..."
+            console.print(f"    [dim]{k}:[/dim] {v_str}")
+    console.print()
+
+
+def _print_tool_out(label: str, tool_name: str, success: bool, result: str = "") -> None:
+    """Print Claude Code-style OUT block when a tool finishes."""
+    cat = _tool_category(tool_name)
+    status_icon = "[green]✓[/green]" if success else "[red]✗[/red]"
+    label_short = label if len(label) < 50 else label[:47] + "..."
+    console.print(f"  [{cat.lower()}]{status_icon} {cat}[/] [bold]{label_short}")
+    if result:
+        # Show first meaningful line of result (trim headers / empty lines)
+        lines = [ln.rstrip() for ln in result.split("\n") if ln.strip()]
+        display = ""
+        if lines:
+            first = lines[0]
+            display = first if len(first) < 200 else first[:197] + "..."
+            if len(lines) > 1:
+                display += f" [dim]…({len(lines)} lines)[/dim]"
+        if display:
+            console.print(f"    {display}")
+    console.print()
+
+
 def _format_cost(cost: float) -> str:
     """Format cost adaptively: dollars or cents."""
     if cost >= 1.0:
@@ -1470,12 +1548,23 @@ async def _interactive(agent_name: str | None = None) -> None:
                                     "delegation": is_dlg,
                                 }
                             )
+                            _print_tool_in(
+                                event["label"],
+                                event.get("tool_name", ""),
+                                event.get("args", {}),
+                            )
                             live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "tool_done":
                             for a in activities:
                                 if a["label"] == event["label"] and a["status"] == "running":
                                     a["status"] = "done" if event.get("success") else "error"
                                     break
+                            _print_tool_out(
+                                event["label"],
+                                event.get("tool_name", ""),
+                                event.get("success", True),
+                                event.get("result", ""),
+                            )
                             live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "done":
                             break
@@ -2524,7 +2613,6 @@ async def _run_task(goal: str, agents=None) -> None:
         await own_ctx.init_all()
         agents = own_ctx.agent_map
 
-    status_handles: dict[str, Any] = {}
     try:
         # Route simple goals to a single agent — skips Snow's LLM decomposition
         # call (saves ~1 LLM round-trip and the planning/summary table render).
@@ -2551,61 +2639,62 @@ async def _run_task(goal: str, agents=None) -> None:
                     refined_goal = goal
 
                 target = agents[target_name]
-                ict = icon_text(target_name)
-                sp = AGENT_SPINNERS.get(target_name, "dots")
                 console.print()
-                with console.status(f"  [dim]{ict} {target.display_name}…[/dim]", spinner=sp):
-                    reply = await target.chat(refined_goal)
+                console.print(f"  [bold]{target.display_name}[/bold]")
+                reply = await target.chat(refined_goal)
                 console.print(Padding(Markdown(_strip_hr(reply)), pad=(0, 0, 0, 2)))
                 return
 
         from weather_agents.core.factory import orchestrate_task
 
+        # ── Plan → show plan → execute (with IN/OUT) → results ──
+        tasks: list[Any] = []
+        results: list[Any] = []
+        summary = ""
+
+        async def _on_planned(planned_tasks):
+            nonlocal tasks
+            tasks = planned_tasks
+            if not tasks:
+                return
+            console.print()
+            console.print(f"  [bold]== Plan[/bold]  [dim]{len(tasks)} tasks[/dim]")
+            for i, t in enumerate(tasks, 1):
+                dep = f"  [dim]← #{t.parent_id}[/dim]" if t.parent_id else ""
+                ict = icon_text(t.assigned_to or "")
+                console.print(f"  [{i}] {ict} [bold]{t.description}[/bold]{dep}")
+
         async def _on_start(t):
-            ict = icon_text(t.assigned_to or "")
-            sp = AGENT_SPINNERS.get(t.assigned_to or "", "dots")
-            sh = console.status(f"[dim]{ict} {t.description}...[/dim]", spinner=sp)
-            sh.start()
-            status_handles[t.id] = sh
+            _print_tool_in(
+                t.description,
+                f"agent:{t.assigned_to or '?'}",
+                {"task": t.description},
+            )
 
         async def _on_done(t, r):
-            sh = status_handles.pop(t.id, None)
-            if sh:
-                sh.stop()
-            ict = icon_text(r.agent)
-            icon = "[green]✓[/green]" if r.success else "[red]✗[/red]"
-            console.print(f"  {icon} {ict} {r.description}")
+            _print_tool_out(
+                r.description,
+                f"agent:{r.agent}",
+                r.success,
+                r.content or "",
+            )
 
         console.print()
-        console.print(f"  [bold]{goal}[/bold]")
-        console.print()
-
-        with console.status("  [dim]planning[/dim]", spinner="dots"):
-            tasks, results, summary = await orchestrate_task(
+        with console.status("  [dim]  orchestrating…[/dim]", spinner="dots"):
+            _, results, summary = await orchestrate_task(
                 goal,
                 agents,
                 on_task_start=_on_start,
                 on_task_done=_on_done,
+                on_planned=_on_planned,
                 result_truncate=500,
             )
 
         if not tasks:
-            console.print("  [dim]no tasks generated[/dim]")
+            console.print("  [dim]  no tasks generated[/dim]")
             return
 
-        # Task plan
-        plan_tbl = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
-        plan_tbl.add_column(width=4, style="dim")  # id
-        plan_tbl.add_column(width=4)  # emoji
-        plan_tbl.add_column()  # description
-        plan_tbl.add_column(width=12, style="dim")  # dep
-
-        for t in tasks:
-            dep = f"← {t.parent_id}" if t.parent_id else ""
-            plan_tbl.add_row(f"{t.id}.", t.assigned_to or "", t.description, dep)
-        console.print(plan_tbl)
-
-        # Results
+        # Summary
         console.print()
         ok = sum(1 for r in results if r.success)
         total = len(results)
@@ -2618,9 +2707,6 @@ async def _run_task(goal: str, agents=None) -> None:
             console.print(Padding(Markdown(_strip_hr(summary)), pad=(0, 2, 0, 2)))
 
     finally:
-        # Clean up any lingering status handles
-        for sh in status_handles.values():
-            sh.stop()
         if own_ctx:
             await own_ctx.close_all()
 

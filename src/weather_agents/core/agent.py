@@ -750,7 +750,12 @@ class BaseAgent:
                         if tool_args
                         else f"{tool_name} (unparseable args)"
                     )
-                    yield {"type": "tool_status", "label": tool_label}
+                    yield {
+                        "type": "tool_status",
+                        "label": tool_label,
+                        "tool_name": tool_name,
+                        "args": tool_args or {},
+                    }
                     tool_prep.append(
                         dict(
                             tc=tc,
@@ -796,7 +801,13 @@ class BaseAgent:
                 for tc, result, success, _tool_name in exec_results:
                     self.memory.add_message("tool", result, name=_tool_name, tool_call_id=tc["id"])
                     label = next(p["tool_label"] for p in tool_prep if p["tc"] is tc)
-                    yield {"type": "tool_done", "label": label, "success": success}
+                    yield {
+                        "type": "tool_done",
+                        "label": label,
+                        "success": success,
+                        "tool_name": _tool_name,
+                        "result": (result[:800] if result else "") if isinstance(result, str) else str(result)[:800] if result else "",
+                    }
                     if _tool_name == "delegate_to":
                         # Recover the target agent name from the parsed args
                         # so we can report which sub-agent ran on this turn.

@@ -200,6 +200,7 @@ async def orchestrate_task(
     *,
     on_task_start: Callable[[Any], Awaitable[None]] | None = None,
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None = None,
+    on_planned: Callable[[list[Any]], Awaitable[None]] | None = None,
     result_truncate: int | None = 500,
     summary_prompt_template: str = "",
     max_task_retries: int = 3,
@@ -223,6 +224,10 @@ async def orchestrate_task(
         tasks: list[Any] = build_tasks_from_pipeline(matched, goal)
     else:
         tasks = await snow.orchestrate(goal)  # type: ignore[attr-defined]
+
+    # Notify caller of the plan BEFORE execution — enables plan preview UI
+    if on_planned is not None:
+        await on_planned(tasks)
 
     # Build dependency graph and execute in topological order
     completed: set[str] = set()
