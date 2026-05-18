@@ -183,9 +183,7 @@ class TestFactoryShortCircuits:
         assert "read_shared_memory" in rain_task.description
         # And the FULL value was published to shared memory under the
         # orchestration session id.
-        fog.memory.write_shared.assert_any_call(
-            "task_1_output", big, session_id="sid-test"
-        )
+        fog.memory.write_shared.assert_any_call("task_1_output", big, session_id="sid-test")
 
 
 class TestTaskRetry:
