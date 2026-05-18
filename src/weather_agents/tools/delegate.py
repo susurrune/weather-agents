@@ -197,4 +197,7 @@ def create_delegate_tool(agent_map: dict[str, BaseAgent]) -> Tool:
             ),
         ],
         handler=_handle,
+        # Each delegation triggers a full LLM run on the target agent —
+        # never serve a stale result for the same (agent, task) pair.
+        cacheable=False,
     )

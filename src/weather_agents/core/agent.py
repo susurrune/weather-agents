@@ -1287,6 +1287,12 @@ class BaseAgent:
         all of long-term memory into the prompt, look up only what's
         relevant to the current turn (by token match against the user's
         latest message). Set WA_NO_RECALL=1 to disable, e.g. for debugging.
+
+        Recall results are cached per (agent, query) — within a single tool
+        loop the user's last message doesn't change between iterations, so
+        re-running the DB scan + n-gram scoring every iteration is pure
+        waste (30-150ms each on a large fact store). Cache is cleared when
+        a new user message arrives via _on_user_message_changed.
         """
         import os as _os
 
@@ -1300,10 +1306,28 @@ class BaseAgent:
         if last_user_idx is None:
             return messages
         query = str(messages[last_user_idx].get("content") or "")[:200]
-        try:
-            facts = await self.memory.recall_for_injection(query, limit=3)
-        except Exception:
+        # Skip recall for trivial inputs — short acknowledgements ("ok", "yes",
+        # "好的") have no signal to match against and burn 30-150ms anyway.
+        stripped = query.strip()
+        if len(stripped) < 4:
             return messages
+        # Per-turn cache: same query in the same loop -> same facts.
+        cache = getattr(self, "_recall_cache", None)
+        if cache is None:
+            cache = {}
+            self._recall_cache = cache
+        cached_facts = cache.get(query)
+        if cached_facts is not None:
+            facts = cached_facts
+        else:
+            try:
+                facts = await self.memory.recall_for_injection(query, limit=3)
+            except Exception:
+                return messages
+            cache[query] = facts
+            # Bound the cache so a very long session doesn't leak memory.
+            if len(cache) > 32:
+                cache.pop(next(iter(cache)))
         if not facts:
             return messages
         block = self.memory.format_facts_block(facts)

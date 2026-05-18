@@ -21,8 +21,52 @@ _CACHE_MAXSIZE = 128
 
 
 def _make_cache_key(kwargs: dict) -> str:
-    """Build a deterministic cache key from tool kwargs."""
-    return str(sorted(kwargs.items()))
+    """Build a deterministic cache key from tool kwargs.
+
+    Uses json.dumps(sort_keys=True) so dict/list values are encoded
+    consistently across calls. ``default=str`` falls back to ``repr`` for
+    non-JSON-serializable objects so unusual argument shapes still produce
+    a stable key instead of raising TypeError on cache lookup.
+    """
+    import json as _json
+
+    try:
+        return _json.dumps(kwargs, sort_keys=True, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return repr(sorted(kwargs.items()))
+
+
+# Process-wide tool result cache. Survives tool unregister/reregister
+# (skill activation cycles, MCP reconnects) — the previous per-Tool-instance
+# cache lost its contents every time a tool was re-added, which is common
+# during skill toggling. Bounded by _CACHE_MAXSIZE entries per tool name.
+class _ToolResultStore:
+    def __init__(self) -> None:
+        self._store: dict[str, OrderedDict[str, str]] = {}
+
+    def get(self, tool_name: str, key: str) -> str | None:
+        bucket = self._store.get(tool_name)
+        if bucket is None:
+            return None
+        value = bucket.get(key)
+        if value is not None:
+            bucket.move_to_end(key)
+        return value
+
+    def set(self, tool_name: str, key: str, value: str) -> None:
+        bucket = self._store.setdefault(tool_name, OrderedDict())
+        bucket[key] = value
+        if len(bucket) > _CACHE_MAXSIZE:
+            bucket.popitem(last=False)
+
+    def clear(self, tool_name: str | None = None) -> None:
+        if tool_name is None:
+            self._store.clear()
+        else:
+            self._store.pop(tool_name, None)
+
+
+_RESULT_STORE = _ToolResultStore()
 
 
 # Lenient JSON-schema-like type check. Values from LiteLLM tool calls often
@@ -80,10 +124,13 @@ class Tool:
     cacheable: bool = True  # read-only tools can cache results across calls
 
     def __post_init__(self) -> None:
-        self._result_cache: OrderedDict[str, str] = OrderedDict()
         # Tool fields are immutable after construction — the schema is too,
         # so we build it once and reuse it across every LLM turn instead of
         # rebuilding O(n_params) dicts for every tool on every call.
+        # The result cache lives in the process-wide _RESULT_STORE so
+        # cached values survive tool re-registration (skill toggle, MCP
+        # reconnect) — the previous per-instance OrderedDict was wiped
+        # every time a tool was re-added.
         self._schema: dict | None = None
 
     def to_function_schema(self) -> dict:
@@ -174,12 +221,13 @@ class Tool:
             )
 
         should_cache = self.cacheable and not self.dangerous
-        # Result cache hit (read-only tools only — avoids repeated I/O)
+        # Result cache hit (read-only tools only — avoids repeated I/O).
+        # The store is process-wide, keyed by (tool_name, kwargs), so
+        # entries survive tool re-registration (skill toggle, MCP reconnect).
         if should_cache:
             key = _make_cache_key(kwargs)
-            cached = self._result_cache.get(key)
+            cached = _RESULT_STORE.get(self.name, key)
             if cached is not None:
-                self._result_cache.move_to_end(key)
                 return cached
 
         last_error = ""
@@ -189,9 +237,7 @@ class Tool:
                 result = await self.handler(**kwargs)
                 if should_cache:
                     key = _make_cache_key(kwargs)
-                    self._result_cache[key] = result
-                    if len(self._result_cache) > _CACHE_MAXSIZE:
-                        self._result_cache.popitem(last=False)
+                    _RESULT_STORE.set(self.name, key, result)
                 breaker.record_success()
                 await self._run_post_hooks(
                     chain, self.name, agent_name, kwargs, result, True, start

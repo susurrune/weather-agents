@@ -10,6 +10,20 @@ from weather_agents.core.bus import MessageBus
 from weather_agents.core.tool import Tool, ToolRegistry
 
 
+@pytest.fixture(autouse=True)
+def _isolate_tool_result_cache():
+    """The process-wide tool result store is shared across all Tool.execute
+    calls (so a tool re-registered by a skill activation keeps its cache).
+    In tests that means cached values would leak between cases — autouse
+    clearing keeps each test isolated without forcing every author to
+    remember it."""
+    from weather_agents.core.tool import _RESULT_STORE
+
+    _RESULT_STORE.clear()
+    yield
+    _RESULT_STORE.clear()
+
+
 @pytest.fixture
 def bus():
     return MessageBus()
