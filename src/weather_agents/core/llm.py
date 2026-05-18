@@ -12,26 +12,32 @@ from typing import Any, Literal
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-import litellm
 
-from weather_agents.core.cache import LLMCache
-from weather_agents.core.config import AppConfig
-from weather_agents.core.logger import get_logger, log_event
-from weather_agents.core.tool import ToolRegistry
+def _lazy_litellm():
+    """Lazy import of litellm — avoids ~1.5s import overhead for ``wa --help``."""
+    import litellm as _lm
 
-log = get_logger("llm")
+    # Silence LiteLLM's noisy stderr banners
+    if os.environ.get("WA_DEBUG") != "1":
+        _lm.suppress_debug_info = True
+        with contextlib.suppress(Exception):
+            _lm.set_verbose = False  # type: ignore[attr-defined]
+        import logging as _logging
 
-# Silence LiteLLM's noisy stderr banners (the "Give Feedback / Get Help" lines
-# and verbose dump on every failure). Users on WA_DEBUG=1 can opt back in.
-if os.environ.get("WA_DEBUG") != "1":
-    litellm.suppress_debug_info = True
-    with contextlib.suppress(Exception):
-        litellm.set_verbose = False  # type: ignore[attr-defined]
-    # Tame LiteLLM's loggers as well.
-    import logging as _logging
+        for _name in ("LiteLLM", "litellm", "litellm.router", "litellm.proxy"):
+            _logging.getLogger(_name).setLevel(_logging.ERROR)
+    return _lm
 
-    for _name in ("LiteLLM", "litellm", "litellm.router", "litellm.proxy"):
-        _logging.getLogger(_name).setLevel(_logging.ERROR)
+
+# Sentinel — actual import happens on first access.
+_lm: Any = None
+
+
+def _get_litellm():
+    global _lm
+    if _lm is None:
+        _lm = _lazy_litellm()
+    return _lm
 
 
 # When the user gives a `<provider>/<model>` form, force LiteLLM to route by
@@ -412,7 +418,7 @@ class LLMClient:
                     kwargs["tools"] = tool_schemas
 
                 start = time.monotonic()
-                response = await litellm.acompletion(**kwargs)
+                response = await _get_litellm().acompletion(**kwargs)
                 elapsed = time.monotonic() - start
 
                 content = ""
@@ -520,7 +526,7 @@ class LLMClient:
             }
             if provider:
                 stream_kwargs["custom_llm_provider"] = provider
-            response = await litellm.acompletion(**stream_kwargs)
+            response = await _get_litellm().acompletion(**stream_kwargs)
 
             full_content = ""
             start = time.monotonic()
@@ -533,12 +539,12 @@ class LLMClient:
 
             elapsed = time.monotonic() - start
             try:
-                prompt_tokens = int(litellm.token_counter(model=model, messages=messages))
+                prompt_tokens = int(_get_litellm().token_counter(model=model, messages=messages))
             except Exception:
                 prompt_tokens = max(1, _estimate_tokens(str(messages)))
             try:
                 completion_tokens = int(
-                    litellm.token_counter(
+                    _get_litellm().token_counter(
                         model=model,
                         messages=[{"role": "assistant", "content": full_content}],
                     )
@@ -604,7 +610,7 @@ class LLMClient:
         start = time.monotonic()
 
         try:
-            response = await litellm.acompletion(**stream_kwargs)
+            response = await _get_litellm().acompletion(**stream_kwargs)
             async with asyncio.timeout(self.config.llm.timeout):
                 async for chunk in response:
                     delta = chunk.choices[0].delta
@@ -659,9 +665,9 @@ class LLMClient:
         prompt_tokens = 0
         completion_tokens = 0
         try:
-            prompt_tokens = int(litellm.token_counter(model=model, messages=messages))
+            prompt_tokens = int(_get_litellm().token_counter(model=model, messages=messages))
             completion_tokens = int(
-                litellm.token_counter(
+                _get_litellm().token_counter(
                     model=model,
                     messages=[{"role": "assistant", "content": full_content}],
                 )
