@@ -105,7 +105,7 @@ pip install --user git+https://github.com/susurrune/weather-agents.git
 
 ### 2. Configure
 
-首次运行 `wa chat` 时会自动进入设置向导，让你选择：
+首次运行 `wa chat/wa` 时会自动进入设置向导，让你选择：
 
 - **Unified（推荐）**：所有 6 个 Agent 共用一个模型 + 一个 API key
 - **Per-agent**：为每个 Agent 单独挑选模型（适合混搭，比如 Snow 用 Claude 做规划，Rain 用 GPT 写代码，其它用 DeepSeek）
@@ -122,7 +122,7 @@ export DEEPSEEK_API_KEY=sk-xxx              # 或用环境变量
 
 ```bash
 # 交互式对话（默认 Fog Agent）
-wa chat
+wa chat / wa
 
 # 指定 Agent 单轮对话
 wa chat rain "用 Python 写一个 LRU Cache"
@@ -135,7 +135,7 @@ wa task "设计并实现一个 URL 短链接服务"
 
 ### Top-level Commands
 
-| Command | Description |
+| Command |描述|
 |:--------|:------------|
 | `wa init` | 交互式配置向导（首次运行推荐） |
 | `wa chat [agent] [message]` | 对话（默认 `fog`，支持 `fog` `rain` `frost` `snow` `dew` `fair`）|
@@ -149,7 +149,7 @@ wa task "设计并实现一个 URL 短链接服务"
 
 进入 `wa chat` 后可使用：
 
-| Command | Description |
+| Command |描述|
 |:--------|:------------|
 | `/fog` `/rain` `/frost` `/snow` `/dew` `/fair` | 切换 Agent |
 | `/task <目标>` | 多 Agent 任务编排 |
