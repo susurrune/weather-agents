@@ -1608,7 +1608,6 @@ async def _interactive(agent_name: str | None = None) -> None:
                     break  # Exit inner loop, back to input
 
                 # — Auto mode: continue if the AI signals more work —
-                had_tools = any(a["status"] == "done" for a in activities)
                 had_errors = any(a["status"] == "error" for a in activities)
                 if (
                     effective_mode is InteractiveMode.AUTO

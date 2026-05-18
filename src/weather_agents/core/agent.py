@@ -60,7 +60,7 @@ class TaskState(StrEnum):
 
 
 _VALID_TRANSITIONS: dict[TaskState, set[TaskState]] = {
-    TaskState.PENDING: {TaskState.QUEUED, TaskState.SKIPPED},
+    TaskState.PENDING: {TaskState.QUEUED, TaskState.RUNNING, TaskState.SKIPPED},
     TaskState.QUEUED: {TaskState.ASSIGNED, TaskState.SKIPPED},
     TaskState.ASSIGNED: {TaskState.RUNNING, TaskState.SKIPPED},
     TaskState.RUNNING: {TaskState.VALIDATING, TaskState.FAILED, TaskState.COMPLETED},

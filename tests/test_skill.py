@@ -44,6 +44,7 @@ class TestSkillSmoke:
     def test_skill_handler_injects_tools(self, skill_name):
         """Each skill handler (if present) must return a list of Tool."""
         from unittest.mock import MagicMock
+
         from weather_agents.core.tool import ToolRegistry
 
         mod = __import__(f"weather_agents.skills.{skill_name}", fromlist=["create_skill"])

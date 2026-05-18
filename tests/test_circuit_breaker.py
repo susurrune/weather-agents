@@ -155,6 +155,7 @@ class TestCircuitBreaker:
         import asyncio as _asyncio
         import uuid
         from unittest.mock import AsyncMock
+
         from weather_agents.core.tool import Tool
 
         unique = f"concurrent_cb_{uuid.uuid4().hex[:6]}"

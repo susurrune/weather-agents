@@ -864,6 +864,7 @@ class TestBackgroundTaskTracking:
     async def test_background_task_exception_is_logged(self, app_config, mock_llm, bus, tool_registry):
         """Background task that raises does not take down the agent."""
         import asyncio as _asyncio
+
         from weather_agents.agents.fog import FogAgent
 
         agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)

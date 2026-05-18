@@ -435,6 +435,7 @@ async def test_concurrent_execution_with_rate_limit(tool_registry):
     """Rate limiter correctly handles concurrent tool executions."""
     import asyncio as _asyncio
     from unittest.mock import AsyncMock
+
     from weather_agents.core.tool import Tool
 
     tool = Tool(
