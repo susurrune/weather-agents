@@ -63,6 +63,7 @@ except ImportError:
             return "automatic mode (fallback)"
 
 
+from weather_agents.core.agent import TaskState
 from weather_agents.core.config import (
     USER_CONFIG_DIR,
     _save_user_cfg,
@@ -745,7 +746,7 @@ _AUTO_STOP = re.compile(
 
 
 def _should_auto_continue(
-    text: str, had_tool_calls: bool = False, had_errors: bool = False
+    text: str, had_errors: bool = False
 ) -> bool:
     """Check if the AI response signals more work — auto-continue.
 
@@ -1615,7 +1616,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                     and not interrupted
                     and _auto_continue_count < _MAX_AUTO_CONTINUE
                     and _should_auto_continue(
-                        md_content, had_tool_calls=had_tools, had_errors=had_errors
+                        md_content, had_errors=had_errors
                     )
                 ):
                     _auto_continue_count += 1
@@ -2606,6 +2607,184 @@ def _handle_apikey_command(cmd: str, ctx) -> None:
 # -- Task orchestration ----------------------------------------------------
 
 
+TASK_STATE_ICONS: dict[TaskState, tuple[str, str]] = {
+    TaskState.PENDING: ("◌", "dim"),
+    TaskState.QUEUED: ("…", "yellow"),
+    TaskState.ASSIGNED: ("→", "cyan"),
+    TaskState.RUNNING: ("●", "cyan"),
+    TaskState.VALIDATING: ("?", "yellow"),
+    TaskState.COMPLETED: ("✓", "green"),
+    TaskState.FAILED: ("✗", "red"),
+    TaskState.RETRYING: ("↻", "yellow"),
+    TaskState.SKIPPED: ("–", "dim"),
+}
+
+
+class _TaskDashboard:
+    """Rich Live dashboard for real-time orchestration execution.
+
+    Shows a live-updating panel with a progress bar, task status table,
+    and current activity during ``wa task`` execution. Transient — the
+    dashboard disappears once orchestration completes, leaving only the
+    final summary on screen.
+    """
+
+    def __init__(self, goal: str, tasks: list[Any]) -> None:
+        self._goal = goal
+        self._task_states: dict[str, TaskState] = {}
+        self._task_agents: dict[str, str] = {}
+        self._task_descs: dict[str, str] = {}
+        self._task_deps: dict[str, list[str]] = {}
+        self._done: int = 0
+        self._total: int = 0
+        self._current_id: str = ""
+        self._current_label: str = ""
+        self._current_agent: str = ""
+        self._tool_label: str = ""
+        self._tool_result: str = ""
+        self._start_ts: float = 0.0
+        self._live: Live | None = None
+
+        for t in tasks:
+            tid = t.id
+            self._task_states[tid] = t.status
+            self._task_agents[tid] = t.assigned_to or "?"
+            self._task_descs[tid] = t.description
+            self._task_deps[tid] = t.all_deps
+            if t.status in (TaskState.COMPLETED, TaskState.FAILED, TaskState.SKIPPED):
+                self._done += 1
+        self._total = len(tasks)
+
+    @property
+    def _elapsed(self) -> str:
+        if not self._start_ts:
+            return "0:00"
+        s = int(time.monotonic() - self._start_ts)
+        return f"{s // 60:02d}:{s % 60:02d}"
+
+    def start(self) -> None:
+        self._start_ts = time.monotonic()
+        self._live = Live(
+            self._render(),
+            console=console,
+            refresh_per_second=4,
+            transient=True,
+        )
+        self._live.start()
+
+    def stop(self) -> None:
+        if self._live:
+            self._live.stop()
+            self._live = None
+
+    def _refresh(self) -> None:
+        if self._live:
+            self._live.update(self._render())
+
+    def on_start(self, task_id: str, description: str, agent: str) -> None:
+        self._task_states[task_id] = TaskState.RUNNING
+        self._current_id = task_id
+        self._current_label = description
+        self._current_agent = agent
+        self._tool_label = ""
+        self._tool_result = ""
+        self._refresh()
+
+    def on_tool_status(self, label: str) -> None:
+        self._tool_label = label
+        self._tool_result = ""
+        self._refresh()
+
+    def on_tool_done(self, label: str, success: bool) -> None:
+        self._tool_label = label
+        self._tool_result = "✓" if success else "✗"
+        self._refresh()
+
+    def on_done(self, task_id: str, success: bool) -> None:
+        self._task_states[task_id] = TaskState.COMPLETED if success else TaskState.FAILED
+        self._done += 1
+        self._current_id = ""
+        self._current_label = ""
+        self._current_agent = ""
+        self._tool_label = ""
+        self._tool_result = ""
+        self._refresh()
+
+    def update_task_state(self, task_id: str, state: TaskState) -> None:
+        """Direct state update for cycle-detected / pre-completed tasks."""
+        self._task_states[task_id] = state
+        if state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.SKIPPED):
+            self._done += 1
+        self._refresh()
+
+    def _render(self) -> Panel:
+        grid = Table(show_header=False, box=None, padding=(0, 0), expand=True)
+        grid.add_column(ratio=1)
+
+        # ── Progress row ──
+        pct = (self._done / self._total * 100) if self._total else 0
+        bar_filled = int(pct / 5)
+        bar_empty = 20 - bar_filled
+        bar_color = "green" if self._done == self._total else "yellow"
+        bar = f"[{bar_color}]{'━' * bar_filled}{'╌' * bar_empty}[/]"
+        progress = Text()
+        progress.append("  ")
+        progress.append(f"{self._done}/{self._total}", style=f"bold {bar_color}")
+        progress.append(f"  {bar}  ", style="bold")
+        progress.append(f"{int(pct)}%  ", style="dim")
+        progress.append(self._elapsed, style="dim")
+        grid.add_row(progress)
+        grid.add_row(Text(""))
+
+        # ── Task table ──
+        if self._total:
+            tbody = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+            tbody.add_column(width=2)
+            tbody.add_column(width=6)
+            tbody.add_column(ratio=1)
+            tbody.add_column(width=14)
+
+            for tid, state in self._task_states.items():
+                icon, color = TASK_STATE_ICONS.get(state, ("?", "dim"))
+                agent_name = self._task_agents.get(tid, "?")
+                desc = self._task_descs.get(tid, "")[:55]
+                deps = self._task_deps.get(tid, [])
+                dep_str = f"← {','.join(deps[:3])}" if deps else ""
+                ag_icon = icon_text(agent_name)
+
+                tbody.add_row(
+                    f"[{color}]{icon}[/]",
+                    ag_icon,
+                    f"[{color}]{desc}[/]",
+                    f"[dim]{dep_str}[/]",
+                )
+            grid.add_row(tbody)
+            grid.add_row(Text(""))
+
+        # ── Current activity ──
+        if self._current_label:
+            sep = Rule(style="dim", characters="─")
+            grid.add_row(sep)
+            agent_color = AGENT_COLORS.get(self._current_agent, "white")
+            cur = Text()
+            cur.append(f"  {icon_text(self._current_agent)} ", style=agent_color)
+            cur.append(self._current_label, style=agent_color)
+            grid.add_row(cur)
+        if self._tool_label:
+            tool_text = Text(f"  · {self._tool_label}", style="dim")
+            if self._tool_result:
+                tool_text.append(f"  {self._tool_result}", style="green" if self._tool_result == "✓" else "red")
+            grid.add_row(tool_text)
+
+        return Panel(
+            grid,
+            title="[bold]Task Orchestration[/bold]",
+            border_style="dim",
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+
+
 async def _run_task(goal: str, agents=None) -> None:
     own_ctx = None
     if agents is None:
@@ -2651,9 +2830,10 @@ async def _run_task(goal: str, agents=None) -> None:
         tasks: list[Any] = []
         results: list[Any] = []
         summary = ""
+        dashboard: _TaskDashboard | None = None
 
         async def _on_planned(planned_tasks):
-            nonlocal tasks
+            nonlocal tasks, dashboard
             tasks = planned_tasks
             if not tasks:
                 return
@@ -2664,39 +2844,36 @@ async def _run_task(goal: str, agents=None) -> None:
                 dep_str = f" [dim]← #{','.join(deps)}[/dim]" if deps else ""
                 ict = icon_text(t.assigned_to or "")
                 console.print(f"  [{i}] {ict} [bold]{t.description}[/bold]{dep_str}")
+            # Start live dashboard after plan is printed
+            dashboard = _TaskDashboard(goal, tasks)
+            dashboard.start()
 
         async def _on_start(t):
-            _print_tool_in(
-                t.description,
-                f"agent:{t.assigned_to or '?'}",
-                {"task": t.description},
-            )
+            if dashboard:
+                dashboard.on_start(t.id, t.description, t.assigned_to or "")
 
         async def _on_done(t, r):
-            _print_tool_out(
-                r.description,
-                f"agent:{r.agent}",
-                r.success,
-                r.content or "",
-            )
+            if dashboard:
+                dashboard.on_done(t.id, r.success)
 
-        console.print()
-        with console.status("  [dim]  orchestrating…[/dim]", spinner="dots"):
-            _, results, summary = await orchestrate_task(
-                goal,
-                agents,
-                on_task_start=_on_start,
-                on_task_done=_on_done,
-                on_planned=_on_planned,
-                result_truncate=500,
-            )
+        _, results, summary = await orchestrate_task(
+            goal,
+            agents,
+            on_task_start=_on_start,
+            on_task_done=_on_done,
+            on_planned=_on_planned,
+            result_truncate=500,
+        )
+
+        if dashboard:
+            dashboard.stop()
+            dashboard = None
 
         if not tasks:
             console.print("  [dim]  no tasks generated[/dim]")
             return
 
         # Summary
-        console.print()
         ok = sum(1 for r in results if r.success)
         total = len(results)
         result_color = "green" if ok == total else "yellow" if ok > 0 else "red"

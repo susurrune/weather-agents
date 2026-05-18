@@ -1,5 +1,62 @@
 """Tests for skill system including config overrides."""
 
+import pytest
+
+
+class TestSkillSmoke:
+    """Verify every registered skill can be created and has valid metadata."""
+
+    SKILL_NAMES = [
+        "api_integrator",
+        "arch_designer",
+        "ci_cd_manager",
+        "code_analysis",
+        "code_generator",
+        "code_reviewer",
+        "content_writer",
+        "data_transformer",
+        "document_analysis",
+        "emotional_companion",
+        "performance_checker",
+        "security_auditor",
+        "self_evolve",
+        "sys_operator",
+        "task_planner",
+        "web_research",
+        "workflow_designer",
+    ]
+
+    @pytest.mark.parametrize("skill_name", SKILL_NAMES)
+    def test_skill_creates(self, skill_name):
+        """Each skill module must export a valid create_skill() function."""
+        mod = __import__(f"weather_agents.skills.{skill_name}", fromlist=["create_skill"])
+        skill = mod.create_skill()
+
+        from weather_agents.core.skill import Skill
+
+        assert isinstance(skill, Skill), f"{skill_name} should return Skill"
+        assert skill.name, f"{skill_name} should have a name"
+        assert skill.description, f"{skill_name} should have a description"
+        assert isinstance(skill.required_tools, list), f"{skill_name} required_tools must be list"
+        assert skill.system_prompt, f"{skill_name} should have system_prompt"
+
+    @pytest.mark.parametrize("skill_name", SKILL_NAMES)
+    def test_skill_handler_injects_tools(self, skill_name):
+        """Each skill handler (if present) must return a list of Tool."""
+        from unittest.mock import MagicMock
+        from weather_agents.core.tool import ToolRegistry
+
+        mod = __import__(f"weather_agents.skills.{skill_name}", fromlist=["create_skill"])
+        skill = mod.create_skill()
+
+        if skill.handler is None:
+            pytest.skip(f"{skill_name} has no handler")
+
+        registry = ToolRegistry()
+        result = skill.handler(MagicMock(), registry)
+        if result is not None:
+            assert isinstance(result, list), f"{skill_name} handler should return list or None"
+
 
 class TestSkillConfigOverrides:
     def test_skill_supports_model_override(self):

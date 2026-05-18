@@ -207,6 +207,19 @@ class CLIConfig:
     # Persisted interactive-mode pick (default | plan | auto). Read by
     # cli.mode.ModeController on startup; written when the user toggles.
     interactive_mode: str = "default"
+    # Human-in-loop approval mode for dangerous tools:
+    #   "auto"        — execute dangerous tools without asking (default)
+    #   "interactive" — prompt user before each dangerous tool call
+    #   "strict"      — deny all dangerous tool calls automatically
+    approval_mode: str = "auto"
+    # Circuit breaker defaults (per-tool overridable in config)
+    circuit_failure_threshold: int = 3
+    circuit_recovery_timeout: float = 30.0
+    # Rate limiting defaults
+    rate_limit_max_calls: int = 30
+    rate_limit_window: float = 60.0
+    # Audit logging
+    audit_enabled: bool = True
 
 
 @dataclass
@@ -412,6 +425,12 @@ def _load_config_uncached() -> AppConfig:
     # CLI (interactive mode persisted across sessions)
     if cli_cfg := merged.get("cli"):
         cfg.cli.interactive_mode = cli_cfg.get("interactive_mode", cfg.cli.interactive_mode)
+        cfg.cli.approval_mode = cli_cfg.get("approval_mode", cfg.cli.approval_mode)
+        cfg.cli.circuit_failure_threshold = int(cli_cfg.get("circuit_failure_threshold", cfg.cli.circuit_failure_threshold))
+        cfg.cli.circuit_recovery_timeout = float(cli_cfg.get("circuit_recovery_timeout", cfg.cli.circuit_recovery_timeout))
+        cfg.cli.rate_limit_max_calls = int(cli_cfg.get("rate_limit_max_calls", cfg.cli.rate_limit_max_calls))
+        cfg.cli.rate_limit_window = float(cli_cfg.get("rate_limit_window", cfg.cli.rate_limit_window))
+        cfg.cli.audit_enabled = bool(cli_cfg.get("audit_enabled", cfg.cli.audit_enabled))
 
     # MCP (with env var resolution — only for enabled servers)
     if (mcp := merged.get("mcp")) and (servers := mcp.get("servers")):

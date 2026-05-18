@@ -790,44 +790,83 @@ class Memory:
     async def recall_for_injection(self, query: str, limit: int = 3) -> list[dict]:
         """Find long-term facts whose key OR value matches tokens from `query`.
 
-        Goes direct to SQL rather than delegating to ``recall()`` because the
-        public ``recall(key=...)`` only LIKEs the key column — facts stored
-        under semantic keys (``pkg_mgr=pnpm``) would never be found by their
-        value. Returns at most `limit` distinct facts ordered by recency.
-        Empty list when the store is empty.
+        Two-pass retrieval:
+        1. Fast LIKE token scan (existing) — high precision, exact token overlap.
+        2. Semantic n-gram scoring on recent facts — catches synonym/CJK
+           relationships that token-LIKE misses.
 
-        Performance: assembles all tokens into a single SQL query rather
-        than looping (one round-trip instead of N). Caps at 24 tokens to
-        keep the LIKE chain from getting absurd on pasted essays.
+        Returns at most `limit` distinct facts ordered by combined relevance.
         """
         if not self._db or not query:
             return []
         tokens = self._tokenize_for_recall(query)[:24]
-        if not tokens:
-            return []
-        # Build a single (key LIKE ? OR value LIKE ?) chain.
-        like_clauses = " OR ".join(["key LIKE ? OR value LIKE ?"] * len(tokens))
-        params: list[Any] = [self.agent_name]
-        for tok in tokens:
-            pattern = f"%{tok}%"
-            params.append(pattern)
-            params.append(pattern)
-        params.append(limit)
-        cursor = await self._db.execute(
-            f"SELECT key, value, category FROM memories "
-            f"WHERE agent = ? AND ({like_clauses}) "
-            f"ORDER BY updated_at DESC LIMIT ?",
-            params,
-        )
-        rows = await cursor.fetchall()
-        out: list[dict] = []
-        for r in rows:
-            try:
-                val = json.loads(r[1])
-            except (json.JSONDecodeError, TypeError):
-                val = r[1]
-            out.append({"key": r[0], "value": val, "category": r[2]})
-        return out
+
+        # ── Pass 1: LIKE token scan (fast, high precision) ────────────────
+        like_hits: list[dict] = []
+        if tokens:
+            like_clauses = " OR ".join(["key LIKE ? OR value LIKE ?"] * len(tokens))
+            params: list[Any] = [self.agent_name]
+            for tok in tokens:
+                pattern = f"%{tok}%"
+                params.append(pattern)
+                params.append(pattern)
+            params.append(limit * 2)
+            cursor = await self._db.execute(
+                f"SELECT key, value, category, updated_at FROM memories "
+                f"WHERE agent = ? AND ({like_clauses}) "
+                f"ORDER BY updated_at DESC LIMIT ?",
+                params,
+            )
+            rows = await cursor.fetchall()
+            for r in rows:
+                try:
+                    val = json.loads(r[1])
+                except (json.JSONDecodeError, TypeError):
+                    val = r[1]
+                like_hits.append({"key": r[0], "value": val, "category": r[2], "updated_at": r[3]})
+
+        # ── Pass 2: Semantic n-gram scoring on recent facts ───────────────
+        semantic_hits: list[dict] = []
+        try:
+            from weather_agents.core.semantic import get_scorer
+
+            # Fetch recent facts not already matched by LIKE
+            seen_keys = {f["key"] for f in like_hits}
+            cursor2 = await self._db.execute(
+                "SELECT key, value, category, updated_at FROM memories "
+                "WHERE agent = ? ORDER BY updated_at DESC LIMIT 200",
+                [self.agent_name],
+            )
+            rows2 = await cursor2.fetchall()
+            candidates: list[dict] = []
+            for r in rows2:
+                if r[0] in seen_keys:
+                    continue
+                try:
+                    val = json.loads(r[1])
+                except (json.JSONDecodeError, TypeError):
+                    val = r[1]
+                candidates.append({"key": r[0], "value": val, "category": r[2], "updated_at": r[3]})
+
+            scorer = get_scorer()
+            for _score, c in scorer.rank(query, candidates, key_field="value", top_k=limit, min_score=0.03):
+                semantic_hits.append(c)
+        except Exception:
+            pass  # semantic pass is best-effort; never break recall
+
+        # ── Merge: LIKE hits first (higher precision), then semantic ──────
+        seen = set()
+        merged: list[dict] = []
+        for src in (like_hits, semantic_hits):
+            for item in src:
+                k = item["key"]
+                if k in seen:
+                    continue
+                seen.add(k)
+                merged.append({"key": k, "value": item["value"], "category": item["category"]})
+                if len(merged) >= limit:
+                    return merged
+        return merged
 
     @staticmethod
     def format_facts_block(facts: list[dict]) -> str:

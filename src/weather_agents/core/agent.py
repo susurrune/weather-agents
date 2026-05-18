@@ -7,7 +7,8 @@ import contextlib
 import contextvars
 import json
 import time
-from collections.abc import AsyncIterator, Callable
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import cast
@@ -150,6 +151,13 @@ class BaseAgent:
         # so the extractor only runs every N (default 10), keeping cost low.
         self._user_turns_since_extract: int = 0
         self._pending_extracts: set = set()
+        # Pending inter-agent request futures, keyed by correlation_id.
+        self._pending_requests: dict[str, asyncio.Future] = {}
+        # Tracked background tasks so unhandled exceptions don't go silently.
+        self._bg_tasks: set[asyncio.Task] = set()
+        # Human-in-loop approval gate: the CLI (or test) sets this to a
+        # callable that prompts the user.  ``None`` = auto-approve.
+        self.approval_callback: Callable[[str, dict], Awaitable[bool]] | None = None
 
     def _resolve_system_prompt(self) -> str:
         """Pick the language-appropriate system prompt based on config."""
@@ -583,6 +591,12 @@ class BaseAgent:
                     },
                 )
             )
+        elif event.type == EventType.AGENT_REQUEST and event.target == self.name:
+            t = asyncio.create_task(self._handle_request(event))
+            self._bg_tasks.add(t)
+            t.add_done_callback(self._bg_tasks.discard)
+        elif event.type == EventType.AGENT_RESPONSE and event.target == self.name:
+            self._handle_response(event)
 
     async def chat(
         self,
@@ -832,9 +846,11 @@ class BaseAgent:
                                 "tool_args": dict(tool_args) if tool_args else {},
                             },
                         )
+                        if not await self._check_tool_approval(tool_name, tool_args):
+                            return (tc, f"[denied] dangerous tool '{tool_name}' blocked", False, tool_name)
                     await self._set_state(AgentState.ACTING)
                     try:
-                        result = await tool.execute(**tool_args)
+                        result = await tool.execute(agent_name=self.name, **tool_args)
                         return (tc, result, True, tool_name)
                     except Exception as exc:
                         _log.exception("Tool '%s' execution failed: %s", tool_name, exc)
@@ -1303,8 +1319,16 @@ class BaseAgent:
                                     "tool_args": dict(tool_args) if tool_args else {},
                                 },
                             )
+                            if not await self._check_tool_approval(tool_name, tool_args):
+                                self.memory.add_message(
+                                    "tool",
+                                    f"[denied] dangerous tool '{tool_name}' blocked",
+                                    name=tool_name,
+                                    tool_call_id=tc["id"],
+                                )
+                                continue
                         await self._set_state(AgentState.ACTING)
-                        result = await tool.execute(**tool_args)
+                        result = await tool.execute(agent_name=self.name, **tool_args)
                         self.memory.add_message(
                             "tool",
                             result,
@@ -1351,7 +1375,8 @@ class BaseAgent:
         on_status: Callable[[str], None] | None,
     ) -> TaskResult:
         await self._set_state(AgentState.THINKING)
-        task.status = "in_progress"
+        with contextlib.suppress(ValueError):
+            task.transition_to(TaskState.RUNNING)
         self.memory.set_working("current_task", task)
 
         prompt = (
@@ -1375,27 +1400,130 @@ class BaseAgent:
                 tool_calls=response.tool_calls,
                 reasoning_content=response.reasoning_content,
             )
-            task.status = "completed"
+            with contextlib.suppress(ValueError):
+                task.transition_to(TaskState.COMPLETED)
             task.result = response.content
             await self._set_state(AgentState.IDLE)
             return TaskResult(success=True, content=response.content)
         except Exception as e:
-            task.status = "failed"
+            with contextlib.suppress(ValueError):
+                task.transition_to(TaskState.FAILED)
             task.result = str(e)
             self.memory._prune_dangling_tool_calls()
             await self._set_state(AgentState.ERROR)
             return TaskResult(success=False, content=str(e))
 
-    async def request_help(self, target_agent: str, description: str) -> None:
-        """Request another agent's assistance."""
+    async def _check_tool_approval(self, tool_name: str, tool_args: dict) -> bool:
+        """Check whether a dangerous tool call is approved.
+
+        Delegates to ``approval_callback`` when the config mode is
+        ``"interactive"``; auto-approves in ``"auto"`` mode and
+        auto-denies in ``"strict"`` mode.
+        """
+        mode = getattr(self.config.cli, "approval_mode", "auto")
+        if mode == "strict":
+            _log.info("tool_denied_strict", extra={"tool": tool_name})
+            return False
+        if mode == "interactive":
+            if self.approval_callback is not None:
+                return await self.approval_callback(tool_name, tool_args)
+            _log.info("tool_denied_no_callback", extra={"tool": tool_name})
+            return False
+        return True
+
+    async def request_help(self, target_agent: str, description: str, timeout: float = 60.0) -> str:
+        """Request another agent's assistance and await the response.
+
+        Uses a correlation ID to match the response to this request via
+        the event bus. The target agent's ``_handle_event`` picks up the
+        ``AGENT_REQUEST``, processes it as a task, and publishes an
+        ``AGENT_RESPONSE`` that resolves the pending future here.
+
+        Returns the response content, or an error message on timeout /
+        failure.
+        """
+        correlation_id = str(uuid.uuid4())
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._pending_requests[correlation_id] = future
+
         await self.bus.publish(
             Event(
                 type=EventType.AGENT_REQUEST,
                 source=self.name,
                 target=target_agent,
-                data={"description": description},
+                data={
+                    "correlation_id": correlation_id,
+                    "description": description,
+                    "source": self.name,
+                },
             )
         )
+
+        try:
+            result: str = await asyncio.wait_for(future, timeout=timeout)
+            return result
+        except TimeoutError:
+            self._pending_requests.pop(correlation_id, None)
+            if not future.done():
+                future.cancel()
+            return f"[{target_agent} did not respond within {timeout}s]"
+
+    async def _handle_request(self, event: Event) -> None:
+        """Process an incoming AGENT_REQUEST and publish AGENT_RESPONSE.
+
+        Spawned as a background task from ``_handle_event`` so the bus
+        handler returns immediately while the potentially-long task
+        execution runs in the background.
+        """
+        description = event.data.get("description", "")
+        correlation_id = event.data.get("correlation_id", "")
+        source = event.data.get("source", "")
+        if not correlation_id:
+            return
+
+        task = Task(
+            id=f"req-{correlation_id[:8]}",
+            description=description,
+            assigned_to=self.name,
+        )
+
+        try:
+            result = await self.execute_task(task)
+            await self.bus.publish(
+                Event(
+                    type=EventType.AGENT_RESPONSE,
+                    source=self.name,
+                    target=source,
+                    data={
+                        "correlation_id": correlation_id,
+                        "content": result.content,
+                        "success": result.success,
+                    },
+                )
+            )
+        except Exception as exc:
+            await self.bus.publish(
+                Event(
+                    type=EventType.AGENT_RESPONSE,
+                    source=self.name,
+                    target=source,
+                    data={
+                        "correlation_id": correlation_id,
+                        "content": f"[error] {exc}",
+                        "success": False,
+                    },
+                )
+            )
+
+    def _handle_response(self, event: Event) -> None:
+        """Resolve a pending request future from an AGENT_RESPONSE."""
+        correlation_id = event.data.get("correlation_id", "")
+        if not correlation_id:
+            return
+        future = self._pending_requests.pop(correlation_id, None)
+        if future is not None and not future.done():
+            future.set_result(event.data.get("content", ""))
 
     def get_status(self) -> dict:
         usage = self.llm.get_usage_stats().get(self.name, {})

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from weather_agents.core.middleware import MiddlewareChain
+
+from weather_agents.core.circuit_breaker import get_breaker
 from weather_agents.core.logger import get_logger
 
 _log = get_logger("tool")
@@ -71,9 +76,31 @@ class Tool:
             },
         }
 
-    async def execute(self, **kwargs) -> str:
+    async def execute(self, *, agent_name: str | None = None, **kwargs) -> str:
         if self.handler is None:
             return f"Tool '{self.name}' has no handler implemented."
+
+        # Middleware pre-hooks (ACL, rate limit, etc.) — fail-fast policy deny
+        from weather_agents.core.middleware import get_middleware_chain
+
+        chain = get_middleware_chain()
+        if chain is not None:
+            allowed, reason = await chain.run_pre(self.name, agent_name, kwargs)
+            if not allowed:
+                return f"Error: {reason}"
+
+        # Circuit breaker check — fail-fast if the breaker is OPEN
+        breaker = get_breaker(self.name)
+        if not breaker.allow_request():
+            _log.warning(
+                "circuit_open",
+                extra={"tool": self.name, "state": str(breaker.state)},
+            )
+            return (
+                f"Tool '{self.name}' is temporarily unavailable "
+                f"(circuit breaker {breaker.state.value}). "
+                f"Auto-retry after cooldown."
+            )
 
         should_cache = self.cacheable and not self.dangerous
         # Result cache hit (read-only tools only — avoids repeated I/O)
@@ -85,6 +112,7 @@ class Tool:
                 return cached
 
         last_error = ""
+        start = time.monotonic()
         for attempt in range(self.max_retries + 1):
             try:
                 result = await self.handler(**kwargs)
@@ -93,16 +121,21 @@ class Tool:
                     self._result_cache[key] = result
                     if len(self._result_cache) > _CACHE_MAXSIZE:
                         self._result_cache.popitem(last=False)
+                breaker.record_success()
+                await self._run_post_hooks(chain, self.name, agent_name, kwargs, result, True, start)
                 return result
             except TypeError as e:
-                # Bad arguments from the LLM — retry won't help.
                 _log.warning(
                     "tool_bad_args",
                     extra={"tool": self.name, "error": str(e), "kwargs": list(kwargs)},
                 )
-                return f"Error: tool '{self.name}' called with invalid arguments: {e}"
+                breaker.record_failure()
+                msg = f"Error: tool '{self.name}' called with invalid arguments: {e}"
+                await self._run_post_hooks(chain, self.name, agent_name, kwargs, msg, False, start)
+                return msg
             except Exception as e:
                 last_error = str(e)
+                breaker.record_failure()
                 if attempt < self.max_retries:
                     _log.warning(
                         "tool_retry",
@@ -118,7 +151,23 @@ class Tool:
             "tool_failed",
             extra={"tool": self.name, "retries": self.max_retries, "error": last_error},
         )
-        return f"Error executing tool '{self.name}' after {self.max_retries} retries: {last_error}"
+        msg = f"Error executing tool '{self.name}' after {self.max_retries} retries: {last_error}"
+        await self._run_post_hooks(chain, self.name, agent_name, kwargs, msg, False, start)
+        return msg
+
+    @staticmethod
+    async def _run_post_hooks(
+        chain: MiddlewareChain | None,
+        tool_name: str,
+        agent_name: str | None,
+        kwargs: dict[str, Any],
+        result: str,
+        success: bool,
+        start: float,
+    ) -> None:
+        if chain is not None:
+            duration_ms = (time.monotonic() - start) * 1000
+            await chain.run_post(tool_name, agent_name, kwargs, result, success, duration_ms)
 
 
 class ToolRegistry:

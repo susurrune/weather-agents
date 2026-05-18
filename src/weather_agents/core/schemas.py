@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
-from typing import Any, get_type_hints
+from typing import Any, cast, get_type_hints
 
 
 class SchemaValidationError(ValueError):
@@ -171,13 +171,13 @@ def _dict_to_dataclass(data: Any, schema_type: type, raw: str) -> Any:
         if origin is list and isinstance(val, list):
             elem_type = getattr(target_type, "__args__", (Any,))[0]
             if is_dataclass(elem_type):
-                kwargs[name] = [_dict_to_dataclass(item, elem_type, raw) for item in val]
+                kwargs[name] = [_dict_to_dataclass(item, cast(type, elem_type), raw) for item in val]
                 continue
             kwargs[name] = [_coerce_type(v, elem_type) for v in val]
             continue
 
         if is_dataclass(target_type) and isinstance(val, dict):
-            kwargs[name] = _dict_to_dataclass(val, target_type, raw)
+            kwargs[name] = _dict_to_dataclass(val, cast(type, target_type), raw)
         else:
             kwargs[name] = _coerce_type(val, target_type)
 
@@ -203,7 +203,8 @@ def _default_for(f: Any) -> Any:
 def parse_task_plan(raw: str) -> TaskPlanSchema | None:
     """Parse Snow's orchestration output into a typed task plan."""
     try:
-        return parse_schema(raw, TaskPlanSchema)
+        result: TaskPlanSchema = parse_schema(raw, TaskPlanSchema)
+        return result
     except SchemaValidationError:
         return None
 
@@ -211,6 +212,7 @@ def parse_task_plan(raw: str) -> TaskPlanSchema | None:
 def parse_facts(raw: str) -> ExtractionResultSchema | None:
     """Parse fact-extraction output into structured facts."""
     try:
-        return parse_schema(raw, ExtractionResultSchema)
+        result: ExtractionResultSchema = parse_schema(raw, ExtractionResultSchema)
+        return result
     except SchemaValidationError:
         return None

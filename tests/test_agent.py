@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from weather_agents.core.agent import AgentState, Task, TaskResult
+from weather_agents.core.bus import Event, EventType
 from weather_agents.core.skill import Skill, SkillRegistry
 
 
@@ -655,4 +658,227 @@ class TestPopLastUserMessage:
         assert len(agent.memory.short_term) == 0
         agent._pop_last_user_message()  # should not crash
         assert len(agent.memory.short_term) == 0
+        await agent.close()
+
+
+class TestAgentCommunication:
+    """Tests for inter-agent request/response (request_help → awaitable)."""
+
+    @pytest.mark.asyncio
+    async def test_request_help_returns_response(
+        self, app_config, mock_llm, bus, tool_registry
+    ):
+        """Agent A requests help from Agent B → gets response content."""
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.agents.rain import RainAgent
+
+        agent_a = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        agent_b = RainAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent_a.init()
+        await agent_b.init()
+
+        result = await agent_a.request_help("rain", "generate some code")
+        assert result == "test response"
+
+        await agent_a.close()
+        await agent_b.close()
+
+    @pytest.mark.asyncio
+    async def test_request_help_publishes_agent_request_event(
+        self, app_config, mock_llm, bus, tool_registry
+    ):
+        """Calling request_help should leave an AGENT_REQUEST in bus history."""
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.agents.rain import RainAgent
+
+        agent_a = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        agent_b = RainAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent_a.init()
+        await agent_b.init()
+
+        await agent_a.request_help("rain", "write a test")
+
+        events = bus.get_history(event_type=EventType.AGENT_REQUEST, limit=5)
+        assert len(events) >= 1
+        assert events[-1].source == "fog"
+        assert events[-1].target == "rain"
+
+        await agent_a.close()
+        await agent_b.close()
+
+    @pytest.mark.asyncio
+    async def test_handle_response_resolves_future(
+        self, app_config, mock_llm, bus, tool_registry
+    ):
+        """_handle_response should resolve the matching pending future."""
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+
+        correlation_id = "test-corr-123"
+        future = asyncio.get_running_loop().create_future()
+        agent._pending_requests[correlation_id] = future
+
+        event = Event(
+            type=EventType.AGENT_RESPONSE,
+            source="rain",
+            target="fog",
+            data={
+                "correlation_id": correlation_id,
+                "content": "response data",
+                "success": True,
+            },
+        )
+        agent._handle_response(event)
+        assert future.done()
+        assert future.result() == "response data"
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_handle_response_unknown_id_does_not_crash(
+        self, app_config, mock_llm, bus, tool_registry
+    ):
+        """_handle_response with a non-matching correlation_id is a no-op."""
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+
+        event = Event(
+            type=EventType.AGENT_RESPONSE,
+            source="rain",
+            target="fog",
+            data={"correlation_id": "nonexistent", "content": "data"},
+        )
+        agent._handle_response(event)  # should not crash
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_handle_response_empty_correlation_id(
+        self, app_config, mock_llm, bus, tool_registry
+    ):
+        """_handle_response with empty correlation_id is a no-op."""
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+
+        event = Event(
+            type=EventType.AGENT_RESPONSE,
+            source="rain",
+            target="fog",
+            data={"correlation_id": "", "content": "data"},
+        )
+        agent._handle_response(event)  # should not crash
+
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_request_help_to_self(self, app_config, mock_llm, bus, tool_registry):
+        """An agent should be able to request help from itself."""
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent.init()
+
+        result = await agent.request_help("fog", "self-help task")
+        assert result == "test response"
+
+        await agent.close()
+
+
+class TestApprovalGate:
+    @pytest.mark.asyncio
+    async def test_auto_approve_by_default(self, app_config, mock_llm, bus, tool_registry):
+        """Default approval_mode='auto' should approve dangerous tools."""
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        assert await agent._check_tool_approval("write_file", {"path": "/tmp/test"}) is True
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_denies(self, app_config, mock_llm, bus, tool_registry):
+        """approval_mode='strict' should deny all dangerous tools."""
+        app_config.cli.approval_mode = "strict"
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        assert await agent._check_tool_approval("write_file", {"path": "/tmp/test"}) is False
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_interactive_mode_calls_callback(self, app_config, mock_llm, bus, tool_registry):
+        """approval_mode='interactive' should delegate to the callback."""
+        app_config.cli.approval_mode = "interactive"
+
+        async def _mock_approval(name: str, args: dict) -> bool:
+            return name == "safe_tool"
+
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        agent.approval_callback = _mock_approval
+        assert await agent._check_tool_approval("safe_tool", {}) is True
+        assert await agent._check_tool_approval("dangerous_tool", {}) is False
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_interactive_no_callback_denies(self, app_config, mock_llm, bus, tool_registry):
+        """interactive mode with no callback set should deny."""
+        app_config.cli.approval_mode = "interactive"
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        assert agent.approval_callback is None
+        assert await agent._check_tool_approval("write_file", {}) is False
+        await agent.close()
+
+
+class TestBackgroundTaskTracking:
+    @pytest.mark.asyncio
+    async def test_agent_request_task_is_tracked(self, app_config, mock_llm, bus, tool_registry):
+        """AGENT_REQUEST creates a tracked background task."""
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.bus import Event, EventType
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent.init()
+
+        event = Event(
+            type=EventType.AGENT_REQUEST,
+            source="rain",
+            target="fog",
+            data={"correlation_id": "bg-001", "description": "test", "source": "rain"},
+        )
+        await agent._handle_event(event)
+
+        assert len(agent._bg_tasks) >= 1
+        # Wait for background task to complete
+        for t in list(agent._bg_tasks):
+            await t
+        assert len(agent._bg_tasks) == 0
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_background_task_exception_is_logged(self, app_config, mock_llm, bus, tool_registry):
+        """Background task that raises does not take down the agent."""
+        import asyncio as _asyncio
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent.init()
+
+        async def _crash():
+            raise RuntimeError("simulated crash")
+
+        t = _asyncio.create_task(_crash())
+        agent._bg_tasks.add(t)
+        t.add_done_callback(agent._bg_tasks.discard)
+
+        # The exception should be captured by the done callback
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            await t
+
+        assert len(agent._bg_tasks) == 0
         await agent.close()

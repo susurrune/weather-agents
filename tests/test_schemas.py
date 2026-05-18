@@ -4,11 +4,10 @@ from __future__ import annotations
 import pytest
 
 from weather_agents.core.schemas import (
+    SchemaValidationError,
     TaskPlanSchema,
-    TaskStepSchema,
     parse_schema,
     parse_task_plan,
-    SchemaValidationError,
 )
 
 
