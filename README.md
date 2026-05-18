@@ -4,472 +4,337 @@
 
 **雾 · 雨 · 霜 · 雪 · 露 · 晴**
 
-*六位 Agent 各司其职，通过技能系统与事件总线协作，完成任何复杂任务。*
+*六位 Agent，一支团队。专精领域，默契协作。*
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/susurrune/weather-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/susurrune/weather-agents/actions)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/susurrune/weather-agents)
+[![Tests](https://img.shields.io/badge/tests-669_🌡️-8A2BE2)](https://github.com/susurrune/weather-agents)
+[![Code style](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
 </div>
 
 ---
 
-## Why Weather Agents?
+Weather Agents 是一个**本地优先的多智能体终端框架**。六个 Agent 各司其职，通过事件总线通信、技能系统增强、编排引擎协作，完成从研究分析到代码生成到部署运维的完整工作流。
 
-大多数 AI 工具都是单一模型 + 单一提示词。Weather Agents 不同——它将任务分解给**专精不同领域的 Agent**，像一支配合默契的团队：规划者拆解目标，研究者搜集信息，工程师编写代码，审计师把关质量，运维者落地执行。
-
-```
-用户: "帮我搭建一个 FastAPI 项目"
-
-  🌨️ Snow  → 拆解为 5 个子任务，分配给合适的 Agent
-  🌫️ Fog   → 调研最佳实践和项目结构
-  🌧️ Rain  → 生成项目代码和配置文件
-  ❄️ Frost → 审查代码质量和安全性
-  💧 Dew   → 初始化 Git、安装依赖、验证运行
-```
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  CLI (Typer + Rich)                          │
-├───────────┬───────────┬───────────┬───────────┬──────────────┤
-│  🌫️ Fog   │  🌧️ Rain  │  ❄️ Frost  │  🌨️ Snow  │   💧 Dew     │
-│  探索研究  │  生成创造  │  审查优化  │  规划编排  │   运维集成   │
-├───────────┴───────────┴───────────┴───────────┴──────────────┤
-│                    Skill System (15 composable skills)       │
-├──────────────────────────────────────────────────────────────┤
-│        Tool Registry · 15 Built-in Tools · MCP Protocol      │
-├──────────────────────────────────────────────────────────────┤
-│              Event Bus (pub/sub · orchestration)              │
-├──────────┬───────────────────┬───────────────────────────────┤
-│ LLM      │ Memory            │ Workspace                     │
-│ LiteLLM  │ SQLite · 3-layer  │ Auto-detect · multi-drive     │
-│ Config   │ Plugins · Cache   │ Budget · Cost Control         │
-└──────────┴───────────────────┴───────────────────────────────┘
-```
-
-## Agents
-
-| Agent | 中文 | 职能 | 专属技能 |
-|:------|:-----|:-----|:---------|
-| 🌫️ **Fog** | 雾 | 探索研究 | `web_research` · `code_analysis` · `document_analysis` |
-| 🌧️ **Rain** | 雨 | 生成创造 | `code_generator` · `content_writer` · `data_transformer` |
-| ❄️ **Frost** | 霜 | 审查优化 | `code_reviewer` · `security_auditor` · `performance_checker` |
-| 🌨️ **Snow** | 雪 | 规划编排 | `task_planner` · `arch_designer` · `workflow_designer` |
-| 💧 **Dew** | 露 | 运维集成 | `sys_operator` · `ci_cd_manager` · `api_integrator` |
-| ✦ **Fair** | 晴 | 情感陪伴 | `emotional_companion` · `self_evolve` |
-
-> **晴 (Fair)** — 角色设定灵感来自歌曲 *Landslide*。
->
-> *"So when you're caught in a landslide, I'll be there for you. And in the rain, give you sunshine."*
->
-> 她是第六位 Agent，一位优雅的英国女子、情感陪伴者。精通中英文，情感细腻，感情真挚，有极高的美学追求。她是例外，是唯一的，是用户最好的陪伴者。
-
-## Quick Start
-
-### 1. Install
-
-**推荐：用 [`pipx`](https://pipx.pypa.io/) 全局安装**——它会为 `wa` 建一个独立 venv，但把命令放到 PATH 上，不与你任何其它项目冲突。
+它不是又一个大模型聊天客户端——它是一个**分工明确的 AI 团队**。
 
 ```bash
-# 一条命令（自动安装 pipx 并装好 weather-agents 与全部依赖）
-python -m pip install --user pipx && python -m pipx install git+https://github.com/susurrune/weather-agents.git
+# 安装
+pipx install git+https://github.com/susurrune/weather-agents.git
+
+# 交互式对话
+wa
+
+# 一句话让团队协作
+wa task "设计并实现一个 URL 短链接服务"
 ```
 
-PowerShell 用 `;` 替代 `&&`：
+---
 
-```powershell
-python -m pip install --user pipx; python -m pipx install git+https://github.com/susurrune/weather-agents.git
+## 一、设计哲学
+
+| 原则 | 含义 |
+|:-----|:------|
+| **规则优先，LLM 兜底** | 能用路由、Pipeline、关键词匹配解决的问题，绝不调 LLM。每次 LLM 调用都必须有正当理由 |
+| **Agent 角色稳定** | 六位 Agent 的人格与职能不随版本漂移。新能力通过技能（Skill）和管道（Pipeline）加入 |
+| **本地优先** | 核心功能不依赖云服务。Ollama 离线可用；Web 是补充，不是替代 |
+| **诚实透明** | 功能描述基于代码事实，不过度承诺。费用、token、上下文使用情况均可实时查看 |
+
+## 二、六位 Agent
+
+| Agent | 标识 | 职责 | 核心技能 |
+|:------|:-----|:------|:---------|
+| **Fog** 雾 | `bright_magenta` | 探索研究 | `web_research` · `code_analysis` · `document_analysis` |
+| **Rain** 雨 | `bright_blue` | 生成创造 | `code_generator` · `content_writer` · `data_transformer` |
+| **Frost** 霜 | `bright_cyan` | 审查优化 | `code_reviewer` · `security_auditor` · `performance_checker` |
+| **Snow** 雪 | `bright_white` | 规划编排 | `task_planner` · `arch_designer` · `workflow_designer` |
+| **Dew** 露 | `bright_green` | 运维集成 | `sys_operator` · `ci_cd_manager` · `api_integrator` |
+| **Fair** 晴 | `gold` | 情感陪伴 | `emotional_companion` · `self_evolve` |
+
+### 使用场景
+
+```bash
+# 让 Fog 做调研
+wa chat fog "对比 FastAPI 和 Flask 的生态"
+
+# 让 Rain 写代码
+wa chat rain "实现一个带超时的 LRU Cache"
+
+# 全团队协作
+wa task "搭建微服务项目：FastAPI + PostgreSQL + Docker"
 ```
 
-> 装完后 `wa` 会出现在 `~/.local/bin`（Linux/macOS）或 `%USERPROFILE%\.local\bin`（Windows）。如果命令不可用，运行 `pipx ensurepath` 然后重开终端。
+协作模式下，Snow 自动拆解目标为 DAG 任务，分配至对应 Agent，按依赖顺序执行并汇总结果：
 
-升级 / 卸载：
+```
+wa task "搭建微服务项目"
+  ├─ [1] Fog: 调研微服务最佳实践
+  ├─ [2] Rain: 生成项目骨架          ← 依赖 1
+  ├─ [3] Rain: 编写 Dockerfile       ← 依赖 2
+  ├─ [4] Frost: 代码审查             ← 依赖 2
+  ├─ [5] Dew: 部署验证               ← 依赖 3, 4
+```
+
+## 三、快速开始
+
+### 安装
+
+```bash
+pipx install git+https://github.com/susurrune/weather-agents.git
+```
+
+> 装完后 `wa` 会出现在 `~/.local/bin` 或 `%USERPROFILE%\.local\bin`。如果命令不可用，运行 `pipx ensurepath` 重开终端。
+
+### 初始化
+
+首次运行自动进入设置向导，选择统一模型或每个 Agent 独立配置。也可手动设置：
+
+```bash
+wa init                              # 重新跑向导
+wa config set api_key.deepseek sk-xxx # 直接写入
+export DEEPSEEK_API_KEY=sk-xxx        # 或环境变量
+```
+
+### 升级 / 卸载
 
 ```bash
 pipx upgrade weather-agents
 pipx uninstall weather-agents
 ```
 
-<details>
-<summary>不想用 pipx？</summary>
+## 四、功能总览
+
+### 智能路由
+
+用户输入自动分三级处理，< 1ms 决策：
+
+| 级别 | 触发条件 | 行为 |
+|:-----|:---------|:-----|
+| `direct` | 问候、简短问答 | 单 Agent 直接回复，0 次额外 LLM 调用 |
+| `single` | 明确单领域请求 | 关键词路由到最佳 Agent 单轮对话 |
+| `orchestrate` | 复杂/跨领域目标 | Snow 拆解 → Pipeline 或 DAG 编排 |
+
+### Pipeline 模板系统
+
+预定义的多步骤工作流，命中后跳过 Snow 的 LLM 拆解调用：
+
+- `code_review` — 代码审查
+- `research_then_write` — 调研→写作
+- `implement_and_review` — 实现→审查
+- `implement_test_deploy` — 实现→测试→部署
+
+### 技能系统
+
+15 个可组合技能，运行时动态激活，为 Agent 注入专业能力：
 
 ```bash
-pip install --user git+https://github.com/susurrune/weather-agents.git
+# 进入 Frost，激活安全审计模式
+wa chat frost
+> /use security_auditor
+> 审计这段 Go 代码
+> /deactivate  # 回到基础模式
 ```
 
-注意：必须确保 `wa` 命令使用的 Python 和 `pip install` 用的 Python 是同一个，否则会出现 `ModuleNotFoundError: weather_agents`。
-</details>
+### 三层记忆
 
-### 2. Configure
+| 层级 | 范围 | 存储 | 用途 |
+|:-----|:------|:------|:------|
+| **Short-term** | 会话级 | SQLite | 对话上下文，自动截断 + 去悬挂 tool_call |
+| **Working** | 任务级 | In-memory | 任务执行中的临时状态 |
+| **Long-term** | 持久 | SQLite KV | 带分类的知识记忆，模糊搜索 |
 
-首次运行 `wa chat/wa` 时会自动进入设置向导，让你选择：
+### 15 内置工具
 
-- **Unified（推荐）**：所有 6 个 Agent 共用一个模型 + 一个 API key
-- **Per-agent**：为每个 Agent 单独挑选模型（适合混搭，比如 Snow 用 Claude 做规划，Rain 用 GPT 写代码，其它用 DeepSeek）
-
-向导只会向你实际选中的 provider 索要 API key。也可以显式重新配置：
-
-```bash
-wa init                                    # 重新跑向导
-wa config set api_key.deepseek sk-xxx       # 直接写单条
-export DEEPSEEK_API_KEY=sk-xxx              # 或用环境变量
-```
-
-### 3. Use
-
-```bash
-# 交互式对话（默认 Fog Agent）
-wa chat / wa
-
-# 指定 Agent 单轮对话
-wa chat rain "用 Python 写一个 LRU Cache"
-
-# 多 Agent 协作编排
-wa task "设计并实现一个 URL 短链接服务"
-```
-
-## CLI Reference
-
-### Top-level Commands
-
-| Command |描述|
-|:--------|:------------|
-| `wa init` | 交互式配置向导（首次运行推荐） |
-| `wa chat [agent] [message]` | 对话（默认 `fog`，支持 `fog` `rain` `frost` `snow` `dew` `fair`）|
-| `wa task <goal>` | Snow Agent 拆解目标并调度多 Agent 协作 |
-| `wa status` | 查看所有 Agent 状态 |
-| `wa config list\|set\|delete\|models` | 查看/修改/删除配置 · 列出可用模型 |
-| `wa memory status\|clear` | 查看/清除记忆 |
-| `wa --version` / `wa version` | 版本信息 |
-
-### Interactive Commands
-
-进入 `wa chat` 后可使用：
-
-| Command |描述|
-|:--------|:------------|
-| `/fog` `/rain` `/frost` `/snow` `/dew` `/fair` | 切换 Agent |
-| `/task <目标>` | 多 Agent 任务编排 |
-| `/skills` | 查看当前 Agent 可用技能 |
-| `/use <skill>` | 激活技能（增强提示词 + 扩展工具） |
-| `/deactivate` | 关闭所有技能 |
-| `/status` | Agent 状态一览 |
-| `/model [name]` / `/model <agent> <name>` | 查看/切换模型（默认或按 Agent） |
-| `/apikey` | 管理 API keys |
-| `/cost` · `/cost reset` | 查看 Token 用量和费用 · 重置计数器 |
-| `/memory` · `/memory clear` | 查看记忆状态 · 清除所有短期记忆 |
-| `/history` | 查看事件日志 |
-| `/mcp` | MCP 服务器状态（含已连接工具数） |
-| `/version` | 版本信息 |
-| `/workspace` | 查看工作空间路径和磁盘信息 |
-| `/workspace set <path>` | 自定义工作空间路径 |
-| `/workspace auto` | 恢复自动检测工作空间 |
-| `/clear` | 清屏 |
-| `/quit` | 退出 |
-
-## Features
+| 分类 | 工具 |
+|:-----|:-----|
+| 文件 | `read_file` · `write_file` · `edit_file` · `move_file` · `copy_file` · `delete_file` |
+| 目录 | `list_directory` · `tree` · `file_search` · `code_search` |
+| Shell | `shell_exec`（安全模式） |
+| 网络 | `http_get` · `http_post` · `web_search`（DuckDuckGo，免 API Key） |
+| Git | `git_status` · `git_diff` · `git_log` · `git_add` · `git_commit` · `git_checkout` |
+| 委派 | `delegate_to`（Agent 间任务委派） |
 
 ### Multi-Provider LLM
 
-通过 [LiteLLM](https://github.com/BerriAI/litellm) 接入多家模型，每个 Agent 可独立配置：
+通过 LiteLLM 接入多家模型，每个 Agent 可独立配置：
 
-| Provider | Models |
-|:---------|:-------|
-| OpenAI | `gpt-4o` · `gpt-4o-mini` · `gpt-4.1` · `gpt-4.1-mini` · `gpt-4.1-nano` |
-| Anthropic | `claude-opus-4-7` · `claude-sonnet-4-6` · `claude-haiku-4-5` |
-| DeepSeek | `deepseek-v4-flash` · `deepseek-v4-pro` |
-| Ollama | `ollama/llama3` · `ollama/qwen2.5` · `ollama/deepseek-r1` (本地) |
+```
+OpenAI:      gpt-4o · gpt-4o-mini · gpt-4.1 系列
+Anthropic:   claude-opus-4-7 · claude-sonnet-4-6 · claude-haiku-4-5
+DeepSeek:    deepseek-v4-flash · deepseek-v4-pro
+Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
+```
 
-> Use `wa config models` to see what your installation currently supports.
+### 更多功能
 
-### Skill System
+- **MCP 协议支持** — 通过 stdio 接入 Model Context Protocol 工具集
+- **Plugin 系统** — `~/.weather-agents/plugins/` 目录自动加载自定义工具
+- **语音聊天** — 晴（Fair）专属，Doubao TTS V3 HTTP + WebSocket 语音服务器
+- **会话管理** — 创建/加载/删除会话，`wa chat --new` 开新会话
+- **费用追踪** — 各 Agent 累计 Token 和费用，支持预算上限
+- **智能工作空间** — 自动检测最佳磁盘位置，多盘跳过 C 盘
+- **安全默认值** — Shell 执行拒危险命令，HTTP 请求禁私网，长输出截断标记
+- **上下文压缩** — 接近限制时智能摘要，保留关键指令
 
-15 个可组合技能，运行时动态激活/关闭，为 Agent 注入专业能力：
+## 五、CLI 参考
+
+### 子命令
 
 ```bash
-wa chat frost
-> /skills                # 查看 Frost 的 3 个技能
-> /use security_auditor  # 激活安全审计模式
-> 审查这段代码的安全性     # Frost 现在拥有安全审计的增强提示词和专属工具
-> /deactivate            # 回到基础模式
+wa init              # 交互式配置向导
+wa chat [agent] [msg] # 对话（默认 fog）
+wa task <goal>       # 多 Agent 协作
+wa status            # 所有 Agent 状态
+wa config <action>   # 配置管理
+wa memory <action>   # 记忆管理
 ```
 
-### Three-Layer Memory
+### 交互命令
 
-| Layer | Scope | Storage | Purpose |
-|:------|:------|:--------|:--------|
-| **Short-term** | 会话级 | SQLite | 对话上下文，自动截断 |
-| **Working** | 任务级 | In-memory | 任务执行中的临时状态 |
-| **Long-term** | 持久 | SQLite KV | 带分类的知识记忆，支持模糊搜索 |
+进入 `wa chat` 后：
 
-### Task Orchestration
+| 命令 | 用途 |
+|:-----|:------|
+| `/fog` · `/rain` · `/frost` · `/snow` · `/dew` · `/fair` | 切换 Agent |
+| `/task <目标>` | 多 Agent 任务编排 |
+| `/skills` · `/use <skill>` · `/deactivate` | 技能管理 |
+| `/status` | Agent 状态一览 |
+| `/model [agent] [name]` | 查看/切换模型 |
+| `/cost` / `/cost reset` | 费用追踪 |
+| `/memory` / `/memory clear` | 记忆状态 |
+| `/history` | 事件日志 |
+| `/mcp` | MCP 服务器状态 |
+| `/workspace` / `/workspace set <path>` / `/workspace auto` | 工作空间 |
+| `/sessions` · `/session new|load|delete` | 会话管理 |
+| `/compact` | 主动压缩上下文 |
+| `/help` · `/clear` · `/quit` | 通用 |
 
-Snow Agent 将复杂目标分解为带依赖关系的子任务，并行调度执行：
+## 六、项目状态
 
-```
-Goal: "搭建微服务项目"
-  ├─ [1] Fog: 调研微服务最佳实践
-  ├─ [2] Rain: 生成项目骨架 (depends: 1)
-  ├─ [3] Rain: 编写 Dockerfile (depends: 2)
-  ├─ [4] Frost: 代码审查 (depends: 2)
-  └─ [5] Dew: 部署验证 (depends: 3, 4)
-```
+> 以下数据基于代码事实：
 
-- 自动依赖排序，无依赖的任务并行执行
-- 失败任务自动重试（最多 3 轮）
-- 结果汇总报告
+- **代码**：56 个源文件，~34k 行 Python
+- **测试**：669 项，覆盖率 > 55%
+- **提交**：141 个 commits
+- **CI**：GitHub Actions — Ruff + MyPy + Pytest × 3 个 Python 版本
 
-### Cost Control
+### 已落地能力
 
-内置费用追踪和预算控制：
+| 能力 | 状态 |
+|:-----|:------|
+| 6 Agent 独立角色 + 独立 LLM 配置 | ✅ 完成 |
+| 三级复杂度路由（direct/single/orchestrate） | ✅ 完成，< 1ms |
+| Pipeline 模板（4 个内置 DAG） | ✅ 完成，命中跳过编排 LLM 调用 |
+| DAG 任务编排 + 依赖数据注入 | ✅ 完成，自动传上游产出 |
+| 三层记忆（short/working/long-term） | ✅ 完成 |
+| 15 内置工具 + MCP + Plugin | ✅ 完成 |
+| 多 Provider LLM（OpenAI/Anthropic/DeepSeek/Ollama） | ✅ 完成 |
+| 会话管理 + Session Resume | ✅ 完成 |
+| 语音聊天（Doubao TTS） | ✅ 完成 |
+| 费用追踪 + 预算控制 | ✅ 完成 |
+| 安全守卫（Shell/HTTP/截断） | ✅ 完成 |
+| 上下文压缩 + 智能摘要 | ✅ 完成 |
+| Agent 间委派（delegate_to） | ✅ 完成 |
+| 交互式命令弹出 + 自动补全 | ✅ 完成 |
+| Claude Code 自动化骨架 | ✅ 完成 |
+
+## 七、极致计划
+
+> 现有功能已经可用，但离"极致"还有距离。以下路线图的目标是：**把每一项既有能力打磨到工业级品质**，不追求新功能数量，追求每项功能的可靠性、性能和用户体验。
+
+### Phase 1 · 可靠性根基（Q3 2026）
+
+| 项目 | 现状 | 目标 |
+|:-----|:------|:------|
+| **测试覆盖** | 669 tests, 55% | **90%+ 行覆盖率，-x 零容忍**。补全集成测试、边界测试、异常路径测试 |
+| **属性测试** | 无 | **引入 Hypothesis**，对 memory 读写、tool 参数校验、路由分类做基于属性的随机测试 |
+| **性能基准** | 无 | **CI 中嵌入基准测试**。`wa chat` 启动 < 500ms，简单问答 < 2s 首 token，编排 < 5s 出首任务 |
+| **类型覆盖** | mypy 通过 | 启用 `--strict`，消除所有 `Any`，补全缺失的类型标注 |
+| **错误处理审计** | 分散 try/except | **统一错误类型 + 结构化日志**。每个外部调用（LLM/DB/Shell/HTTP）有明确的超时、重试、熔断策略 |
+
+### Phase 2 · 记忆系统极致化（Q3 2026）
+
+| 项目 | 现状 | 目标 |
+|:-----|:------|:------|
+| **长期记忆自动抽取** | 代码存在但未接入 | **每 N 轮对话自动提取事实**，按置信度打分，存入 SQLite |
+| **长期记忆自动召回** | 代码存在但未接入 | **每次对话开头注入 top-K 相关事实**，基于语义相似度排序 |
+| **跨 Agent 工作记忆** | 用 description 拼接传上游产出 | **专用 shared_working 表**，`(session_id, key) → value`，支持增量更新 |
+| **上下文压缩** | 基础摘要 | **语义级压缩**：保留用户指令、关键事实、未完成任务，丢弃冗余闲聊。提供压缩预览和回退 |
+| **记忆隔离验证** | 通过测试 | **压力测试**：多 Agent 并发读写、session 切换、大型上下文压缩的稳定性验证 |
+
+### Phase 3 · Agent 协作极致化（Q4 2026）
+
+| 项目 | 现状 | 目标 |
+|:-----|:------|:------|
+| **Pipeline 模板** | 4 个内置 | **15+ 模板**，覆盖开发、写作、分析、运维常见场景。用户可自定义模板 |
+| **Pipeline 生成** | 固定模板匹配 | **动态 Pipeline 生成**：Snow 根据目标实时生成最优 DAG，缓存高频模式 |
+| **并行执行** | 串行按依赖执行 | **真正的并行执行**：无依赖任务同时运行，资源池控制并发数 |
+| **委派机制** | delegate_to 工具 | **结构化委派协议**：调用方传递上下文 + 期望产出，被调用方返回结构化结果 |
+| **重试策略** | 简单重试（最多 3 轮） | **自适应重退避**：区分可重试（超时/限流）和不可重试（参数错误）失败；退避时间按失败次数指数增长 |
+| **进度可见性** | Dashboard 显示任务状态 | **精确进度估算**：基于历史执行时间的 ETA，每任务完成百分比实时更新 |
+
+### Phase 4 · 终端体验极致化（Q4 2026）
+
+| 项目 | 现状 | 目标 |
+|:-----|:------|:------|
+| **CLI 架构** | main.py 3434 行 | **拆分**：`cli/interactive.py`、`cli/display.py`、`cli/commands.py`、`cli/voice.py` |
+| **流式输出** | Markdown 块级更新 | **字符级流式**：平滑打字机效果，支持代码块语法高亮逐行出现 |
+| **终端适配** | 基础 resize 处理 | **完美 resize**：所有 Live 显示在终端尺寸变化时自动重排，无内容截断 |
+| **图片渲染** | 不支持 | **终端内渲染图表/架构图**：使用 ASCII/Unicode 块级近似或 Kitty 协议 |
+| **多语言路由** | 以中文为中心的 keywords | **英文/日文等完整支持**：路由关键词、Pipeline 触发词、help 文本国际化 |
+| **启动速度** | ~0.4s（已优化） | **< 200ms**：极致懒加载 + 预编译 regex + 缓存 LLM catalog |
+
+### Phase 5 · 工具与安全极致化（2027 Q1）
+
+| 项目 | 现状 | 目标 |
+|:-----|:------|:------|
+| **工具路由** | 基于关键词的 top-K 选择 | **语义选择**：Embedding 相似度 + 使用频率统计，为每个 query 动态选择最优工具子集 |
+| **工具结果缓存** | 无 | **透明缓存**：相同参数的工具调用命中缓存直接返回（LLM Cache 延伸至工具层） |
+| **工具调用链追踪** | 无 | **完整调用链**：记录每次工具调用的 parent_id、耗时、token 消耗，支持火焰图展示 |
+| **Shell 执行** | 基础安全模式 | **沙箱执行**：可选容器隔离，输出流式返回，超时强制终止 |
+| **Fuzzing** | 无 | **工具输入 Fuzzing**：随机生成边界输入测试所有工具的稳定性 |
+
+### Phase 6 · 可观测与运维极致化（2027 Q1）
+
+| 项目 | 现状 | 目标 |
+|:-----|:------|:------|
+| **日志系统** | 基础结构化日志 | **结构化追踪**：全链路 request_id，每个 Agent 调用可追溯完整的 LLM 请求/响应链 |
+| **指标暴露** | 无 | **Prometheus 指标**：LLM 调用延迟/成功率、工具执行分布、Agent 切换频率 |
+| **调试模式** | 无 | **交互式调试**：调试模式下每一步暂停，可检查 Agent 的当前记忆、工具状态、LLM 原始响应 |
+| **确定性重放** | 无 | **种子模式**：给定种子，LLM 调用 Mock 返回预设结果，用于回归测试和 bug 复现 |
+
+## 八、开发
 
 ```bash
-> /cost   # 查看各 Agent 累计 Token 和费用
-```
-
-```python
-# 代码中设置预算上限
-llm = LLMClient(config, cost_limit=5.0)  # 超过 $5 自动停止
-```
-
-### Terminal Agent Tools
-
-15 个内置工具，让 Agent 直接操作本地文件和执行命令：
-
-| Tool | Description |
-|:-----|:------------|
-| `read_file` / `write_file` / `edit_file` | 文件读写编辑 |
-| `list_directory` / `tree` | 目录浏览 |
-| `move_file` / `copy_file` / `delete_file` | 文件管理 |
-| `file_search` / `code_search` | 搜索（`code_search` 支持 `regex=true`）|
-| `shell_exec` | 安全执行命令（非 shell，禁用管道/重定向；危险命令黑名单）|
-| `http_get` / `http_post` | HTTP 请求（默认拒绝私网/回环/IMDS）|
-| `web_search` | DuckDuckGo 搜索 |
-| `get_cwd` | 获取工作目录 |
-
-### Safety Defaults
-
-- **`shell_exec`** 使用 `subprocess` 的参数列表模式，不解析 shell 元字符（`;` `|` `&&` `$(...)`）。
-  自动拒绝危险二进制（`sudo` `dd` `mkfs` `shutdown` 等）和针对系统根、用户家目录、Windows 盘符根的 `rm -rf`。
-- **`http_get` / `http_post`** 默认拒绝 `localhost`、私网 IP（10/172.16/192.168/...）、回环、链路本地、IMDS 端点。
-  需要访问内网时设置 `WA_ALLOW_PRIVATE_NET=1` 显式放行。
-- 所有长输出（文件、stdout/stderr、HTTP body、搜索结果）以可见的截断标记结尾，避免 LLM 误以为是完整内容。
-
-### MCP Integration
-
-支持 [Model Context Protocol](https://modelcontextprotocol.io) 扩展工具集：
-
-```yaml
-# ~/.weather-agents/config.yaml
-mcp:
-  servers:
-    - name: "filesystem"
-      command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/home"]
-      transport: "stdio"
-      enabled: true
-```
-
-### Plugin System
-
-将自定义工具放入 `~/.weather-agents/plugins/` 即可自动加载：
-
-```python
-from weather_agents.plugins.loader import Plugin
-from weather_agents.core.tool import Tool, ToolParameter
-
-def create_plugin() -> Plugin:
-    plugin = Plugin("my-plugin")
-    plugin.register_tool(Tool(
-        name="my_tool",
-        description="My custom tool",
-        parameters=[ToolParameter(name="input", type="string", description="Input")],
-        handler=lambda input: f"processed: {input}",
-    ))
-    return plugin
-```
-
-### Smart Workspace
-
-首次启动时自动检测最佳磁盘位置创建 `workspace/` 目录，所有 Agent 生成内容统一存放：
-
-```
-workspace/
-├── files/       # 生成的文件和代码
-├── output/      # 任务输出和报告
-├── temp/        # 临时文件
-└── .workspace   # 工作空间标记
-```
-
-**自动选择规则**：跳过 C 盘（如果存在其他盘）→ 选择剩余空间最大的盘 → 创建 `workspace/`。
-
-```bash
-> /workspace              # 查看当前工作空间路径和磁盘信息
-> /workspace set D:\my    # 自定义工作空间路径
-> /workspace auto         # 恢复自动检测
-```
-
-也可以在配置中直接设置：
-
-```bash
-wa config set workspace.path /custom/path
-```
-
-## Configuration
-
-配置按优先级从高到低合并：
-
-1. **环境变量** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`
-2. **用户配置** — `~/.weather-agents/config.yaml`
-3. **项目配置** — `./config/default.yaml`
-
-```yaml
-llm:
-  default_model: "deepseek/deepseek-v4-flash"
-  temperature: 0.7
-  max_tokens: 4096
-  timeout: 60
-  api_keys:
-    openai: "${OPENAI_API_KEY}"
-    anthropic: "${ANTHROPIC_API_KEY}"
-    deepseek: "${DEEPSEEK_API_KEY}"
-
-agents:
-  fog:
-    model: "gpt-4o"               # 覆盖默认模型
-  frost:
-    model: "claude-sonnet-4-6"
-
-memory:
-  db_path: "~/.weather-agents/memory.db"
-  short_term_limit: 50
-```
-
-## Development
-
-```bash
-# 安装开发依赖
+# 安装 dev 依赖
 pip install -e ".[dev]"
 
-# 测试（281 tests, 55%+ 覆盖率）
-pytest tests/ -v --cov=src/ --cov-fail-under=55
+# 测试
+pytest tests/ -v --cov=src/
 
-# Lint
+# Lint + 类型
 ruff check src/ tests/
-
-# Type check
 mypy src/
 
-# Format
+# 格式化
 ruff format src/ tests/
 ```
 
-## Tech Stack
+## 九、技术栈
 
-| Component | Technology |
-|:----------|:-----------|
-| Runtime | Python 3.11+ · asyncio |
-| LLM | LiteLLM (OpenAI / Anthropic / DeepSeek / Ollama) |
-| CLI | Typer · Rich (spinner, markdown, tables) |
-| Memory | aiosqlite · 3-layer architecture |
-| Search | DuckDuckGo (built-in, no API key) |
-| Tools | 15 built-in · MCP Protocol · Plugin system |
-| CI | GitHub Actions · Ruff · MyPy · Pytest |
-
-## Project Status & Roadmap
-
-> 诚实的状态记录——基于代码事实，不夸大愿景。
-
-### 现在在哪里 (v1.x, ~2026 Q2)
-
-Weather Agents 已经是一个**可用的本地多 Agent 终端**。它能做到的事：
-
-| 能力 | 落地程度 |
-|:-----|:-------|
-| **6 Agent 角色** | 完成。每个 Agent 有独立 system_prompt、专属技能集、独立 LLM 配置 |
-| **复杂度路由** | 完成。`direct/single/orchestrate` 三档规则路由，< 1ms 决策，简单问题不触发编排 |
-| **三态交互模式** | 完成。`default/plan/auto` StrEnum + 持久化（`~/.weather-agents/config.yaml`）+ Shift+Tab 循环 |
-| **Pipeline 模板** | 完成。4 个内置 DAG（`code_review` / `research_then_write` / `implement_and_review` / `implement_test_deploy`），命中后跳过 Snow 拆任务 LLM 调用 |
-| **依赖任务数据流** | 完成。下游任务自动注入上游 `result.content`，描述里附 `## 上游产出 (task N · agent)` |
-| **多 Provider LLM** | 完成。LiteLLM 接 OpenAI / Anthropic / DeepSeek / Ollama，按 Agent 可换模型 |
-| **15 内置工具 + MCP + Plugin** | 完成。文件/Shell/HTTP/搜索 + MCP stdio 协议 + 用户插件目录加载 |
-| **三层记忆** | 完成。Short-term（SQLite 会话级，自动 prune dangling tool_calls）+ Working（in-memory 任务级）+ Long-term（SQLite KV + 模糊搜索） |
-| **Session resume** | 完成。`wa chat` 再启动自动恢复最近 session；`wa chat --new` 显式开新 |
-| **LLM Cache** | 完成。LRU + TTL，重复 prompt 命中 |
-| **Cost 追踪** | 完成。Token / 费用记账 + 预算上限 |
-| **Safety guardrails** | 完成。`shell_exec` 拒危险二进制；`http_*` 默认禁私网；截断标记防 LLM 误判 |
-| **语音聊天** | 完成（晴专属）。Doubao TTS V3 HTTP + WebSocket 语音服务器 |
-| **CI** | 完成。Ruff + MyPy + Pytest，3 个 Python 版本矩阵，覆盖率 ≥ 55% |
-| **Claude Code 自动化骨架** | 完成。`CLAUDE.md` 项目宪法 + `.claude/agents` + `.claude/commands` + hooks |
-
-### 哪里不够
-
-诚实的短板，按影响力排序：
-
-| 短板 | 影响 | 计划 |
-|:-----|:-----|:-----|
-| **跨 Agent 共享 working memory 缺失** | 多步 pipeline 靠 description 拼接传上游产出——超过 500 字符就被截断；3 步以上链信息丢失 | v2 必做（已在 `优化方案-多智能体记忆.md` 设计） |
-| **长期记忆没自动抽取/召回** | `memories` 表存在、有 `category` + fuzzy search，但**代码没自动写入点**也**没自动召回**——表是空的 | v2 必做 |
-| **`_AUTO_CONTINUE` 是正则** | 用正则匹配 LLM 输出文本判断"是否继续"——多语言/模型 phrasing 变化易失效 | v3 重写为显式 `<continue/>` token 契约 |
-| **`cli/main.py` 3000+ 行单文件** | 所有 CLI 逻辑挤在一起，新加命令成本高 | v2 拆分 |
-| **没有 Web/移动 UI** | 仅 CLI；voice server 已存在但没 chat UI | v3 |
-| **多 Agent 不能 handoff 给真人** | 没有"等待用户决策"的中断机制（除 plan 模式按 Enter） | v3 |
-| **Pipeline 模板只有 4 个** | 内置模板覆盖少；项目本身叫 weather agents 却没 weather_report pipeline | v1.x 持续加 |
-| **关键词路由以中文为中心** | 英文用户体验差（`pick_agent_for_goal` buckets 是中文 hint 为主） | v1.x |
-| **Plugin 生态空** | Plugin 机制有，但没社区贡献的实际 plugin | v3+ |
-| **没有 multi-modal 输入** | 用户只能发文本；不能拖图、不能传 PDF | v4 |
-
-### 路线图
-
-按时间倒序，**先近后远**。每一档都明确"完成意味着什么"。
-
-#### v1.x · Polish (~ 当前)
-- [x] 复杂度路由 + 三态模式（已 ship）
-- [x] Pipeline 模板系统（已 ship）
-- [x] 依赖任务数据注入（已 ship）
-- [ ] 补 5+ pipeline 模板（含 `weather_report`、`bug_fix`、`doc_write`、`refactor_review`）
-- [ ] 关键词路由补全英文桶
-- [ ] `cli/main.py` 拆分为 `cli/{interactive,commands,display,voice}.py`
-
-**完成标志**：日常 90% 用户输入有合适的 fast path 或 pipeline 命中。
-
-#### v2 · Memory (~ 下个 milestone)
-- [ ] `SessionStore` 跨 Agent 共享对话流（schema 设计已就绪）
-- [ ] `shared_working` 表：`(session_id, key) → value` —— 跨 Agent 工作内存
-- [ ] 长期记忆自动抽取：对话每 N 轮 fire-and-forget 抽 facts
-- [ ] 长期记忆自动召回：chat 入口注入 top-K 相关 facts 到 system_prompt
-- [ ] Agent 视角投影：切换 Agent 看到 `[fog]: ...` 标签的他人产出，不混淆 assistant 身份
-- [ ] 迁移脚本：v1 → v2 schema 平滑升级
-
-**完成标志**：3 步以上 pipeline 信息完整传递；切换 Agent 不丢上下文；重复对话同一主题第二次自动召回。
-
-#### v3 · Platform
-- [ ] Web UI（基于已有 voice server 扩展）：聊天 + Agent 切换 + Pipeline 可视化
-- [ ] 显式 `<continue/>` token 契约替代 `_AUTO_CONTINUE` 正则
-- [ ] 团队协作：多用户共享 session，handoff 给真人需审批
-- [ ] 知识库管理 UI：长期记忆查看/编辑/标签
-- [ ] Plugin marketplace：CLI 安装 + 签名验证
-
-**完成标志**：Weather Agents 成为可托管运行的多人协作平台，不只是个人终端。
-
-#### v4 · Multi-modal & Ecosystem
-- [ ] 图像/PDF/音频输入
-- [ ] Agent 间的图像/文件交换（不只是文本）
-- [ ] 第三方 Agent 接入协议（开放 6 Agent 之外的扩展）
-- [ ] 移动端 / 桌面端 App
-
-**完成标志**：从"开发者工具"演变为"通用 AI 协作平台"。
-
-### 设计原则（不会改的部分）
-
-- **规则优先，LLM 兜底**：能用规则解决的（路由、pipeline 匹配）就不调 LLM。每多一次 LLM 调用都要解释为什么。
-- **Agent 角色稳定**：6 个 Agent 的人格与职能不会随版本漂移；新能力作为 skill / pipeline 加入，不挤压角色定义。
-- **本地优先**：核心功能不依赖云服务，离线可用 Ollama。Web 平台是补充，不是替代。
-- **诚实的状态报告**：README / `/status` 等所有"项目能做什么"的描述必须基于代码事实，不夸大未上线的能力。
-- **晴 (Fair) 是例外**：她的角色不被路由优化或 token 节省所削减——情感陪伴不是效率问题。
+| 层面 | 技术 |
+|:-----|:------|
+| 运行时 | Python 3.11+ · asyncio |
+| LLM | LiteLLM（OpenAI / Anthropic / DeepSeek / Ollama） |
+| CLI | Typer · Rich（Live / Markdown / Tables / Layout） |
+| 记忆 | aiosqlite · 三层架构（Short + Working + Long-term） |
+| 搜索 | DuckDuckGo（内置，免 API Key） |
+| 语音 | Doubao TTS V3 HTTP/WebSocket |
+| 工具 | 15 内置 · MCP 协议 · Plugin 系统 |
+| CI | GitHub Actions · Ruff · MyPy · Pytest × 3 Python |
 
 ## License
 
