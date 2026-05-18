@@ -927,7 +927,20 @@ class BaseAgent:
 
                     tool = self.tool_registry.get(tool_name)
                     if not tool:
-                        return (tc, f"Tool '{tool_name}' not found", False, tool_name)
+                        # Suggest similar real tool names so the LLM can
+                        # self-correct on the next iteration instead of
+                        # repeatedly hallucinating the same wrong name.
+                        suggestions = _suggest_tool_names(tool_name, self.tool_registry)
+                        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+                        # Drop this name for the rest of the turn so the
+                        # LLM doesn't burn iterations calling it again.
+                        suppressed_tools.add(tool_name)
+                        return (
+                            tc,
+                            f"Error: Tool '{tool_name}' does not exist.{hint}",
+                            False,
+                            tool_name,
+                        )
 
                     if tool.dangerous:
                         _log.warning(
@@ -1493,9 +1506,11 @@ class BaseAgent:
                             tool_call_id=tc["id"],
                         )
                     else:
+                        suggestions = _suggest_tool_names(tool_name, self.tool_registry)
+                        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
                         self.memory.add_message(
                             "tool",
-                            f"Tool '{tool_name}' not found",
+                            f"Error: Tool '{tool_name}' does not exist.{hint}",
                             name=tool_name,
                             tool_call_id=tc["id"],
                         )
@@ -1874,6 +1889,67 @@ def _parse_tool_args(raw: str) -> dict | None:
             pass
 
     return None
+
+
+def _suggest_tool_names(missing: str, registry: ToolRegistry, max_n: int = 3) -> list[str]:
+    """Return the closest existing tool names for a hallucinated name.
+
+    Three-tier matching, accepting the first tier that produces hits:
+
+    1. difflib sequence-ratio match — catches typos like ``fetch_pag`` →
+       ``fetch_page``.
+    2. Token substring overlap on the name itself — catches misses where
+       both names share at least one underscore-separated chunk.
+    3. Token overlap against each tool's *description* — catches purely
+       conceptual misses like ``fetch_page`` → ``http_get`` where the names
+       share nothing but the description mentions "fetch a web page". This
+       is what the LLM is actually reaching for; it tends to invent a name
+       that matches the capability, not our internal naming.
+
+    Without these suggestions the LLM repeats the same hallucinated name
+    every iteration and burns through the tool-round budget.
+    """
+    import difflib as _difflib
+
+    all_names = registry.list_names()
+    if not all_names:
+        return []
+    close = _difflib.get_close_matches(missing, all_names, n=max_n, cutoff=0.5)
+    if close:
+        return close
+
+    missing_lower = missing.lower()
+    missing_chunks = [c for c in missing_lower.split("_") if len(c) >= 3]
+    if not missing_chunks:
+        missing_chunks = [missing_lower] if len(missing_lower) >= 3 else []
+
+    name_scored: list[tuple[int, str]] = []
+    desc_scored: list[tuple[int, str]] = []
+    for n in all_names:
+        nlow = n.lower()
+        name_score = 0
+        for chunk in missing_chunks:
+            if chunk in nlow:
+                name_score += 2
+        for chunk in nlow.split("_"):
+            if len(chunk) >= 3 and chunk in missing_lower:
+                name_score += 1
+        if name_score > 0:
+            name_scored.append((name_score, n))
+
+        tool = registry.get(n)
+        if not tool:
+            continue
+        desc = tool.description.lower()
+        desc_score = sum(1 for chunk in missing_chunks if chunk in desc)
+        if desc_score > 0:
+            desc_scored.append((desc_score, n))
+
+    if name_scored:
+        name_scored.sort(key=lambda x: x[0], reverse=True)
+        return [n for _s, n in name_scored[:max_n]]
+    desc_scored.sort(key=lambda x: x[0], reverse=True)
+    return [n for _s, n in desc_scored[:max_n]]
 
 
 def _tool_status_label(name: str, args: dict) -> str:

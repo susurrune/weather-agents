@@ -1470,7 +1470,11 @@ def register_builtin_tools() -> None:
         ),
         Tool(
             name="http_get",
-            description="Make an HTTP GET request (max 10 redirects). Returns status + body.",
+            description=(
+                "Fetch a web page or HTTP URL (GET request). Use this to "
+                "download article content, read web pages, fetch HTML, or "
+                "retrieve any URL. Returns status + body. Max 10 redirects."
+            ),
             parameters=[
                 ToolParameter(name="url", type="string", description="URL to request"),
             ],

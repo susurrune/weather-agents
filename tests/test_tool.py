@@ -253,3 +253,36 @@ class TestSchemaCache:
         s2 = t.to_function_schema()
         # Identical object — the cache is being used.
         assert s1 is s2
+
+
+class TestToolNameSuggestions:
+    """Hallucinated tool names should be matched to real ones via name + description."""
+
+    def test_typo_match_via_difflib(self):
+        from weather_agents.core.agent import _suggest_tool_names
+
+        r = ToolRegistry()
+        r.register(Tool(name="read_file", description="Read a file"))
+        r.register(Tool(name="write_file", description="Write a file"))
+        assert "read_file" in _suggest_tool_names("read_fil", r)
+
+    def test_conceptual_match_via_description(self):
+        """fetch_page → http_get when only the description shares 'fetch'/'page'."""
+        from weather_agents.core.agent import _suggest_tool_names
+
+        r = ToolRegistry()
+        r.register(
+            Tool(
+                name="http_get",
+                description="Fetch a web page or HTTP URL. Download article content.",
+            )
+        )
+        r.register(Tool(name="echo", description="Echo input back"))
+        assert _suggest_tool_names("fetch_page", r) == ["http_get"]
+
+    def test_no_match_returns_empty(self):
+        from weather_agents.core.agent import _suggest_tool_names
+
+        r = ToolRegistry()
+        r.register(Tool(name="echo", description="Echo input"))
+        assert _suggest_tool_names("xyzzy", r) == []
