@@ -1298,7 +1298,12 @@ class BaseAgent:
         task.status = "in_progress"
         self.memory.set_working("current_task", task)
 
-        prompt = f"Please complete this task: {task.description}"
+        prompt = (
+            f"Complete this task NOW using your available tools. "
+            f"Actually write files, execute commands, or produce the needed output — "
+            f"do NOT just describe a plan or explain what you would do.\n\n"
+            f"Task: {task.description}"
+        )
         if task.metadata:
             ctx_data = {k: v for k, v in task.metadata.items() if k != "goal"}
             if ctx_data:
