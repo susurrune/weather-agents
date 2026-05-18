@@ -1,4 +1,5 @@
 """Tests for lightweight semantic retrieval."""
+
 from __future__ import annotations
 
 from weather_agents.core.semantic import SemanticScorer

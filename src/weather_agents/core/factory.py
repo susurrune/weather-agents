@@ -253,8 +253,10 @@ async def orchestrate_task(
         if _has_cycle(t, set()):
             results.append(
                 TaskExecutionResult(
-                    id=t.id, agent=t.assigned_to or "",
-                    description=t.description, success=False,
+                    id=t.id,
+                    agent=t.assigned_to or "",
+                    description=t.description,
+                    success=False,
                     content=f"[cycle detected] task {t.id} has circular dependency",
                 )
             )
@@ -276,8 +278,10 @@ async def orchestrate_task(
             agent = agent_map.get(t.assigned_to)
             if not agent:
                 return TaskExecutionResult(
-                    id=t.id, agent=t.assigned_to or "",
-                    description=t.description, success=False,
+                    id=t.id,
+                    agent=t.assigned_to or "",
+                    description=t.description,
+                    success=False,
                     content=f"Agent '{t.assigned_to}' not found",
                 )
             if on_task_start:
@@ -298,7 +302,8 @@ async def orchestrate_task(
                     tail = (
                         "\n\n[完整内容存于 shared memory · key=task_{pid}_output · "
                         "调用 read_shared_memory 拉取]"
-                        if truncated else ""
+                        if truncated
+                        else ""
                     ).format(pid=parent_result.id)
                     upstream_sections.append(
                         f"## 上游产出 (task {parent_result.id} · {parent_result.agent})\n"
@@ -308,8 +313,10 @@ async def orchestrate_task(
                 description = f"{t.description}\n\n" + "\n\n".join(upstream_sections)
 
             a_task = AgentTask(
-                id=t.id, description=description,
-                assigned_to=t.assigned_to, parent_id=t.parent_id,
+                id=t.id,
+                description=description,
+                assigned_to=t.assigned_to,
+                parent_id=t.parent_id,
                 metadata=t.metadata,
             )
             result = await _execute_with_retry(agent, a_task, max_attempts=max_task_retries)
@@ -332,8 +339,11 @@ async def orchestrate_task(
             if result_truncate is not None and len(tr) > result_truncate:
                 tr = tr[:result_truncate]
             r = TaskExecutionResult(
-                id=t.id, agent=t.assigned_to or "",
-                description=t.description, success=result.success, content=tr,
+                id=t.id,
+                agent=t.assigned_to or "",
+                description=t.description,
+                success=result.success,
+                content=tr,
             )
             if on_task_done:
                 await on_task_done(t, r)

@@ -745,9 +745,7 @@ _AUTO_STOP = re.compile(
 )
 
 
-def _should_auto_continue(
-    text: str, had_errors: bool = False
-) -> bool:
+def _should_auto_continue(text: str, had_errors: bool = False) -> bool:
     """Check if the AI response signals more work — auto-continue.
 
     1. Text tail contains explicit ''done'' markers → stop.
@@ -1614,9 +1612,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                     and not _route_disable_auto_continue
                     and not interrupted
                     and _auto_continue_count < _MAX_AUTO_CONTINUE
-                    and _should_auto_continue(
-                        md_content, had_errors=had_errors
-                    )
+                    and _should_auto_continue(md_content, had_errors=had_errors)
                 ):
                     _auto_continue_count += 1
                     # Parse plan from the first substantive response
@@ -2772,7 +2768,9 @@ class _TaskDashboard:
         if self._tool_label:
             tool_text = Text(f"  · {self._tool_label}", style="dim")
             if self._tool_result:
-                tool_text.append(f"  {self._tool_result}", style="green" if self._tool_result == "✓" else "red")
+                tool_text.append(
+                    f"  {self._tool_result}", style="green" if self._tool_result == "✓" else "red"
+                )
             grid.add_row(tool_text)
 
         return Panel(

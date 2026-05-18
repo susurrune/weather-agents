@@ -1,4 +1,5 @@
 """Tests for structured output schema validation."""
+
 from __future__ import annotations
 
 import pytest
@@ -13,7 +14,9 @@ from weather_agents.core.schemas import (
 
 class TestParseTaskPlan:
     def test_valid_json(self):
-        raw = '{"goal": "build app", "steps": [{"id": "1", "description": "design", "agent": "fog"}]}'
+        raw = (
+            '{"goal": "build app", "steps": [{"id": "1", "description": "design", "agent": "fog"}]}'
+        )
         plan = parse_task_plan(raw)
         assert plan is not None
         assert plan.goal == "build app"
@@ -21,7 +24,9 @@ class TestParseTaskPlan:
         assert plan.steps[0].agent == "fog"
 
     def test_markdown_fenced(self):
-        raw = '```json\n{"goal": "x", "steps": [{"id": 1, "description": "a", "agent": "rain"}]}\n```'
+        raw = (
+            '```json\n{"goal": "x", "steps": [{"id": 1, "description": "a", "agent": "rain"}]}\n```'
+        )
         plan = parse_task_plan(raw)
         assert plan is not None
         assert len(plan.steps) == 1

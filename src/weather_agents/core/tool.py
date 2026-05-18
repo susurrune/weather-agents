@@ -122,7 +122,9 @@ class Tool:
                     if len(self._result_cache) > _CACHE_MAXSIZE:
                         self._result_cache.popitem(last=False)
                 breaker.record_success()
-                await self._run_post_hooks(chain, self.name, agent_name, kwargs, result, True, start)
+                await self._run_post_hooks(
+                    chain, self.name, agent_name, kwargs, result, True, start
+                )
                 return result
             except TypeError as e:
                 _log.warning(

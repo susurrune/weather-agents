@@ -665,9 +665,7 @@ class TestAgentCommunication:
     """Tests for inter-agent request/response (request_help → awaitable)."""
 
     @pytest.mark.asyncio
-    async def test_request_help_returns_response(
-        self, app_config, mock_llm, bus, tool_registry
-    ):
+    async def test_request_help_returns_response(self, app_config, mock_llm, bus, tool_registry):
         """Agent A requests help from Agent B → gets response content."""
         from weather_agents.agents.fog import FogAgent
         from weather_agents.agents.rain import RainAgent
@@ -707,9 +705,7 @@ class TestAgentCommunication:
         await agent_b.close()
 
     @pytest.mark.asyncio
-    async def test_handle_response_resolves_future(
-        self, app_config, mock_llm, bus, tool_registry
-    ):
+    async def test_handle_response_resolves_future(self, app_config, mock_llm, bus, tool_registry):
         """_handle_response should resolve the matching pending future."""
         from weather_agents.agents.fog import FogAgent
 
@@ -861,7 +857,9 @@ class TestBackgroundTaskTracking:
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_background_task_exception_is_logged(self, app_config, mock_llm, bus, tool_registry):
+    async def test_background_task_exception_is_logged(
+        self, app_config, mock_llm, bus, tool_registry
+    ):
         """Background task that raises does not take down the agent."""
         import asyncio as _asyncio
 

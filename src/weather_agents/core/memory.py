@@ -849,7 +849,9 @@ class Memory:
                 candidates.append({"key": r[0], "value": val, "category": r[2], "updated_at": r[3]})
 
             scorer = get_scorer()
-            for _score, c in scorer.rank(query, candidates, key_field="value", top_k=limit, min_score=0.03):
+            for _score, c in scorer.rank(
+                query, candidates, key_field="value", top_k=limit, min_score=0.03
+            ):
                 semantic_hits.append(c)
         except Exception:
             pass  # semantic pass is best-effort; never break recall

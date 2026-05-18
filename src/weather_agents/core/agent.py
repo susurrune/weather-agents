@@ -48,6 +48,7 @@ class AgentState(StrEnum):
 
 class TaskState(StrEnum):
     """Formal task lifecycle with validation gate."""
+
     PENDING = "pending"
     QUEUED = "queued"
     ASSIGNED = "assigned"
@@ -847,7 +848,12 @@ class BaseAgent:
                             },
                         )
                         if not await self._check_tool_approval(tool_name, tool_args):
-                            return (tc, f"[denied] dangerous tool '{tool_name}' blocked", False, tool_name)
+                            return (
+                                tc,
+                                f"[denied] dangerous tool '{tool_name}' blocked",
+                                False,
+                                tool_name,
+                            )
                     await self._set_state(AgentState.ACTING)
                     try:
                         result = await tool.execute(agent_name=self.name, **tool_args)
@@ -867,7 +873,11 @@ class BaseAgent:
                         "label": label,
                         "success": success,
                         "tool_name": _tool_name,
-                        "result": (result[:800] if result else "") if isinstance(result, str) else str(result)[:800] if result else "",
+                        "result": (result[:800] if result else "")
+                        if isinstance(result, str)
+                        else str(result)[:800]
+                        if result
+                        else "",
                     }
                     if _tool_name == "delegate_to":
                         # Recover the target agent name from the parsed args

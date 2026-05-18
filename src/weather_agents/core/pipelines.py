@@ -78,12 +78,14 @@ _PIPELINES: tuple[Pipeline, ...] = (
         steps=(
             PipelineStep(id="1", agent="fog", description_template="调研: {goal}"),
             PipelineStep(
-                id="2", agent="frost",
+                id="2",
+                agent="frost",
                 description_template="审查第 1 步的调研结果,确认可行性",
                 depends_on=("1",),
             ),
             PipelineStep(
-                id="3", agent="rain",
+                id="3",
+                agent="rain",
                 description_template="基于第 1 步调研和第 2 步审查意见撰写: {goal}",
                 depends_on=("2",),
             ),
@@ -133,12 +135,14 @@ _PIPELINES: tuple[Pipeline, ...] = (
         steps=(
             PipelineStep(id="1", agent="rain", description_template="实现: {goal}"),
             PipelineStep(
-                id="2", agent="frost",
+                id="2",
+                agent="frost",
                 description_template="审查第 1 步的实现",
                 depends_on=("1",),
             ),
             PipelineStep(
-                id="3", agent="dew",
+                id="3",
+                agent="dew",
                 description_template="部署第 1 步的实现",
                 depends_on=("2",),
             ),
@@ -155,17 +159,20 @@ _PIPELINES: tuple[Pipeline, ...] = (
         steps=(
             PipelineStep(id="1", agent="fog", description_template="设计方案: {goal}"),
             PipelineStep(
-                id="2", agent="rain",
+                id="2",
+                agent="rain",
                 description_template="根据第 1 步的设计实现: {goal}",
                 depends_on=("1",),
             ),
             PipelineStep(
-                id="3", agent="frost",
+                id="3",
+                agent="frost",
                 description_template="审查第 2 步的实现代码",
                 depends_on=("2",),
             ),
             PipelineStep(
-                id="4", agent="dew",
+                id="4",
+                agent="dew",
                 description_template="部署第 2 步的实现到生产环境",
                 depends_on=("3",),
             ),
@@ -183,7 +190,8 @@ _PIPELINES: tuple[Pipeline, ...] = (
         steps=(
             PipelineStep(id="1", agent="fog", description_template="调研: {goal}"),
             PipelineStep(
-                id="2", agent="fair",
+                id="2",
+                agent="fair",
                 description_template="用通俗语言总结第 1 步的调研结果: {goal}",
                 depends_on=("1",),
             ),
@@ -201,7 +209,8 @@ _PIPELINES: tuple[Pipeline, ...] = (
         steps=(
             PipelineStep(id="1", agent="fog", description_template="安全调研: {goal}"),
             PipelineStep(
-                id="2", agent="frost",
+                id="2",
+                agent="frost",
                 description_template="基于第 1 步的调研生成安全报告",
                 depends_on=("1",),
             ),
@@ -218,7 +227,8 @@ _PIPELINES: tuple[Pipeline, ...] = (
         steps=(
             PipelineStep(id="1", agent="rain", description_template="调试修复: {goal}"),
             PipelineStep(
-                id="2", agent="dew",
+                id="2",
+                agent="dew",
                 description_template="部署第 1 步的修复",
                 depends_on=("1",),
             ),

@@ -42,6 +42,7 @@ class Middleware(Protocol):
 @dataclass
 class ACLRule:
     """Per-agent ACL rule."""
+
     allowed_tools: set[str] = field(default_factory=set)
     denied_tools: set[str] = field(default_factory=set)
 
@@ -82,7 +83,11 @@ class ACLMiddleware:
 
         rule = self._rules.get(agent_name)
         if rule is None:
-            return (True, None) if self.allow_by_default else (False, f"agent '{agent_name}' has no ACL rules")
+            return (
+                (True, None)
+                if self.allow_by_default
+                else (False, f"agent '{agent_name}' has no ACL rules")
+            )
 
         if tool_name in rule.denied_tools:
             return (False, f"agent '{agent_name}' is not allowed to call '{tool_name}'")

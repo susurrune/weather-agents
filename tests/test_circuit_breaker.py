@@ -1,4 +1,5 @@
 """Tests for circuit breaker pattern."""
+
 from __future__ import annotations
 
 import time
@@ -137,6 +138,7 @@ class TestCircuitBreaker:
         assert cb.state == CircuitState.OPEN
 
         import time as _time
+
         _time.sleep(0.06)
 
         # First call transitions OPEN → HALF_OPEN; all subsequent also allowed

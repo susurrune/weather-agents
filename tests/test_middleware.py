@@ -1,4 +1,5 @@
 """Tests for middleware/interceptor layer."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -452,9 +453,7 @@ async def test_concurrent_execution_with_rate_limit(tool_registry):
     set_middleware_chain(chain)
 
     try:
-        results = await _asyncio.gather(*[
-            tool.execute(agent_name=f"agent_{i}") for i in range(10)
-        ])
+        results = await _asyncio.gather(*[tool.execute(agent_name=f"agent_{i}") for i in range(10)])
         allowed = sum(1 for r in results if r == "ok")
         denied = sum(1 for r in results if "rate limit" in r)
         assert allowed == 5

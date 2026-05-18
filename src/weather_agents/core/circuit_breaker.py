@@ -79,7 +79,9 @@ class CircuitBreaker:
 _BREAKERS: dict[str, CircuitBreaker] = {}
 
 
-def get_breaker(name: str, *, failure_threshold: int = 3, recovery_timeout: float = 30.0) -> CircuitBreaker:
+def get_breaker(
+    name: str, *, failure_threshold: int = 3, recovery_timeout: float = 30.0
+) -> CircuitBreaker:
     """Get or create a circuit breaker for a tool by name."""
     if name not in _BREAKERS:
         _BREAKERS[name] = CircuitBreaker(
@@ -97,4 +99,8 @@ def reset_all_breakers() -> None:
 
 def breaker_states() -> dict[str, str]:
     """Snapshot of all breaker states for display / monitoring."""
-    return {name: str(b.state.value) for name, b in _BREAKERS.items() if b._failure_count > 0 or b.state != CircuitState.CLOSED}
+    return {
+        name: str(b.state.value)
+        for name, b in _BREAKERS.items()
+        if b._failure_count > 0 or b.state != CircuitState.CLOSED
+    }

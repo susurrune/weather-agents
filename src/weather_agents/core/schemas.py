@@ -34,6 +34,7 @@ class SchemaValidationError(ValueError):
 @dataclass
 class TaskStepSchema:
     """One step in a task plan (mirrors PipelineStep / Task)."""
+
     id: str | int
     description: str
     agent: str = "rain"
@@ -44,6 +45,7 @@ class TaskStepSchema:
 @dataclass
 class TaskPlanSchema:
     """Full task plan output from Snow's orchestrator."""
+
     goal: str
     steps: list[TaskStepSchema] = field(default_factory=list)
 
@@ -51,6 +53,7 @@ class TaskPlanSchema:
 @dataclass
 class FactSchema:
     """A single extracted fact for long-term memory."""
+
     key: str
     value: str
     category: str = "auto_extracted"
@@ -59,6 +62,7 @@ class FactSchema:
 @dataclass
 class ExtractionResultSchema:
     """Structured fact-extraction output from the LLM."""
+
     facts: list[FactSchema] = field(default_factory=list)
 
 
@@ -171,7 +175,9 @@ def _dict_to_dataclass(data: Any, schema_type: type, raw: str) -> Any:
         if origin is list and isinstance(val, list):
             elem_type = getattr(target_type, "__args__", (Any,))[0]
             if is_dataclass(elem_type):
-                kwargs[name] = [_dict_to_dataclass(item, cast(type, elem_type), raw) for item in val]
+                kwargs[name] = [
+                    _dict_to_dataclass(item, cast(type, elem_type), raw) for item in val
+                ]
                 continue
             kwargs[name] = [_coerce_type(v, elem_type) for v in val]
             continue

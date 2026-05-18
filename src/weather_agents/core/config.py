@@ -426,10 +426,18 @@ def _load_config_uncached() -> AppConfig:
     if cli_cfg := merged.get("cli"):
         cfg.cli.interactive_mode = cli_cfg.get("interactive_mode", cfg.cli.interactive_mode)
         cfg.cli.approval_mode = cli_cfg.get("approval_mode", cfg.cli.approval_mode)
-        cfg.cli.circuit_failure_threshold = int(cli_cfg.get("circuit_failure_threshold", cfg.cli.circuit_failure_threshold))
-        cfg.cli.circuit_recovery_timeout = float(cli_cfg.get("circuit_recovery_timeout", cfg.cli.circuit_recovery_timeout))
-        cfg.cli.rate_limit_max_calls = int(cli_cfg.get("rate_limit_max_calls", cfg.cli.rate_limit_max_calls))
-        cfg.cli.rate_limit_window = float(cli_cfg.get("rate_limit_window", cfg.cli.rate_limit_window))
+        cfg.cli.circuit_failure_threshold = int(
+            cli_cfg.get("circuit_failure_threshold", cfg.cli.circuit_failure_threshold)
+        )
+        cfg.cli.circuit_recovery_timeout = float(
+            cli_cfg.get("circuit_recovery_timeout", cfg.cli.circuit_recovery_timeout)
+        )
+        cfg.cli.rate_limit_max_calls = int(
+            cli_cfg.get("rate_limit_max_calls", cfg.cli.rate_limit_max_calls)
+        )
+        cfg.cli.rate_limit_window = float(
+            cli_cfg.get("rate_limit_window", cfg.cli.rate_limit_window)
+        )
         cfg.cli.audit_enabled = bool(cli_cfg.get("audit_enabled", cfg.cli.audit_enabled))
 
     # MCP (with env var resolution — only for enabled servers)

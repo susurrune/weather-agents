@@ -9,9 +9,7 @@ from weather_agents.core.agent import BaseAgent, Task
 from weather_agents.core.schemas import TaskPlanSchema
 
 # Frozen set of valid agent names — used in schema validation path.
-_VALID_AGENTS_STATIC: frozenset = frozenset(
-    {"fog", "rain", "frost", "snow", "dew", "fair"}
-)
+_VALID_AGENTS_STATIC: frozenset = frozenset({"fog", "rain", "frost", "snow", "dew", "fair"})
 
 
 class SnowAgent(BaseAgent):
