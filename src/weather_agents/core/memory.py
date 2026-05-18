@@ -124,7 +124,8 @@ class Memory:
                 os.remove(str(self._db_path) + "-shm")
         raw = await aiosqlite.connect(str(self._db_path))
         await raw.execute("PRAGMA journal_mode=WAL")
-        await raw.execute("PRAGMA busy_timeout=10000")
+        # Short C-level timeout: Python retry loop (below) handles backoff.
+        await raw.execute("PRAGMA busy_timeout=100")
         await raw.execute("PRAGMA auto_vacuum=INCREMENTAL")
         self._db = _RetryDB(raw)
         await self._db.execute(
