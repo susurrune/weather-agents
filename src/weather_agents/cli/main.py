@@ -3124,12 +3124,14 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
         # Esc-interrupt for orchestration — race the long-running call
         # against a key-press poller so the user can cancel mid-flow.
         _orch_esc_event = asyncio.Event()
+
         async def _orch_esc_poller():
             while not _orch_esc_event.is_set():
                 if _poll_esc():
                     _orch_esc_event.set()
                     break
                 await asyncio.sleep(0.06)
+
         _orch_esc_task = asyncio.create_task(_orch_esc_poller())
         _orch_task = asyncio.create_task(
             orchestrate_task(
