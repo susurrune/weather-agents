@@ -1064,3 +1064,101 @@ class TestStuckLoopDetection:
         )
         # "Status: 200 OK" looks similar to "Status: 4xx" but should NOT match
         assert not _looks_like_failed_tool_result("Status: 200 OK\nGot data")
+
+
+class TestArtifactExtraction:
+    """The agent often replies with "已完成" while having actually written
+    files via tool calls. The orchestrator scans tool-call history and
+    appends the file paths so the verifier / user can find them."""
+
+    def test_extracts_write_file_paths(self):
+        from weather_agents.core.agent import _extract_file_paths_from_messages
+        from weather_agents.core.memory import Message
+
+        msgs = [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "c1",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": '{"path": "E:/out/a.md", "content": "..."}',
+                        },
+                    }
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Successfully wrote to E:/out/a.md",
+                tool_call_id="c1",
+            ),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "c2",
+                        "function": {
+                            "name": "edit_file",
+                            "arguments": '{"path": "E:/out/b.md", "old_text": "x", "new_text": "y"}',
+                        },
+                    }
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Successfully edited E:/out/b.md",
+                tool_call_id="c2",
+            ),
+        ]
+        paths = _extract_file_paths_from_messages(msgs)
+        assert paths == ["E:/out/a.md", "E:/out/b.md"]
+
+    def test_skips_failed_writes(self):
+        from weather_agents.core.agent import _extract_file_paths_from_messages
+        from weather_agents.core.memory import Message
+
+        msgs = [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "c1",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": '{"path": "/protected/x", "content": "..."}',
+                        },
+                    }
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Error: refusing to write to protected path: /protected/x",
+                tool_call_id="c1",
+            ),
+        ]
+        assert _extract_file_paths_from_messages(msgs) == []
+
+    def test_enrich_appends_paths_when_missing(self):
+        from weather_agents.core.agent import _enrich_response_with_artifacts
+
+        out = _enrich_response_with_artifacts("已完成。", ["/a.md", "/b.md"])
+        assert "/a.md" in out
+        assert "/b.md" in out
+        assert "Artifacts produced" in out
+
+    def test_enrich_noop_when_no_files(self):
+        from weather_agents.core.agent import _enrich_response_with_artifacts
+
+        assert _enrich_response_with_artifacts("real content", []) == "real content"
+
+    def test_enrich_marks_already_cited(self):
+        from weather_agents.core.agent import _enrich_response_with_artifacts
+
+        body = "Saved everything to /a.md. Other notes are in /b.md."
+        out = _enrich_response_with_artifacts(body, ["/a.md", "/b.md"])
+        # Both already in body -> nothing appended
+        assert out == body

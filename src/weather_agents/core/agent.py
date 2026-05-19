@@ -17,7 +17,7 @@ from weather_agents.core.bus import Event, EventType, MessageBus
 from weather_agents.core.config import AppConfig
 from weather_agents.core.llm import LLMClient, LLMResponse
 from weather_agents.core.logger import get_logger
-from weather_agents.core.memory import Memory
+from weather_agents.core.memory import Memory, Message
 from weather_agents.core.skill import Skill, SkillRegistry
 from weather_agents.core.tool import Tool, ToolRegistry
 from weather_agents.tools.builtin import TASK_DONE_SENTINEL
@@ -1558,24 +1558,8 @@ class BaseAgent:
         self.memory.set_working("current_task", task)
 
         prompt = (
-            "Complete this task NOW using your available tools. "
-            "Actually write files, execute commands, or produce the needed output — "
-            "do NOT just describe a plan or explain what you would do.\n\n"
-            "**Critical reply format**:\n"
-            "• Do NOT return placeholder replies like 'done', 'completed', "
-            "'已完成', '报告已就位', '文件已写好' — those count as failure and "
-            "will be retried.\n"
-            "• If you wrote a file: your FINAL reply MUST include the actual "
-            "content you wrote (or a substantial excerpt of ≥500 chars when "
-            "very long). Just saying 'file saved to X' is NOT enough — the "
-            "verifier cannot read your files; it only sees what you write "
-            "in this reply.\n"
-            "• For research tasks: list the actual named entities, key "
-            "facts, links — not just '已调研完成'.\n"
-            "• For writing tasks: include the full text or a representative "
-            "excerpt directly in your reply.\n"
-            "• If you genuinely cannot complete, explain what's blocking in "
-            "concrete terms (missing file, missing permission, tool error).\n\n"
+            "Complete this task NOW using your available tools. Then write "
+            "the actual deliverable content in your final reply.\n\n"
             f"Task: {task.description}"
         )
         if task.metadata:
@@ -1597,18 +1581,29 @@ class BaseAgent:
 
         self.memory.add_message("user", prompt)
 
+        # Snapshot pre-task message count so we can scan ONLY this task's
+        # tool calls afterwards (not unrelated history).
+        pre_len = len(self.memory.short_term)
+
         try:
             response = await self._llm_loop(on_status=on_status)
+            # Inspect tool calls made during THIS task to find files the
+            # agent wrote. Even if the model returned a placeholder reply
+            # ("已完成"), the actual file paths come from the tool args we
+            # can read off short_term. The orchestrator's judge / the user
+            # need these paths to verify the deliverable.
+            file_paths = _extract_file_paths_from_messages(self.memory.short_term[pre_len:])
+            enriched = _enrich_response_with_artifacts(response.content, file_paths)
             self.memory.add_message(
                 "assistant",
-                response.content,
+                enriched,
                 tool_calls=response.tool_calls,
                 reasoning_content=response.reasoning_content,
             )
             task.transition_to(TaskState.COMPLETED)
-            task.result = response.content
+            task.result = enriched
             await self._set_state(AgentState.IDLE)
-            return TaskResult(success=True, content=response.content)
+            return TaskResult(success=True, content=enriched)
         except Exception as e:
             task.transition_to(TaskState.FAILED)
             task.result = str(e)
@@ -1960,6 +1955,94 @@ def _looks_like_failed_tool_result(result: str) -> bool:
         return True
     head = result[:300].lower()
     return any(m in head for m in _TOOL_FAILURE_MARKERS)
+
+
+# Tools that produce on-disk artifacts. When the orchestration loop scans
+# an agent's tool-call history, these are the calls whose `path`/`dst`
+# argument names the deliverable.
+_FILE_PRODUCING_TOOLS: dict[str, tuple[str, ...]] = {
+    "write_file": ("path",),
+    "edit_file": ("path",),
+    "copy_file": ("dst", "destination"),
+    "move_file": ("dst", "destination"),
+}
+
+
+def _extract_file_paths_from_messages(messages: list[Message]) -> list[str]:
+    """Walk this task's assistant turns and pull out file paths that
+    write_file / edit_file / copy_file / move_file successfully touched.
+
+    The agent's chat reply often says only "已完成" — but the tool_calls on
+    each assistant message record exactly which paths it wrote. The very
+    next "tool" role message (with matching tool_call_id) tells us whether
+    the call actually succeeded. We list successful-write paths in the
+    order they were performed, deduplicated.
+    """
+    # Pair each tool_call_id with the tool result message that followed.
+    tool_results: dict[str, str] = {}
+    for m in messages:
+        if m.role == "tool" and m.tool_call_id:
+            tool_results[m.tool_call_id] = m.content or ""
+
+    paths: list[str] = []
+    seen: set[str] = set()
+    for m in messages:
+        if m.role != "assistant" or not m.tool_calls:
+            continue
+        for tc in m.tool_calls:
+            name = tc.get("function", {}).get("name", "")
+            arg_keys = _FILE_PRODUCING_TOOLS.get(name)
+            if not arg_keys:
+                continue
+            raw = tc.get("function", {}).get("arguments", "")
+            try:
+                args = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(args, dict):
+                continue
+            path: str | None = None
+            for k in arg_keys:
+                v = args.get(k)
+                if isinstance(v, str) and v.strip():
+                    path = v.strip()
+                    break
+            if not path:
+                continue
+            # Confirm the call actually succeeded — skip "File not found" /
+            # "permission denied" results. The tool wrapper returns plain
+            # strings; a successful write_file starts with "Successfully ".
+            result = tool_results.get(tc.get("id", ""), "")
+            if result and result.startswith(("Error:", "[Error", "Error ")):
+                continue
+            if path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return paths
+
+
+def _enrich_response_with_artifacts(content: str, file_paths: list[str]) -> str:
+    """Append a deterministic artifact footer when the agent wrote files
+    during this task but its reply doesn't already mention them.
+
+    Without this, an agent that writes content to disk and replies with
+    a 5-char "完成了" leaves the downstream verifier and the user with
+    NO way to find the actual deliverable. The footer is concise — just
+    the paths — so it doesn't disrupt rich replies that already include
+    full content.
+    """
+    if not file_paths:
+        return content
+    body = content or ""
+    # If every path is already cited in the reply, nothing to add.
+    missing = [p for p in file_paths if p not in body]
+    if not missing:
+        return body
+    lines = ["", "[Artifacts produced]"]
+    for p in file_paths:
+        marker = " (already cited)" if p in body else ""
+        lines.append(f"- {p}{marker}")
+    return body.rstrip() + "\n\n" + "\n".join(lines)
 
 
 def _format_args_parse_error(tool_name: str, raw_args: str) -> str:
