@@ -775,7 +775,13 @@ async def _run_orchestration(
         summary_prompt = tpl
         for r in results:
             status = "成功" if r.success else "失败"
-            summary_prompt += f"## 任务 {r.id} ({r.agent}) - {status}\n{r.content[:300]}\n\n"
+            # Use H3 (###) rather than H2 — Rich's Markdown renderer puts
+            # a horizontal rule under H1/H2 headings (heading-with-underline
+            # style). The summary LLM tends to mirror our heading level
+            # convention, so H2 here results in a rule between every task
+            # section in the final panel. H3 renders as plain bold color
+            # without the rule and keeps the output dense.
+            summary_prompt += f"### 任务 {r.id} ({r.agent}) - {status}\n{r.content[:300]}\n\n"
         summary = await snow.chat(summary_prompt)
 
     # If we hit the re-plan budget without the judge ever returning achieved,
