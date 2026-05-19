@@ -10,7 +10,7 @@ from weather_agents.core.agent import BaseAgent
 class FairAgent(BaseAgent):
     name = "fair"
     display_name = "晴"
-    emoji = "*"
+    emoji = "☼"
     specialty = "情感陪伴"
     tool_names = [
         "read_file",

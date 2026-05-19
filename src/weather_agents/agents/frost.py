@@ -6,7 +6,7 @@ from weather_agents.core.agent import BaseAgent
 class FrostAgent(BaseAgent):
     name = "frost"
     display_name = "霜"
-    emoji = "+"
+    emoji = "✱"
     specialty = "精炼品质"
     tool_names = [
         "read_file",

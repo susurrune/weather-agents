@@ -31,12 +31,12 @@ class TestIconText:
     def test_returns_correct_symbol(self):
         from weather_agents.core.icons import icon_text
 
-        assert icon_text("fog") == "~"
-        assert icon_text("rain") == "/"
-        assert icon_text("frost") == "+"
-        assert icon_text("snow") == "·"
-        assert icon_text("dew") == ","
-        assert icon_text("fair") == "*"
+        assert icon_text("fog") == "≋"
+        assert icon_text("rain") == "╱"
+        assert icon_text("frost") == "✱"
+        assert icon_text("snow") == "❉"
+        assert icon_text("dew") == "∘"
+        assert icon_text("fair") == "☼"
 
     def test_returns_name_for_unknown(self):
         from weather_agents.core.icons import icon_text

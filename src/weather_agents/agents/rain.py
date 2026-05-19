@@ -6,7 +6,7 @@ from weather_agents.core.agent import BaseAgent
 class RainAgent(BaseAgent):
     name = "rain"
     display_name = "雨"
-    emoji = "/"
+    emoji = "╱"
     specialty = "创造产出"
     tool_names = [
         "read_file",

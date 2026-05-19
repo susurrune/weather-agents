@@ -27,12 +27,27 @@ def svg_path(name: str) -> str:
 
 
 def icon_text(name: str) -> str:
-    """Return the plain-text icon string (used in system prompts / logs)."""
+    """Return the plain-text icon for an agent.
+
+    Used in dashboards, prompts, logs, and any UI where SVG can't render.
+    The glyphs are deliberately chosen from Unicode blocks that render
+    as monochrome text on virtually every terminal (Math, Box-Drawing,
+    Miscellaneous Symbols, older Dingbats subset) — NOT from "Symbols
+    and Pictographs" which would force colored emoji presentation.
+
+    Each glyph is metaphorically tied to its agent:
+      fog  ≋  three wavy lines — drifting mist
+      rain ╱  slanted line — falling raindrop
+      frost ✱  pointed asterisk — frost crystal
+      snow ❉  balloon-spoked star — snowflake
+      dew  ∘  ring — dewdrop
+      fair ☼  sun with rays — clear sky
+    """
     return {
-        "fog": "~",
-        "rain": "/",
-        "frost": "+",
-        "snow": "·",
-        "dew": ",",
-        "fair": "*",
+        "fog": "≋",
+        "rain": "╱",
+        "frost": "✱",
+        "snow": "❉",
+        "dew": "∘",
+        "fair": "☼",
     }.get(name, name)

@@ -15,7 +15,7 @@ _VALID_AGENTS_STATIC: frozenset = frozenset({"fog", "rain", "frost", "snow", "de
 class SnowAgent(BaseAgent):
     name = "snow"
     display_name = "雪"
-    emoji = "·"
+    emoji = "❉"
     specialty = "架构规划"
     tool_names = [
         "read_file",

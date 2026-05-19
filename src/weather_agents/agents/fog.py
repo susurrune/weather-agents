@@ -6,7 +6,7 @@ from weather_agents.core.agent import BaseAgent
 class FogAgent(BaseAgent):
     name = "fog"
     display_name = "雾"
-    emoji = "~"
+    emoji = "≋"
     specialty = "探索洞察"
     tool_names = [
         "read_file",

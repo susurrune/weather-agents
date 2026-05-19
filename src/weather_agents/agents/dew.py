@@ -6,7 +6,7 @@ from weather_agents.core.agent import BaseAgent
 class DewAgent(BaseAgent):
     name = "dew"
     display_name = "露"
-    emoji = ","
+    emoji = "∘"
     specialty = "可靠守护"
     tool_names = [
         "read_file",

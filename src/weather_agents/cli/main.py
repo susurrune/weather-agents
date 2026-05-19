@@ -2719,6 +2719,18 @@ TASK_STATE_ICONS: dict[TaskState, tuple[str, str]] = {
     TaskState.SKIPPED: ("–", "dim"),
 }
 
+# Per-state color for the sequence number column. We render the task's
+# position (1, 2, 3, ...) rather than a generic dot — combined with the
+# spinner on the RUNNING row, position-as-status reads more clearly than
+# "yet another circle".
+_TASK_STATE_COLOR: dict[TaskState, str] = {
+    TaskState.PENDING: "dim",
+    TaskState.RUNNING: "bold cyan",
+    TaskState.COMPLETED: "green",
+    TaskState.FAILED: "red",
+    TaskState.SKIPPED: "dim",
+}
+
 
 class _TaskDashboard:
     """Rich Live dashboard for real-time orchestration execution.
@@ -2845,24 +2857,46 @@ class _TaskDashboard:
         # ── Task table ──
         if self._total:
             tbody = Table(show_header=False, box=None, padding=(0, 1), expand=True)
-            tbody.add_column(width=2)
-            tbody.add_column(width=6)
+            tbody.add_column(width=4)  # sequence number / status
+            tbody.add_column(width=4)  # agent icon (now wider for richer glyphs)
             tbody.add_column(ratio=1)
             tbody.add_column(width=14)
 
-            for tid, state in self._task_states.items():
-                icon, color = TASK_STATE_ICONS.get(state, ("?", "dim"))
+            for idx, (tid, state) in enumerate(self._task_states.items(), 1):
+                color = _TASK_STATE_COLOR.get(state, "dim")
                 agent_name = self._task_agents.get(tid, "?")
                 desc = self._task_descs.get(tid, "")[:55]
                 deps = self._task_deps.get(tid, [])
                 dep_str = f"← {','.join(deps[:3])}" if deps else ""
                 ag_icon = icon_text(agent_name)
+                ag_color = AGENT_COLORS.get(agent_name, "white")
+
+                # Position column: live spinner for the running task,
+                # static number for everything else. The spinner makes
+                # "which task is the agent on right now" obvious without
+                # the user reading colors.
+                pos_cell: Any
+                if state == TaskState.RUNNING:
+                    pos_cell = Spinner(
+                        "dots", text=Text(f"{idx}", style=f"bold {color}"), style=color
+                    )
+                else:
+                    glyph = (
+                        "✓"
+                        if state == TaskState.COMPLETED
+                        else (
+                            "✗"
+                            if state == TaskState.FAILED
+                            else ("–" if state == TaskState.SKIPPED else "·")
+                        )
+                    )
+                    pos_cell = Text(f"{idx}{glyph}", style=color)
 
                 tbody.add_row(
-                    f"[{color}]{icon}[/]",
-                    ag_icon,
-                    f"[{color}]{desc}[/]",
-                    f"[dim]{dep_str}[/]",
+                    pos_cell,
+                    Text(ag_icon, style=f"bold {ag_color}"),
+                    Text(desc, style=color),
+                    Text(dep_str, style="dim"),
                 )
             grid.add_row(tbody)
             grid.add_row(Text(""))
