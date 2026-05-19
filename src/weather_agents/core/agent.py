@@ -2123,6 +2123,11 @@ def _enrich_response_with_artifacts(content: str, file_paths: list[str]) -> str:
     """Append a deterministic artifact footer when the agent wrote files
     during this task but its reply doesn't already mention them.
 
+    Renders as a markdown blockquote with each path wrapped in backticks
+    so Rich's Markdown renderer gives the section a distinctive left bar
+    + code highlighting. Plain "- path" lines blended into the rest of
+    the reply and users frequently missed them.
+
     Without this, an agent that writes content to disk and replies with
     a 5-char "完成了" leaves the downstream verifier and the user with
     NO way to find the actual deliverable. The footer is concise — just
@@ -2136,10 +2141,12 @@ def _enrich_response_with_artifacts(content: str, file_paths: list[str]) -> str:
     missing = [p for p in file_paths if p not in body]
     if not missing:
         return body
-    lines = ["", "[Artifacts produced]"]
+    # Markdown blockquote (>) gives Rich a left-bar style; inline code
+    # (`path`) gives the path a distinct color from the surrounding text.
+    lines = ["", "> **Artifacts produced**"]
     for p in file_paths:
-        marker = " (already cited)" if p in body else ""
-        lines.append(f"- {p}{marker}")
+        marker = " — already cited above" if p in body else ""
+        lines.append(f"> - `{p}`{marker}")
     return body.rstrip() + "\n\n" + "\n".join(lines)
 
 

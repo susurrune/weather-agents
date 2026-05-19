@@ -3062,12 +3062,25 @@ class _TaskDashboard:
             cur.append(self._current_label, style=agent_color)
             grid.add_row(cur)
         if self._tool_label:
-            tool_text = Text(f"  · {self._tool_label}", style="dim")
-            if self._tool_result:
-                tool_text.append(
-                    f"  {self._tool_result}", style="green" if self._tool_result == "✓" else "red"
+            # Use a 2-col mini-table so the in-flight tool row gets a
+            # live spinner (refreshes via Live's 4Hz tick). Completed /
+            # failed rows show the static glyph instead. Without this
+            # users see a static dim "·" while the tool runs and have
+            # no signal that the system is still working.
+            tool_row = Table(show_header=False, box=None, padding=(0, 0), expand=False)
+            tool_row.add_column(width=2)
+            tool_row.add_column(ratio=1)
+            label_text = Text(f" {self._tool_label}", style="dim")
+            if self._tool_result == "✓":
+                tool_row.add_row(Text(" ✓", style="green"), label_text)
+            elif self._tool_result == "✗":
+                tool_row.add_row(Text(" ✗", style="red"), label_text)
+            else:
+                tool_row.add_row(
+                    Spinner("dots", style="dim"),
+                    label_text,
                 )
-            grid.add_row(tool_text)
+            grid.add_row(tool_row)
 
         return Panel(
             grid,

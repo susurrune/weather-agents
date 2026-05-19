@@ -1149,6 +1149,11 @@ class TestArtifactExtraction:
         assert "/a.md" in out
         assert "/b.md" in out
         assert "Artifacts produced" in out
+        # New format: markdown blockquote with backticked paths so Rich
+        # renders the section with a left-bar + code highlighting.
+        assert "> **Artifacts produced**" in out
+        assert "`/a.md`" in out
+        assert "`/b.md`" in out
 
     def test_enrich_noop_when_no_files(self):
         from weather_agents.core.agent import _enrich_response_with_artifacts
