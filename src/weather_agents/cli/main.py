@@ -233,7 +233,7 @@ def _get_key() -> str:
 
 
 def _poll_esc() -> bool:
-    """Non-blocking check for Esc / Ctrl+C keypress.
+    """Non-blocking check for Esc keypress (Windows).
 
     On Windows uses ``GetAsyncKeyState`` — a non-consumptive API that
     checks physical key state without draining the console input buffer.
@@ -243,6 +243,10 @@ def _poll_esc() -> bool:
     Masks both ``0x8000`` (key currently down) and ``0x0001`` (pressed
     since last call) so a quick tap of Esc between poll cycles is
     still detected.
+
+    Only Esc triggers interrupt — Ctrl+C is left alone so users can
+    copy text without stopping the agent. Python's built-in
+    KeyboardInterrupt (SIGINT) still works as a force-quit fallback.
     """
     if sys.platform == "win32":
         try:
@@ -250,12 +254,6 @@ def _poll_esc() -> bool:
 
             KEYEVENT = 0x8001  # 0x8000 (currently down) | 0x0001 (pressed since last call)
             if _ct.windll.user32.GetAsyncKeyState(0x1B) & KEYEVENT:  # VK_ESCAPE
-                return True
-            # Ctrl+C: check both VK_CONTROL and 'C' simultaneously
-            if (
-                _ct.windll.user32.GetAsyncKeyState(0x11) & 0x8000  # VK_CONTROL
-                and _ct.windll.user32.GetAsyncKeyState(0x43) & 0x8000  # 'C' key
-            ):
                 return True
         except Exception:
             pass
