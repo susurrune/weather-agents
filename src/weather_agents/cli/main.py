@@ -280,6 +280,24 @@ AGENT_SPINNERS: dict[str, str] = {
     "fair": "arc",
 }
 
+# Short Chinese tagline shown under the agent name in the final response
+# panel — gives each personality a recognizable identity without bloating
+# the layout.
+AGENT_TAGLINES: dict[str, str] = {
+    "fog": "调研 · 信息整合",
+    "rain": "实现 · 内容生成",
+    "frost": "审阅 · 性能与安全",
+    "snow": "规划 · 任务编排",
+    "dew": "执行 · 命令与部署",
+    "fair": "陪伴 · 共情对话",
+}
+
+# Theme used by Rich Markdown when rendering ```fenced code blocks```.
+# monokai gives high-contrast syntax highlighting that pairs well with
+# typical terminal backgrounds (dark or light). Override with
+# WA_CODE_THEME to taste (e.g. dracula, github-dark, solarized-dark).
+_CODE_THEME = os.environ.get("WA_CODE_THEME", "monokai")
+
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -325,25 +343,51 @@ def _build_stream_display(
     status_text: str,
     md_content: str,
 ) -> Table:
-    """Live renderable during streaming: compact one-line header + content."""
+    """Live renderable during streaming: vertical colored bar | spinner |
+    agent name | status, then markdown content beneath the bar.
+
+    The left bar gives the whole turn a visible spine so the eye can scan
+    where each agent's reply begins and ends, especially during nested
+    delegations where multiple agents are streaming sequentially.
+    """
     color = AGENT_COLORS.get(agent.name, "white")
     spinner_name = AGENT_SPINNERS.get(agent.name, "dots")
 
     tbl = Table(show_header=False, box=None, padding=0, expand=True)
-    tbl.add_column(width=3, justify="center")
+    tbl.add_column(width=2, justify="center")  # colored vertical bar
+    tbl.add_column(width=2, justify="center")  # spinner
     tbl.add_column(ratio=1)
 
-    name_text = Text()
-    name_text.append(f" {agent.display_name}", style=f"bold {color}")
-    if status_text:
-        name_text.append(f"  {status_text}", style="dim")
+    bar = Text("│", style=f"bold {color}")
 
-    tbl.add_row(
-        Spinner(spinner_name, style=f"bold {color}"),
-        name_text,
-    )
+    # Header line: agent name + emoji + status, with a tagline in dim
+    # when no status is shown so the header is never empty/weak.
+    name_text = Text()
+    name_text.append(f" {agent.emoji} ", style=f"bold {color}")
+    name_text.append(agent.display_name, style=f"bold {color}")
+    if status_text:
+        name_text.append("  ·  ", style="dim")
+        name_text.append(status_text, style="dim italic")
+    else:
+        tagline = AGENT_TAGLINES.get(agent.name, "")
+        if tagline:
+            name_text.append("  ·  ", style="dim")
+            name_text.append(tagline, style="dim italic")
+
+    tbl.add_row(bar, Spinner(spinner_name, style=f"bold {color}"), name_text)
     if md_content:
-        tbl.add_row("", Padding(Markdown(_strip_hr(md_content)), pad=(0, 0, 0, 2)))
+        # Blank spacer row to separate header from body, then the body
+        # rendered with the same color bar prefix so the visual spine
+        # continues all the way down the response.
+        tbl.add_row(bar, "", "")
+        tbl.add_row(
+            bar,
+            "",
+            Padding(
+                Markdown(_strip_hr(md_content), code_theme=_CODE_THEME),
+                pad=(0, 0, 0, 1),
+            ),
+        )
 
     return tbl
 
@@ -355,14 +399,31 @@ def _build_response_panel(
     interrupted: bool = False,
     ctx: object | None = None,
 ) -> Panel:
-    """Compact response panel — agent name + timing + optional status in subtitle."""
+    """Final response panel — rounded border, emoji-prefixed title with a
+    dim tagline, body rendered as Markdown with syntax-highlighted code
+    fences, footer with timing + context usage bar.
+
+    Each agent's accent color is used for the border and title so multiple
+    replies in a long session are visually distinguishable without having
+    to read the name. Tagline gives a recognizable identity beat under
+    the personality name.
+    """
     color = AGENT_COLORS.get(agent.name, "white")
-    timing = f"{elapsed:.1f}s" if not interrupted else f"{elapsed:.1f}s  interrupted"
+    timing = f"{elapsed:.1f}s" if not interrupted else f"{elapsed:.1f}s  ·  interrupted"
 
+    # Title: emoji  display_name  ·  tagline (dim italic). The em-dash
+    # spacer is rendered in dim so the eye lands on the name first.
     title_text = Text()
-    title_text.append(f"  {agent.display_name}", style=f"bold {color}")
+    title_text.append("  ")
+    title_text.append(f"{agent.emoji}  ", style=f"bold {color}")
+    title_text.append(agent.display_name, style=f"bold {color}")
+    tagline = AGENT_TAGLINES.get(agent.name, "")
+    if tagline:
+        title_text.append("   ·   ", style="dim")
+        title_text.append(tagline, style="dim italic")
 
-    sub = f"[dim]{timing}[/dim]"
+    # Footer: timing + context usage bar (only when ctx is available).
+    sub = f"[dim italic]{timing}[/]"
     if ctx is not None:
         try:
             cu = agent.context_usage()
@@ -370,19 +431,22 @@ def _build_response_panel(
             msgs = cu["message_count"]
             r = min(10, max(0, int(pct / 10)))
             bar_color = "green" if pct < 50 else "yellow" if pct < 80 else "red"
-            sub += f"  [bold {bar_color}]{'━' * r}{'╌' * (10 - r)}[/] [dim]{pct}%  {msgs}msgs[/dim]"
+            sub += (
+                f"   [bold {bar_color}]{'━' * r}[/][dim]{'╌' * (10 - r)}[/]"
+                f"  [dim]{pct}%  ·  {msgs}msgs[/]"
+            )
         except Exception:
             pass
 
     return Panel(
-        Markdown(_strip_hr(content)),
+        Padding(Markdown(_strip_hr(content), code_theme=_CODE_THEME), pad=(0, 1, 0, 1)),
         title=title_text,
         title_align="left",
         subtitle=sub,
         subtitle_align="right",
-        border_style=f"dim {color}",
-        box=box.MINIMAL,
-        padding=(0, 1),
+        border_style=color,
+        box=box.ROUNDED,
+        padding=(1, 1),
     )
 
 
@@ -426,41 +490,68 @@ def _tool_category(tool_name: str) -> str:
     return _TOOL_CATEGORIES.get(tool_name, "Tool")
 
 
+# Per-category accent color used for the tool block's left rule. Falls
+# back to dim cyan for unknown categories so unfamiliar tools still get
+# a visual frame.
+_TOOL_CAT_COLORS: dict[str, str] = {
+    "Bash": "yellow",
+    "File": "cyan",
+    "Git": "magenta",
+    "Search": "blue",
+    "Web": "green",
+    "Lint": "bright_magenta",
+    "Scan": "bright_yellow",
+    "Delegate": "bright_cyan",
+    "Skill": "bright_green",
+    "Tool": "dim cyan",
+}
+
+
 def _print_tool_in(label: str, tool_name: str, args: dict) -> None:
-    """Print Claude Code-style IN block when a tool starts."""
+    """Print a Claude Code-style "tool starting" block.
+
+    Layout: dim left bar + category icon + category name + label,
+    then args indented under the bar so the whole call reads as a
+    single visual unit.
+    """
     cat = _tool_category(tool_name)
-    label_short = label if len(label) < 50 else label[:47] + "..."
+    cat_color = _TOOL_CAT_COLORS.get(cat, "dim cyan")
+    label_short = label if len(label) < 60 else label[:57] + "..."
     icon = "●" if cat == "Bash" else "·"
-    console.print(f"  [{cat.lower()}]{icon} {cat}[/] [bold]{label_short}")
+    console.print(
+        f"  [{cat_color}]│[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/] [bold]{label_short}"
+    )
     if args:
-        # Format args into key: value lines, single level
         for k, v in args.items():
             if v is None or v == "":
                 continue
             v_str = str(v)
             if len(v_str) > 120:
                 v_str = v_str[:117] + "..."
-            console.print(f"    [dim]{k}:[/dim] {v_str}")
+            console.print(f"  [{cat_color}]│[/]    [dim]{k}[/] [dim]·[/] {v_str}")
     console.print()
 
 
 def _print_tool_out(label: str, tool_name: str, success: bool, result: str = "") -> None:
-    """Print Claude Code-style OUT block when a tool finishes."""
+    """Print a Claude Code-style "tool finished" block, mirroring _print_tool_in's
+    layout but with a status glyph instead of the start icon. Result preview
+    is a single trimmed line so a long handler output doesn't dominate the
+    scrollback — the model still sees the full text in its context."""
     cat = _tool_category(tool_name)
-    status_icon = "[green]✓[/green]" if success else "[red]✗[/red]"
-    label_short = label if len(label) < 50 else label[:47] + "..."
-    console.print(f"  [{cat.lower()}]{status_icon} {cat}[/] [bold]{label_short}")
+    cat_color = _TOOL_CAT_COLORS.get(cat, "dim cyan")
+    status_icon = "[green]✓[/]" if success else "[red]✗[/]"
+    label_short = label if len(label) < 60 else label[:57] + "..."
+    console.print(f"  [{cat_color}]│[/] {status_icon} [{cat_color}]{cat}[/] [bold]{label_short}")
     if result:
-        # Show first meaningful line of result (trim headers / empty lines)
         lines = [ln.rstrip() for ln in result.split("\n") if ln.strip()]
         display = ""
         if lines:
             first = lines[0]
             display = first if len(first) < 200 else first[:197] + "..."
             if len(lines) > 1:
-                display += f" [dim]…({len(lines)} lines)[/dim]"
+                display += f" [dim]…({len(lines)} lines)[/]"
         if display:
-            console.print(f"    {display}")
+            console.print(f"  [{cat_color}]│[/]    {display}")
     console.print()
 
 
@@ -2783,7 +2874,12 @@ async def _run_task(goal: str, agents=None) -> None:
                 console.print()
                 console.print(f"  [bold]{target.display_name}[/bold]")
                 reply = await target.chat(refined_goal)
-                console.print(Padding(Markdown(_strip_hr(reply)), pad=(0, 0, 0, 2)))
+                console.print(
+                    Padding(
+                        Markdown(_strip_hr(reply), code_theme=_CODE_THEME),
+                        pad=(0, 0, 0, 2),
+                    )
+                )
                 return
 
         from weather_agents.core.factory import orchestrate_task
@@ -2844,7 +2940,12 @@ async def _run_task(goal: str, agents=None) -> None:
         )
 
         if summary:
-            console.print(Padding(Markdown(_strip_hr(summary)), pad=(0, 2, 0, 2)))
+            console.print(
+                Padding(
+                    Markdown(_strip_hr(summary), code_theme=_CODE_THEME),
+                    pad=(0, 2, 0, 2),
+                )
+            )
 
     finally:
         if own_ctx:
