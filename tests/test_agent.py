@@ -1036,3 +1036,31 @@ class TestArgsParseErrorFormatter:
         msg = _format_args_parse_error("write_file", raw)
         assert "truncated" not in msg.lower()
         assert "invalid JSON" in msg
+
+
+class TestStuckLoopDetection:
+    """When tool calls keep failing, an LLM-readable recovery hint must
+    appear in memory so the model stops grinding through dead-ends."""
+
+    def test_looks_like_failed_tool_result_recognizes_common_signals(self):
+        from weather_agents.core.agent import _looks_like_failed_tool_result
+
+        assert _looks_like_failed_tool_result("No results found for 'foo'")
+        assert _looks_like_failed_tool_result("Status: 403 Forbidden")
+        assert _looks_like_failed_tool_result("Status: 503 Service Unavailable")
+        assert _looks_like_failed_tool_result("Error: request timed out")
+        assert _looks_like_failed_tool_result("[CircuitBreakerOpen] Tool 'x' is unavailable")
+        # Empty / whitespace is treated as failure too
+        assert _looks_like_failed_tool_result("")
+
+    def test_real_results_not_misclassified(self):
+        from weather_agents.core.agent import _looks_like_failed_tool_result
+
+        assert not _looks_like_failed_tool_result(
+            "Search results for: weather\n1. cnn.com\n2. bbc.com"
+        )
+        assert not _looks_like_failed_tool_result(
+            "<!DOCTYPE html><html><body>real content</body></html>"
+        )
+        # "Status: 200 OK" looks similar to "Status: 4xx" but should NOT match
+        assert not _looks_like_failed_tool_result("Status: 200 OK\nGot data")
