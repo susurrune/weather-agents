@@ -22,7 +22,6 @@ from rich.rule import Rule
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
-from rich.tree import Tree as _RichTree
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -540,25 +539,25 @@ def _flush_tool_group() -> None:
         if e["result"] is not None:
             _print_tool_out_flat(e["label"], e["success"], e["result"], cat, cat_color)
     else:
-        # Multiple consecutive same-path calls → Tree.
+        # Multiple consecutive same-path calls — indent under a single header.
         first = _tool_group_entries[0]
         first_label = first["label"] if len(first["label"]) < 60 else first["label"][:57] + "..."
-        tree = _RichTree(
-            f"  [{cat_color}]├[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/]"
-            f" [bold]{first_label}[/]",
-            guide_style=cat_color,
-            hide_root=False,
+        console.print(
+            f"  [{cat_color}]│[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/]"
+            f" [bold]{first_label}[/]"
         )
-        for e in _tool_group_entries:
+        for i, e in enumerate(_tool_group_entries):
             status = "[green]✓[/]" if e["success"] else "[red]✗[/]"
             detail = _tool_args_str(e.get("args", {}), "", max_v=50)
+            marker = "└" if i == len(_tool_group_entries) - 1 else "├"
+            line = f"  [{cat_color}]│[/]   [{cat_color}]{marker}[/] "
             if e["result"] is None:
-                tree.add(f"[dim]· {detail}[/]" if detail else "[dim]·[/]")
+                line += f"[dim]· {detail}[/]" if detail else "[dim]·[/]"
             elif detail:
-                tree.add(f"{detail}  {status}")
+                line += f"{detail}  {status}"
             else:
-                tree.add(f"{status}")
-        console.print(tree)
+                line += f"{status}"
+            console.print(line)
 
     _tool_group_key = None
     _tool_group_entries = []
