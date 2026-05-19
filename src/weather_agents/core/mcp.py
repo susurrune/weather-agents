@@ -598,16 +598,39 @@ class MCPManager:
     async def connect_all(self) -> list[str]:
         """Connect to all configured MCP servers and register tools.
 
+        Runs every server's ``initialize()`` in parallel — previously this
+        was a serial for-loop, so 3 servers × ~500ms each meant ~1.5s of
+        cold start time. Parallel init drops that to the slowest single
+        server, typically ~500ms.
+
         Returns list of "server_name: N tools" strings.
         """
-        results = []
-        for cfg in self._server_configs:
-            if not cfg.enabled:
-                continue
+        enabled = [cfg for cfg in self._server_configs if cfg.enabled]
+        if not enabled:
+            return []
+
+        async def _init_one(cfg: Any) -> tuple[Any, MCPClient, list[dict]] | None:
             client = MCPClient(cfg)
-            tools = await client.initialize()
+            try:
+                tools = await client.initialize()
+            except Exception as exc:
+                _log.warning(
+                    "mcp_init_failed",
+                    extra={"server": cfg.name, "error": str(exc)},
+                )
+                return None
             if not tools:
+                return None
+            return cfg, client, tools
+
+        # gather() preserves order so the result list matches config order.
+        init_results = await asyncio.gather(*(_init_one(cfg) for cfg in enabled))
+
+        results: list[str] = []
+        for r in init_results:
+            if r is None:
                 continue
+            cfg, client, tools = r
             self.clients[cfg.name] = client
             count = self._register_mcp_tools(cfg.name, tools)
             results.append(f"{cfg.name}: {count} tools")

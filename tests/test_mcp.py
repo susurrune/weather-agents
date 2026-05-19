@@ -149,19 +149,33 @@ class TestMCPManager:
             assert tool.name == "mcp_toolsrv_hello"
 
     @pytest.mark.asyncio
-    async def test_connect_all_propagates_failure(self):
+    async def test_connect_all_isolates_per_server_failure(self):
+        """A single server's init failure must NOT abort the others.
+        connect_all runs initializations in parallel and catches each
+        failure locally so working servers still register their tools.
+        Previously this raised on the first error, taking the entire
+        MCP layer down whenever any one server was misconfigured."""
         registry = ToolRegistry()
         manager = MCPManager(registry)
         manager.configure(
             [
                 {"name": "bad_srv", "command": "nonexistent_binary"},
+                {"name": "good_srv", "command": "real_binary"},
             ]
         )
 
-        with patch.object(MCPClient, "initialize") as mock_init:
-            mock_init.side_effect = Exception("connection failed")
-            with pytest.raises(Exception, match="connection failed"):
-                await manager.connect_all()
+        async def _init_side_effect(self):
+            if self.config.name == "bad_srv":
+                raise Exception("connection failed")
+            # good_srv returns one tool
+            return [{"name": "ok_tool", "description": "", "inputSchema": {}}]
+
+        with patch.object(MCPClient, "initialize", autospec=True) as mock_init:
+            mock_init.side_effect = _init_side_effect
+            results = await manager.connect_all()
+        # bad_srv silently skipped; good_srv tools registered
+        assert any("good_srv" in r for r in results)
+        assert not any("bad_srv" in r for r in results)
 
     @pytest.mark.asyncio
     async def test_client_tool_definitions(self):
