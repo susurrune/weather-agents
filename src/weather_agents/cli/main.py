@@ -1015,7 +1015,7 @@ async def _init_agent_lazy(agent, ctx) -> None:
                 ctx.mcp_status = await ctx.mcp.connect_all()
 
 
-def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
+async def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
     """Read a line of input using prompt_toolkit (or Rich fallback on CI)."""
     # Fall back to simple input when stdin is not a TTY (piped / test env)
     if not sys.stdin.isatty():
@@ -1098,7 +1098,7 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
     )
 
     try:
-        result = session.prompt(_PTHTML(prompt_html))
+        result = await session.prompt_async(_PTHTML(prompt_html))
     except KeyboardInterrupt:
         raise
 
@@ -1129,7 +1129,7 @@ async def _interactive(agent_name: str | None = None) -> None:
 
         while True:
             try:
-                inp: str | None = _read_line_with_popup(agent, ctx, MODE.current.value)
+                inp: str | None = await _read_line_with_popup(agent, ctx, MODE.current.value)
             except (EOFError, KeyboardInterrupt):
                 console.print()
                 break
