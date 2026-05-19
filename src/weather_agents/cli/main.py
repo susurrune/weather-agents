@@ -2923,6 +2923,7 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
             on_task_start=_on_start,
             on_task_done=_on_done,
             on_planned=_on_planned,
+            on_tool_status=dashboard.on_tool_status if dashboard else None,
             result_truncate=500,
         )
 

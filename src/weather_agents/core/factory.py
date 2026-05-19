@@ -227,7 +227,9 @@ def _is_thin_content(content: str) -> bool:
     return bare in _PLACEHOLDER_PATTERNS
 
 
-async def _execute_with_retry(agent: BaseAgent, a_task: Any, *, max_attempts: int) -> Any:
+async def _execute_with_retry(
+    agent: BaseAgent, a_task: Any, *, max_attempts: int, on_status: Callable[[str], None] | None = None,
+) -> Any:
     """Run ``agent.execute_task`` with bounded retries on failure / exception.
 
     A success is now defined as: ``result.success is True`` AND content is
@@ -241,7 +243,8 @@ async def _execute_with_retry(agent: BaseAgent, a_task: Any, *, max_attempts: in
     original_description = getattr(a_task, "description", "")
     for attempt in range(1, max_attempts + 1):
         try:
-            result = await agent.execute_task(a_task)
+            kwargs = {} if on_status is None else {"on_status": on_status}
+            result = await agent.execute_task(a_task, **kwargs)
             content = getattr(result, "content", "") or ""
             # `is True` not truthy-check — Mock objects in tests return a
             # truthy auto-attribute for any missing field, which would
@@ -297,6 +300,7 @@ async def orchestrate_task(
     on_task_start: Callable[[Any], Awaitable[None]] | None = None,
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None = None,
     on_planned: Callable[[list[Any]], Awaitable[bool | None]] | None = None,
+    on_tool_status: Callable[[str], None] | None = None,
     result_truncate: int | None = 500,
     summary_prompt_template: str = "",
     max_task_retries: int = 3,
@@ -323,6 +327,7 @@ async def orchestrate_task(
         on_task_start=on_task_start,
         on_task_done=on_task_done,
         on_planned=on_planned,
+        on_tool_status=on_tool_status,
         result_truncate=result_truncate,
         summary_prompt_template=summary_prompt_template,
         max_task_retries=max_task_retries,
@@ -340,6 +345,7 @@ async def _execute_pending(
     *,
     on_task_start: Callable[[Any], Awaitable[None]] | None,
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None,
+    on_tool_status: Callable[[str], None] | None = None,
     result_truncate: int | None,
     max_task_retries: int,
 ) -> None:
@@ -409,7 +415,9 @@ async def _execute_pending(
                 parent_id=t.parent_id,
                 metadata=t.metadata,
             )
-            result = await _execute_with_retry(agent, a_task, max_attempts=max_task_retries)
+            result = await _execute_with_retry(
+                agent, a_task, max_attempts=max_task_retries, on_status=on_tool_status,
+            )
 
             if result.success:
                 t.transition_to(TaskState.COMPLETED)
@@ -504,6 +512,7 @@ async def _run_orchestration(
     on_task_start: Callable[[Any], Awaitable[None]] | None,
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None,
     on_planned: Callable[[list[Any]], Awaitable[bool | None]] | None,
+    on_tool_status: Callable[[str], None] | None = None,
     result_truncate: int | None,
     summary_prompt_template: str,
     max_task_retries: int,
@@ -583,6 +592,7 @@ async def _run_orchestration(
             completed,
             on_task_start=on_task_start,
             on_task_done=on_task_done,
+            on_tool_status=on_tool_status,
             result_truncate=result_truncate,
             max_task_retries=max_task_retries,
         )
