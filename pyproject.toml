@@ -1,6 +1,6 @@
 [project]
 name = "weather-agents"
-version = "1.0.0"
+version = "1.0.1"
 description = "Weather-themed multi-agent system: Fog, Rain, Frost, Snow, Dew — a universal AI tool orchestration framework"
 readme = "README.md"
 requires-python = ">=3.11"

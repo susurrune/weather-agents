@@ -244,8 +244,8 @@ wa voice [options]   # 语音服务器（需配置 TTS）
 > 以下数据基于代码事实：
 
 - **代码**：56 个源文件，~17k 行 Python
-- **测试**：776 项，覆盖率 > 63%
-- **提交**：170 个 commits
+- **测试**：776 项，覆盖率 > 62%
+- **提交**：193 个 commits
 - **CI**：GitHub Actions — Ruff + MyPy + Pytest × 3 个 Python 版本
 
 ### 已落地能力
