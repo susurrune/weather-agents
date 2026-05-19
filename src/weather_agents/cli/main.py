@@ -74,12 +74,8 @@ from weather_agents.core.config import (
     load_model_catalog,
     set_config,
 )
-from weather_agents.core.factory import (
-    AGENT_CLASSES,
-    AGENT_COLORS,
-    create_system_context,
-)
-from weather_agents.core.icons import icon_text
+from weather_agents.core.factory import AGENT_CLASSES, create_system_context
+from weather_agents.core.icons import AGENT_COLORS, icon_text
 from weather_agents.core.logger import set_request_id
 from weather_agents.core.workspace import (
     detect_best_workspace_root,

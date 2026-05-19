@@ -559,7 +559,7 @@ def _async_iter(events):
 
 def _make_display_agent(name: str = "fog"):
     """Minimal agent mock for display-builder functions."""
-    from weather_agents.core.factory import AGENT_COLORS, AGENT_EMOJI
+    from weather_agents.core.icons import AGENT_COLORS, AGENT_EMOJI
 
     ag = Mock()
     ag.name = name

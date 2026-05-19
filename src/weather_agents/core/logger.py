@@ -170,14 +170,6 @@ def get_logger(name: str) -> logging.Logger:
     return _loggers[name]
 
 
-class LoggerMixin:
-    """Mixin adding a `log` attribute to any class that has a `name` property."""
-
-    @property
-    def log(self) -> logging.Logger:
-        return get_logger(self.name if hasattr(self, "name") else type(self).__name__)
-
-
 def log_event(logger: logging.Logger, event_type: str, **fields: Any) -> None:
     """Log a structured event with extra fields.
 

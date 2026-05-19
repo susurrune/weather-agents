@@ -20,6 +20,19 @@ AGENT_COLOR_MAP: dict[str, str] = {
     "fair": "#FFD700",
 }
 
+# Public alias — use this, not the raw dict, for stable API.
+AGENT_COLORS = AGENT_COLOR_MAP
+
+# Agent icon glyph map — used for tests and any dict-based lookup.
+AGENT_EMOJI: dict[str, str] = {
+    "fog": "≋",
+    "rain": "╱",
+    "frost": "✱",
+    "snow": "❉",
+    "dew": "∘",
+    "fair": "☼",
+}
+
 
 def svg_path(name: str) -> str:
     """Return the filesystem path to an agent's SVG icon file."""

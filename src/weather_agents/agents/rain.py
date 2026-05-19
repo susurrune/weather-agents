@@ -8,23 +8,6 @@ class RainAgent(BaseAgent):
     display_name = "雨"
     emoji = "╱"
     specialty = "创造产出"
-    tool_names = [
-        "read_file",
-        "write_file",
-        "edit_file",
-        "list_directory",
-        "tree",
-        "file_search",
-        "code_search",
-        "shell_exec",
-        "get_cwd",
-        "move_file",
-        "copy_file",
-        "delete_file",
-        "web_search",
-        "http_get",
-        "http_post",
-    ]
     skill_names = ["code_generator", "content_writer", "data_transformer", "self_evolve"]
 
     system_prompt = """你是 Weather Agents 的「雨」— 源源不断，浇灌创意与代码。

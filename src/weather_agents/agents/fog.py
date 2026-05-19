@@ -8,23 +8,6 @@ class FogAgent(BaseAgent):
     display_name = "雾"
     emoji = "≋"
     specialty = "探索洞察"
-    tool_names = [
-        "read_file",
-        "write_file",
-        "edit_file",
-        "list_directory",
-        "tree",
-        "file_search",
-        "code_search",
-        "shell_exec",
-        "get_cwd",
-        "move_file",
-        "copy_file",
-        "delete_file",
-        "web_search",
-        "http_get",
-        "http_post",
-    ]
     skill_names = ["web_research", "code_analysis", "document_analysis", "self_evolve"]
 
     system_prompt = """你是 Weather Agents 的「雾」— 在信息中穿行，洞察隐藏的关联。

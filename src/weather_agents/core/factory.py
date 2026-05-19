@@ -42,24 +42,6 @@ AGENT_CLASSES = {
     "fair": FairAgent,
 }
 
-AGENT_EMOJI = {
-    "fog": "≋",
-    "rain": "╱",
-    "frost": "✱",
-    "snow": "❉",
-    "dew": "∘",
-    "fair": "☼",
-}
-
-AGENT_COLORS: dict[str, str] = {
-    "fog": "bright_white",
-    "rain": "blue",
-    "frost": "cyan",
-    "snow": "bright_white",
-    "dew": "green",
-    "fair": "#FFD700",
-}
-
 
 @dataclass
 class SystemContext:

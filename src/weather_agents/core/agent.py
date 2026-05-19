@@ -20,7 +20,7 @@ from weather_agents.core.logger import get_logger
 from weather_agents.core.memory import Memory, Message
 from weather_agents.core.skill import Skill, SkillRegistry
 from weather_agents.core.tool import Tool, ToolRegistry
-from weather_agents.tools.builtin import TASK_DONE_SENTINEL
+from weather_agents.core.constants import TASK_DONE_SENTINEL
 
 _log = get_logger("agent")
 

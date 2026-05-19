@@ -17,23 +17,6 @@ class SnowAgent(BaseAgent):
     display_name = "雪"
     emoji = "❉"
     specialty = "架构规划"
-    tool_names = [
-        "read_file",
-        "write_file",
-        "edit_file",
-        "list_directory",
-        "tree",
-        "file_search",
-        "code_search",
-        "shell_exec",
-        "get_cwd",
-        "move_file",
-        "copy_file",
-        "delete_file",
-        "web_search",
-        "http_get",
-        "http_post",
-    ]
     skill_names = ["task_planner", "arch_designer", "workflow_designer", "self_evolve"]
 
     system_prompt = """你是 Weather Agents 的「雪」— 覆盖全局，让一切有序运行。

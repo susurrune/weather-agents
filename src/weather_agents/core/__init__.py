@@ -19,7 +19,7 @@ from weather_agents.core.config import (
     set_config,
 )
 from weather_agents.core.llm import LLMClient, LLMResponse
-from weather_agents.core.logger import LoggerMixin, get_logger, setup_logging
+from weather_agents.core.logger import get_logger, setup_logging
 from weather_agents.core.mcp import MCPClient, MCPManager, MCPServerConfig
 from weather_agents.core.memory import Memory
 from weather_agents.core.skill import Skill, SkillRegistry, global_skill_registry
@@ -34,7 +34,6 @@ __all__ = [
     "LLMCache",
     "LLMClient",
     "LLMResponse",
-    "LoggerMixin",
     "MCPClient",
     "MCPManager",
     "MCPServerConfig",

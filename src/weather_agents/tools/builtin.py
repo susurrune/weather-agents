@@ -22,9 +22,7 @@ _MAX_CODE_SEARCH_FILES = 5_000
 _MAX_GREP_FILES = 10_000
 _MAX_GREP_MATCHES = 200
 
-# Sentinel returned by task_done() to signal the agent loop to stop cleanly.
-# The agent calls task_done when it believes the user's request is fully satisfied.
-TASK_DONE_SENTINEL = "__TASK_DONE__"
+from weather_agents.core.constants import TASK_DONE_SENTINEL
 
 # Paths that write/delete tools should never touch.
 _WRITE_PROTECT_EXACT = {

@@ -10,13 +10,12 @@ from weather_agents.core.bus import MessageBus
 from weather_agents.core.config import AppConfig
 from weather_agents.core.factory import (
     AGENT_CLASSES,
-    AGENT_COLORS,
-    AGENT_EMOJI,
     SystemContext,
     TaskExecutionResult,
     create_system_context,
     orchestrate_task,
 )
+from weather_agents.core.icons import AGENT_COLORS, AGENT_EMOJI, icon_text
 from weather_agents.core.tool import ToolRegistry
 
 
