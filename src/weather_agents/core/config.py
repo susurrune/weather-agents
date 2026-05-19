@@ -116,12 +116,12 @@ def get_model_context_window(model_name: str) -> int:
 class LLMConfig:
     default_model: str = "deepseek/deepseek-v4-flash"
     temperature: float = 0.7
-    # 4096 was too low: write_file with a typical HTML page (~3-10KB)
-    # routinely hit the cap mid-content, leaving the JSON tool_args
-    # unclosed and the call rejected as "Invalid JSON". 8192 covers
-    # the vast majority of one-shot writes; chunk-and-edit handles
-    # the rest via the helpful truncation hint we now emit.
-    max_tokens: int = 8192
+    # 8192 was still too low once DeepSeek reasoning content (~0.5-2K
+    # tokens) competed with tool-call JSON for the same budget — a
+    # full weather dashboard (~8-10KB ASCII) routinely got truncated
+    # mid-argument. 16384 gives enough headroom for reasoning + one
+    # large write_file while leaving a buffer for follow-up.
+    max_tokens: int = 16384
     timeout: int = 120
     max_retries: int = 2
     api_keys: dict[str, str] = field(default_factory=dict)

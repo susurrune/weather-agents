@@ -9,7 +9,7 @@ workspace:
 llm:
   default_model: "deepseek/deepseek-v4-flash"
   temperature: 0.7
-  max_tokens: 4096
+  max_tokens: 16384
   timeout: 120
   max_retries: 2
 
