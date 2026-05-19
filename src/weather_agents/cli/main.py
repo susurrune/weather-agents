@@ -26,10 +26,6 @@ from rich.text import Text
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    import msvcrt as _msvcrt
-else:
-    import termios as _termios
-    import tty as _tty
 
 from weather_agents import __version__
 
@@ -63,6 +59,13 @@ except ImportError:
             return "automatic mode (fallback)"
 
 
+from prompt_toolkit import PromptSession as _PTPromptSession
+from prompt_toolkit.completion import Completer as _PTCompleter
+from prompt_toolkit.completion import Completion as _PTCompletion
+from prompt_toolkit.formatted_text import HTML as _PTHTML
+from prompt_toolkit.history import InMemoryHistory as _PTInMemoryHistory
+from prompt_toolkit.key_binding import KeyBindings as _PTKeyBindings
+
 from weather_agents.core.agent import TaskState
 from weather_agents.core.config import (
     USER_CONFIG_DIR,
@@ -83,6 +86,64 @@ from weather_agents.core.workspace import (
     init_workspace,
     resolve_workspace_path,
 )
+
+if sys.platform == "win32":
+    import msvcrt as _msvcrt
+else:
+    import select as _select
+    import termios as _termios
+    import tty as _tty
+
+
+def _get_key() -> str:
+    """Read a single keypress (for simple menus / confirm prompts)."""
+    if sys.platform == "win32":
+        ch = _msvcrt.getwch()
+        if ch in ("\x00", "\xe0"):
+            ch2 = _msvcrt.getwch()
+            return {"H": "up", "P": "down", "K": "left", "M": "right"}.get(ch2, ch2)
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch == "\x1b":
+            if _msvcrt.kbhit():
+                _msvcrt.getwch()  # consume sequence
+            return "esc"
+        if ch == "\r":
+            return "enter"
+        if ch == "\x08":
+            return "backspace"
+        return ch
+    else:
+        fd = sys.stdin.fileno()
+        old = _termios.tcgetattr(fd)
+        try:
+            _tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":
+                seq = "\x1b"
+                while True:
+                    r, _, _ = _select.select([fd], [], [], 0.05)
+                    if not r:
+                        break
+                    more = sys.stdin.read(1)
+                    if not more:
+                        break
+                    seq += more
+                    if ord(more) in range(0x40, 0x7F):
+                        break
+                if seq == "\x1b":
+                    return "esc"
+                if seq.startswith("\x1b["):
+                    return {"A": "up", "B": "down"}.get(seq[-1], "esc")
+                return "esc"
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch in ("\r", "\n"):
+                return "enter"
+            return ch
+        finally:
+            _termios.tcsetattr(fd, _termios.TCSADRAIN, old)
+
 
 # ── Slash commands registry (for popup) ──────────────────────────────────
 
@@ -127,142 +188,6 @@ _COMMANDS: list[tuple[str, str]] = [
 ]
 
 _COMMAND_LOOKUP: dict[str, str] = {c[0].split()[0].lstrip("/"): c[0] for c in _COMMANDS}
-
-# Input-line history buffer (shared across all agents in the session)
-_input_history: list[str] = []
-_history_idx: int = 0
-_key_buffer: list[str] = []
-
-# ── Cross-platform key reader ─────────────────────────────────────────────
-
-
-def _get_key() -> str:
-    """Read a single keypress. Returns named tokens for special keys."""
-    if _key_buffer:
-        return _key_buffer.pop(0)
-
-    if sys.platform == "win32":
-        ch = _msvcrt.getwch()
-        if ch in ("\x00", "\xe0"):
-            ch2 = _msvcrt.getwch()
-            # Scan code Z (0x5A) = Shift+Tab on Windows console
-            if ch2 == "Z":
-                return "shift_tab"
-            return {"H": "up", "P": "down", "K": "left", "M": "right"}.get(ch2, ch2)
-        if ch == "\x03":
-            raise KeyboardInterrupt
-        if ch == "\x1b":
-            if _msvcrt.kbhit():
-                nxt = _msvcrt.getwch()
-                if nxt == "[" and _msvcrt.kbhit():
-                    nxt2 = _msvcrt.getwch()
-                    if nxt2 == "Z":
-                        return "shift_tab"
-                return "esc"
-            return "esc"
-        if ch == "\r":
-            # Drain all immediately queued chars to distinguish paste from Enter.
-            # Enter at normal typing speed never has extra chars queued.
-            extra = []
-            while _msvcrt.kbhit():
-                n = _msvcrt.getwch()
-                extra.append(n)
-                if len(extra) >= 16:
-                    break
-
-            if extra:
-                # \r\n from Enter → all extra chars are just \n, discard them
-                if all(c == "\n" for c in extra):
-                    pass  # consume the \n, fall through to Shift check
-                else:
-                    # Has real content → paste, stash for next reads
-                    _key_buffer.extend(extra)
-                    return "shift_enter"
-
-            # Shift+Enter: check physical Shift key state
-            try:
-                import ctypes as _ct
-
-                if _ct.windll.user32.GetAsyncKeyState(0x10) & 0x8000:  # VK_SHIFT
-                    return "shift_enter"
-            except Exception:
-                pass
-            return "enter"
-        if ch == "\n":
-            # From paste, treat as newline insert
-            return "shift_enter"
-        if ch == "\x08":
-            return "backspace"
-        if ch == "\t":
-            # Some Windows terminals pass Shift+Tab as \t (same as Tab).
-            # Use GetAsyncKeyState to check if Shift is held.
-            try:
-                import ctypes as _ct
-
-                SHIFT_MASK = 0x8000
-                if _ct.windll.user32.GetAsyncKeyState(0x10) & SHIFT_MASK:  # VK_SHIFT
-                    return "shift_tab"
-            except Exception:
-                pass
-            return "tab"
-        return ch
-    else:
-        fd = sys.stdin.fileno()
-        old = _termios.tcgetattr(fd)
-        try:
-            import select
-
-            _tty.setraw(fd)
-            ch = sys.stdin.read(1)
-            if ch == "\x1b":
-                # Drain the full escape sequence with a short timeout
-                seq = "\x1b"
-                while True:
-                    r, _, _ = select.select([fd], [], [], 0.05)
-                    if not r:
-                        break
-                    more = sys.stdin.read(1)
-                    if not more:
-                        break
-                    seq += more
-                    # CSI sequences end with a byte in 0x40–0x7E
-                    if ord(more) in range(0x40, 0x7F):
-                        break
-                if seq == "\x1b":
-                    return "esc"
-                if seq.startswith("\x1b["):
-                    final = seq[-1]
-                    if final == "A":
-                        return "up"
-                    if final == "B":
-                        return "down"
-                    if final == "C":
-                        return "right"
-                    if final == "D":
-                        return "left"
-                    if final == "Z":
-                        return "shift_tab"
-                    return "esc"
-                if seq.startswith("\x1bO") and seq[-1] in "PQ":
-                    return "tab"
-                return "esc"
-            if ch == "\x03":
-                raise KeyboardInterrupt
-            if ch in ("\r", "\n"):
-                # Consume trailing \n from \r\n sent by some IMEs
-                r, _, _ = select.select([fd], [], [], 0.01)
-                if r:
-                    nxt = sys.stdin.read(1)
-                    if nxt == "\n":
-                        pass  # consumed
-                return "enter"
-            if ch in ("\x7f", "\x08"):
-                return "backspace"
-            if ch == "\t":
-                return "tab"
-            return ch
-        finally:
-            _termios.tcsetattr(fd, _termios.TCSADRAIN, old)
 
 
 def _poll_esc() -> bool:
@@ -922,52 +847,6 @@ async def _run_questionnaire(questions: list[dict]) -> str | None:
     return "；".join(answers) if answers else None
 
 
-def _ime_cursor_col(display_name: str, buffer: list[str], cursor_pos: int) -> tuple[int, int]:
-    """Calculate terminal column and row offset for the visual cursor.
-
-    Returns (col, row_offset) where row_offset is the visual line within
-    the multi-line input (0 = prompt line, 1+ = continuation lines).
-    """
-    from rich.cells import cell_len
-
-    text = "".join(buffer)
-    lines = text.split("\n")
-    cursor_col = cursor_pos
-    for i, line in enumerate(lines):
-        if cursor_col <= len(line) or i == len(lines) - 1:
-            prefix = f"  {display_name} ❯ " if i == 0 else "      "
-            return cell_len(prefix) + cell_len(line[:cursor_col]), i
-        cursor_col -= len(line) + 1
-    return 0, 0
-
-
-def _place_ime_cursor(col: int, row_offset: int = 0) -> None:
-    """Move Windows console cursor to position (col, cur_y - offset).
-
-    This tells the IME where to display the candidate window instead of
-    defaulting to the far-right of the terminal after a Rich ``Live``
-    update.  *row_offset* adjusts the Y coordinate for multi-line input.
-    """
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-        import ctypes.wintypes
-        import struct
-
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-
-        csbi = ctypes.create_string_buffer(22)
-        kernel32.GetConsoleScreenBufferInfo(handle, csbi)
-        _, cur_y = struct.unpack_from("HH", csbi, 4)  # X, Y from dwCursorPosition
-
-        coord = ctypes.wintypes._COORD(col, max(0, cur_y - row_offset))
-        kernel32.SetConsoleCursorPosition(handle, coord)
-    except Exception:
-        pass
-
-
 # -- Interactive mode (default / plan / auto) -------------------------------
 # ModeController defers its YAML/dotenv read to first .current access, so
 # instantiating it here is free for subcommands that never look at the mode.
@@ -1136,142 +1015,8 @@ async def _init_agent_lazy(agent, ctx) -> None:
                 ctx.mcp_status = await ctx.mcp.connect_all()
 
 
-def _render_line(
-    text: Text,
-    line: str,
-    cursor_line: int,
-    cursor_col: int,
-    color: str,
-    buffer: str,
-    line_idx: int = 0,
-) -> None:
-    """Render a single input line into *text*, positioning cursor if on cursor_line."""
-    if line_idx == cursor_line:
-        pre = line[:cursor_col]
-        post = line[cursor_col:]
-
-        if line_idx == 0 and buffer.startswith("/"):
-            space_idx = pre.find(" ")
-            if space_idx > 0:
-                text.append(pre[:space_idx], style="bold cyan")
-                text.append(pre[space_idx:])
-                text.append("▌", style=f"bold {color}")
-                text.append(post)
-            elif space_idx < 0 and post:
-                text.append(pre, style="bold cyan")
-                text.append("▌", style=f"bold {color}")
-                text.append(post)
-            else:
-                text.append(pre, style="bold cyan")
-                text.append("▌", style=f"bold {color}")
-                if post:
-                    text.append(post)
-        else:
-            text.append(pre)
-            text.append("▌", style=f"bold {color}")
-            if post:
-                text.append(post)
-    else:
-        text.append(line)
-
-
-def _build_input_display(
-    agent,
-    ctx,
-    buffer: str,
-    cursor_pos: int,
-    popup_visible: bool,
-    selected_idx: int,
-    filtered_commands: list[tuple[str, str]],
-    mode: str = "auto",
-) -> list:
-    """Build renderables for the input area with optional command popup."""
-    color = AGENT_COLORS.get(agent.name, "cyan")
-    results: list = []
-
-    # Split buffer into lines and locate cursor line/column
-    lines = buffer.split("\n")
-    cursor_line = 0
-    cursor_col = cursor_pos
-    for i, line in enumerate(lines):
-        if cursor_col <= len(line) or i == len(lines) - 1:
-            cursor_line = i
-            break
-        cursor_col -= len(line) + 1  # +1 for the \n separator
-
-    # ── Prompt line (first line) ──────────────────────────────────────────────
-    prompt = Text()
-    prompt.append("  ")
-    if mode == "plan":
-        prompt.append("[PLAN] ", style="bold magenta")
-    elif mode == "auto":
-        prompt.append("[AUTO] ", style="bold yellow")
-    prompt.append(agent.display_name, style=f"bold {color}")
-    prompt.append(" ❯ ", style=f"{color}")
-    _render_line(prompt, lines[0] if lines else "", cursor_line, cursor_col, color, buffer)
-    results.append(prompt)
-
-    # ── Continuation lines ────────────────────────────────────────────────────
-    for i in range(1, len(lines)):
-        # Skip empty trailing lines that don't contain the cursor
-        if not lines[i] and i != cursor_line:
-            continue
-        row = Text("      ")  # indent to align below prompt text
-        _render_line(row, lines[i], cursor_line, cursor_col, color, buffer, line_idx=i)
-        results.append(row)
-
-    # ── Subtle separator ──────────────────────────────────────────────────────
-    w = console.width
-    sep = "─" * max(0, w - 4)
-    results.append(Text(f"  {sep}", style="dim"))
-
-    # ── Command popup ────────────────────────────────────────────────────────
-    if popup_visible and filtered_commands:
-        tbl = Table(show_header=False, box=None, padding=(0, 1), expand=False)
-        tbl.add_column(width=28)
-        tbl.add_column(style="dim")
-
-        start = max(0, min(selected_idx - 6, len(filtered_commands) - 14))
-        end = min(len(filtered_commands), start + 14)
-
-        if start > 0:
-            tbl.add_row(Text("  ↑ more", style="dim"), "")
-
-        for i in range(start, end):
-            cmd, desc = filtered_commands[i]
-            if i == selected_idx:
-                cmd_text = Text()
-                cmd_text.append("❯ ", style="bold cyan")
-                cmd_text.append(cmd, style="bold cyan")
-                tbl.add_row(cmd_text, Text(desc, style="default"))
-            else:
-                cmd_text = Text()
-                cmd_text.append("  ")
-                cmd_text.append(cmd, style="cyan")
-                tbl.add_row(cmd_text, Text(desc, style="dim"))
-
-        if end < len(filtered_commands):
-            tbl.add_row(Text("  ↓ more", style="dim"), "")
-
-        popup = Panel(
-            tbl,
-            title="[dim]commands[/dim]",
-            title_align="left",
-            border_style="dim cyan",
-            box=box.ROUNDED,
-            padding=(0, 0),
-            width=min(60, w - 4),
-        )
-        results.append(popup)
-
-    return results
-
-
 def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
-    """Read a line of input with slash-command popup support.
-
-    *mode* controls the indicator shown in the input bar ("auto" or "plan").
-    """
+    """Read a line of input using prompt_toolkit (or Rich fallback on CI)."""
     # Fall back to simple input when stdin is not a TTY (piped / test env)
     if not sys.stdin.isatty():
         color = AGENT_COLORS.get(agent.name, "cyan")
@@ -1280,180 +1025,95 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
         prompt.append(" ❯ ", style=color)
         return console.input(prompt)
 
-    global _history_idx
-    buffer: list[str] = []
-    cursor_pos = 0
-    popup_visible = False
-    selected_idx = 0
+    if not hasattr(_read_line_with_popup, "_ptk_history"):
+        _read_line_with_popup._ptk_history = _PTInMemoryHistory()  # type: ignore[attr-defined]
 
-    result = ""
-    last_console_width = console.width
-    with Live(
-        Table(show_header=False, box=None, padding=0),
-        console=console,
-        refresh_per_second=10,
-        transient=True,
-    ) as live:
-        while True:
-            # Detect terminal resize and refresh so transient cursor
-            # tracking doesn't lose its place across reflowed lines.
-            if console.width != last_console_width:
-                live.refresh()
-                last_console_width = console.width
+    # ── Completer for / commands ────────────────────────────────────────
+    class _CommandCompleter(_PTCompleter):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            if not text.startswith("/") or " " in text:
+                return
+            for cmd, desc in _COMMANDS:
+                if cmd.startswith(text):
+                    yield _PTCompletion(
+                        cmd,
+                        start_position=-len(text),
+                        display=cmd,
+                        display_meta=desc,
+                    )
 
-            text = "".join(buffer)
-            filtered = [c for c in _COMMANDS if c[0].startswith(text)] if popup_visible else []
-            if filtered and selected_idx >= len(filtered):
-                selected_idx = len(filtered) - 1
+    # ── Key bindings ────────────────────────────────────────────────────
+    kb = _PTKeyBindings()
 
-            tbl = Table(show_header=False, box=None, padding=0, expand=True)
-            tbl.add_column(ratio=1)
-            for item in _build_input_display(
-                agent, ctx, text, cursor_pos, popup_visible, selected_idx, filtered, mode
-            ):
-                tbl.add_row(item)
-            live.update(tbl)
-            # Move the console cursor to match the visual ▌ position so
-            # the IME candidate window appears in the right place.
-            ime_col, ime_row = _ime_cursor_col(agent.display_name, buffer, cursor_pos)
-            _place_ime_cursor(ime_col, ime_row)
+    @kb.add("enter")
+    def _accept(event):
+        b = event.current_buffer
+        if b.complete_state:
+            b.complete_state = None
+            return
+        if b.text.strip():
+            b.validate_and_handle()
 
-            try:
-                key = _get_key()
-            except KeyboardInterrupt:
-                raise
+    @kb.add("s-enter")
+    def _newline(event):
+        event.current_buffer.insert_text("\n")
 
-            if key == "enter":
-                if popup_visible and filtered:
-                    result = filtered[selected_idx][0]
-                else:
-                    result = "".join(buffer).strip()
-                if result:
-                    break
-                continue
+    @kb.add("escape", "enter")
+    def _alt_enter(event):
+        event.current_buffer.insert_text("\n")
 
-            if key in ("shift_enter", "\n"):
-                buffer.insert(cursor_pos, "\n")
-                cursor_pos += 1
-                continue
+    @kb.add("escape")
+    def _esc(event):
+        """Clear buffer on Esc."""
+        b = event.current_buffer
+        if b.complete_state:
+            b.complete_state = None
+            return
+        b.text = ""
 
-            if key == "\t":
-                # Tab from paste — insert 4 spaces
-                buffer[cursor_pos:cursor_pos] = [" ", " ", " ", " "]
-                cursor_pos += 4
-                continue
+    @kb.add("s-tab")
+    def _shift_tab(event):
+        """Cycle mode: default → plan → auto → default."""
+        MODE.cycle()
+        text, style = MODE.label()
+        from prompt_toolkit import print_formatted_text as _pt_print
 
-            if key == "esc":
-                if popup_visible:
-                    popup_visible = False
-                    buffer.clear()
-                    cursor_pos = 0
-                    selected_idx = 0
-                else:
-                    buffer.clear()
-                    cursor_pos = 0
-                continue
+        _pt_print(f"  [{style}]  ")
 
-            if key == "backspace":
-                if buffer and cursor_pos > 0:
-                    del buffer[cursor_pos - 1]
-                    cursor_pos -= 1
-                    if not buffer:
-                        popup_visible = False
-                        selected_idx = 0
-                continue
+    # ── Build prompt text ───────────────────────────────────────────────
+    color = AGENT_COLORS.get(agent.name, "cyan")
+    agent_display = agent.display_name
 
-            if key == "left":
-                if popup_visible:
-                    popup_visible = False
-                if cursor_pos > 0:
-                    cursor_pos -= 1
-                continue
+    prompt_html = "  "
+    if mode == "plan":
+        prompt_html += "<style fg='ansimagenta'><b>[PLAN] </b></style>"
+    elif mode == "auto":
+        prompt_html += "<style fg='ansiyellow'><b>[AUTO] </b></style>"
+    prompt_html += f"<style fg='ansi{color}'><b>{agent_display}</b> ❯ </style>"
 
-            if key == "right":
-                if popup_visible:
-                    popup_visible = False
-                if cursor_pos < len(buffer):
-                    cursor_pos += 1
-                continue
+    session = _PTPromptSession(
+        multiline=True,
+        key_bindings=kb,
+        history=_read_line_with_popup._ptk_history,  # type: ignore[attr-defined]
+        completer=_CommandCompleter(),
+        complete_while_typing=True,
+        enable_open_in_editor=False,
+    )
 
-            if key == "up":
-                if popup_visible and filtered:
-                    selected_idx = max(0, selected_idx - 1)
-                elif _input_history:
-                    if _history_idx > 0:
-                        _history_idx -= 1
-                    buffer[:] = list(_input_history[_history_idx])
-                    cursor_pos = len(buffer)
-                continue
+    try:
+        result = session.prompt(_PTHTML(prompt_html))
+    except KeyboardInterrupt:
+        raise
 
-            if key == "down":
-                if popup_visible and filtered:
-                    selected_idx = min(len(filtered) - 1, selected_idx + 1)
-                elif _input_history:
-                    if _history_idx < len(_input_history) - 1:
-                        _history_idx += 1
-                        buffer[:] = list(_input_history[_history_idx])
-                    else:
-                        _history_idx = len(_input_history)
-                        buffer.clear()
-                    cursor_pos = len(buffer)
-                continue
-
-            if key == "shift_tab":
-                # Cycle: default → plan → auto → default
-                new_mode = MODE.cycle()
-                mode = new_mode.value  # sync local var so the display updates
-                text, style = MODE.label()
-                console.print(f"  [{style}]{text}[/{style}]  [dim]{MODE.describe()}[/dim]")
-                continue
-
-            if popup_visible and filtered:
-                if key == "up":
-                    selected_idx = max(0, selected_idx - 1)
-                elif key == "down":
-                    selected_idx = min(len(filtered) - 1, selected_idx + 1)
-                elif key == "tab":
-                    buffer[:] = list(filtered[selected_idx][0])
-                    if not filtered[selected_idx][0].endswith(" "):
-                        buffer.append(" ")
-                    cursor_pos = len(buffer)
-                    popup_visible = False
-                elif isinstance(key, str) and len(key) == 1 and key.isprintable():
-                    buffer.insert(cursor_pos, key)
-                    cursor_pos += 1
-                    selected_idx = 0
-                continue
-
-            if isinstance(key, str) and len(key) == 1:
-                if key == "/" and not buffer:
-                    buffer.insert(cursor_pos, key)
-                    cursor_pos += 1
-                    popup_visible = True
-                    selected_idx = 0
-                elif key.isprintable():
-                    buffer.insert(cursor_pos, key)
-                    cursor_pos += 1
-                    if buffer == ["/"]:
-                        popup_visible = True
-                        selected_idx = 0
-                    elif popup_visible:
-                        selected_idx = 0
-
-    if result:
-        # Save to history (no duplicates, limit 50)
-        if not _input_history or _input_history[-1] != result:
-            _input_history.append(result)
-            if len(_input_history) > 50:
-                _input_history.pop(0)
-        _history_idx = len(_input_history)
-        color = AGENT_COLORS.get(agent.name, "cyan")
+    # Echo the submitted input to the Rich output log
+    if result.strip():
         echo = Text()
         echo.append(agent.display_name, style=f"bold {color}")
         echo.append(" ❯ ", style=color)
         echo.append(result, style="white")
         console.print(echo)
-    return result
+    return result.strip()
 
 
 async def _interactive(agent_name: str | None = None) -> None:
