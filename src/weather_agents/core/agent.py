@@ -139,6 +139,7 @@ class BaseAgent:
         self._base_system_prompt: str = ""
         agent_cfg = getattr(config.agents, self.name, None)
         self._max_tool_rounds: int = agent_cfg.max_tool_rounds if agent_cfg else 20
+        self._max_tool_rounds_hard_cap: int = 100
         # Fire-and-forget fact-extraction state. We count completed chat turns
         # so the extractor only runs every N (default 10), keeping cost low.
         self._user_turns_since_extract: int = 0
@@ -756,7 +757,18 @@ class BaseAgent:
             full_content = ""
             _round_limit = self._max_tool_rounds
             _round_count = 0
-            while _round_count < _round_limit:
+            while True:
+                if _round_count >= _round_limit:
+                    if _round_limit >= self._max_tool_rounds_hard_cap:
+                        break
+                    extend_by = min(15, self._max_tool_rounds_hard_cap - _round_limit)
+                    _round_limit += extend_by
+                    self._max_tool_rounds = _round_limit
+                    self.memory.add_message(
+                        "system",
+                        f"[Auto-extended tool-round limit by {extend_by} to {_round_limit}. Continue working.]",
+                    )
+                    continue
                 _round_count += 1
                 # extend_rounds tool may raise the limit mid-turn.
                 _round_limit = max(_round_limit, self._max_tool_rounds)
@@ -1516,7 +1528,18 @@ class BaseAgent:
         try:
             _limit = mi
             _rounds = 0
-            while _rounds < _limit:
+            while True:
+                if _rounds >= _limit:
+                    if _limit >= self._max_tool_rounds_hard_cap:
+                        break
+                    extend_by = min(15, self._max_tool_rounds_hard_cap - _limit)
+                    _limit += extend_by
+                    self._max_tool_rounds = _limit
+                    self.memory.add_message(
+                        "system",
+                        f"[Auto-extended tool-round limit by {extend_by} to {_limit}. Continue working.]",
+                    )
+                    continue
                 _rounds += 1
                 _limit = max(_limit, self._max_tool_rounds)
                 messages = await self._messages_with_recall()
