@@ -417,6 +417,13 @@ def _load_config_uncached() -> AppConfig:
         cfg.tts.pitch_ratio = float(tts_cfg.get("pitch_ratio", 1.0))
         cfg.tts.emotion = tts_cfg.get("emotion", cfg.tts.emotion)
 
+    # Env var fallback for TTS API key — fastest configuration path
+    if not cfg.tts.api_key:
+        env_key = os.getenv("DOUBAO_TTS_API_KEY")
+        if env_key:
+            cfg.tts.api_key = env_key
+            cfg.tts.enabled = True
+
     # Workspace
     if ws := merged.get("workspace"):
         cfg.workspace.path = ws.get("path", cfg.workspace.path)
@@ -543,6 +550,16 @@ def set_config(key: str, value: str) -> tuple[bool, str]:
             return False, f"invalid agent '{value}', use one of: {', '.join(AGENT_NAMES)}"
         _save_user_cfg({"cli": {"default_agent": value.lower()}})
         return True, f"default_agent → {value}"
+
+    # tts.api_key / tts.voice_type — Doubao / Volcano Engine TTS
+    if len(parts) == 2 and parts[0] == "tts":
+        if parts[1] == "api_key":
+            _save_user_cfg({"tts": {"api_key": value, "enabled": True}})
+            return True, "tts.api_key saved (TTS enabled)"
+        if parts[1] == "voice_type":
+            _save_user_cfg({"tts": {"voice_type": value}})
+            return True, f"tts.voice_type → {value}"
+        return False, f"unknown tts key: {parts[1]}"
 
     # Simple keys under llm
     SIMPLE_LLM_KEYS = ("default_model", "temperature", "max_tokens", "timeout")
