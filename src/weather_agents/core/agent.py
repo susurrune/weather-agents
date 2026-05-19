@@ -695,6 +695,13 @@ class BaseAgent:
         # loops where the LLM keeps trying variations of a failing search.
         recent_tool_outcomes: list[bool] = []
         stuck_hint_injected = False
+        # Rolling window of the agent's recent text responses — used to
+        # detect "narration loops" where the model keeps writing the
+        # same "现在要做 X" sentence in different phrasings without
+        # actually moving forward. Distinct from the tool-failure loop
+        # signal: this fires on success-with-repetition.
+        recent_response_texts: list[str] = []
+        repetition_hint_injected = False
 
         try:
             full_content = ""
@@ -934,6 +941,39 @@ class BaseAgent:
                     await self._set_state(AgentState.IDLE)
                     yield {"type": "done"}
                     return
+
+                # Narration-loop detection: catch the agent rephrasing the
+                # same "现在要做 X" sentence round after round without
+                # progressing. Distinct from tool-failure detection because
+                # tools may be succeeding — the model is just generating
+                # similar prose between actions. Compare this round's
+                # content against the previous 1-2 rounds.
+                normalized_round = round_content.strip()
+                if normalized_round and recent_response_texts:
+                    high_sim = any(
+                        _text_similarity(normalized_round, prev) >= 0.7
+                        for prev in recent_response_texts[-2:]
+                    )
+                    if high_sim and not repetition_hint_injected:
+                        self.memory.add_message(
+                            "system",
+                            (
+                                "[Stop narrating] Your last response is highly "
+                                "similar to your previous one — you are "
+                                "re-describing what you're about to do instead "
+                                "of doing it. Stop writing prose. Either:\n"
+                                "1. Emit ONLY the next tool call(s) with no "
+                                "explanatory text, or\n"
+                                "2. If the task is genuinely done, output the "
+                                "final deliverable and stop.\n"
+                                "Do NOT write another 'I am now going to ...' "
+                                "or '接下来要 ...' paragraph."
+                            ),
+                        )
+                        repetition_hint_injected = True
+                recent_response_texts.append(normalized_round)
+                if len(recent_response_texts) > 3:
+                    recent_response_texts.pop(0)
 
                 # Stuck-loop detection: track outcomes of this round's tool
                 # calls and, if the recent window is mostly failures, inject a
@@ -2043,6 +2083,21 @@ def _enrich_response_with_artifacts(content: str, file_paths: list[str]) -> str:
         marker = " (already cited)" if p in body else ""
         lines.append(f"- {p}{marker}")
     return body.rstrip() + "\n\n" + "\n".join(lines)
+
+
+def _text_similarity(a: str, b: str) -> float:
+    """Cheap similarity for narration-loop detection.
+
+    difflib's SequenceMatcher.ratio is O(N*M) which is fine for the
+    typical 100-400 char per-round responses we compare. Returns 0-1.
+    Short responses (< 12 chars) are always treated as dissimilar to
+    avoid flagging "好的" / brief acknowledgements as loops.
+    """
+    if len(a) < 12 or len(b) < 12:
+        return 0.0
+    import difflib as _difflib
+
+    return _difflib.SequenceMatcher(None, a, b).ratio()
 
 
 def _format_args_parse_error(tool_name: str, raw_args: str) -> str:

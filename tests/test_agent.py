@@ -1162,3 +1162,27 @@ class TestArtifactExtraction:
         out = _enrich_response_with_artifacts(body, ["/a.md", "/b.md"])
         # Both already in body -> nothing appended
         assert out == body
+
+
+class TestTextSimilarity:
+    """The narration-loop detector uses _text_similarity to catch the
+    agent rephrasing the same '现在要做 X' sentence across rounds."""
+
+    def test_near_duplicate_zh_paraphrase_matches(self):
+        from weather_agents.core.agent import _text_similarity
+
+        a = "现在把 files/ 中的脚本、文档、数据分类移出。"
+        b = "现在把 files/ 中的脚本、文档、数据分门别类移出去。"
+        assert _text_similarity(a, b) >= 0.7
+
+    def test_distinct_actions_dont_match(self):
+        from weather_agents.core.agent import _text_similarity
+
+        assert _text_similarity("清理 temp/ 目录。", "现在审查代码安全性。") < 0.5
+
+    def test_short_strings_return_zero(self):
+        from weather_agents.core.agent import _text_similarity
+
+        # Short brief responses must not trigger loop detection
+        assert _text_similarity("好", "好的") == 0.0
+        assert _text_similarity("OK!", "ok.") == 0.0
