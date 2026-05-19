@@ -22,6 +22,7 @@ from rich.rule import Rule
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree as _RichTree
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -504,37 +505,86 @@ _TOOL_CAT_COLORS: dict[str, str] = {
 }
 
 
-def _print_tool_in(label: str, tool_name: str, args: dict) -> None:
-    """Print a compact "tool starting" line with non-redundant inline args."""
-    cat = _tool_category(tool_name)
+# ── Tool-group buffer — consecutive same-(cat, path) calls collapse into a Tree ──
+
+_tool_group_key: tuple | None = None
+_tool_group_entries: list[dict] = []
+
+
+def _normalize_tool_path(tool_name: str, args: dict) -> str:
+    """Grouping key: the file/directory/url/pattern a tool operates on."""
+    for key in ("path", "dst", "src", "directory", "pattern", "url", "query"):
+        v = args.get(key)
+        if v and isinstance(v, str):
+            return v
+    return ""
+
+
+def _flush_tool_group() -> None:
+    """Render the buffored tool group and reset it."""
+    global _tool_group_key, _tool_group_entries
+    if not _tool_group_entries:
+        return
+
+    cat = _tool_category(_tool_group_entries[0]["tool_name"])
     cat_color = _TOOL_CAT_COLORS.get(cat, "dim cyan")
-    label_short = label if len(label) < 60 else label[:57] + "..."
     icon = "●" if cat == "Bash" else "·"
-    arg_str = ""
-    if args:
-        parts = []
-        for k, v in args.items():
-            if v is None or v == "":
-                continue
-            v_str = str(v).replace("\n", " ")
-            if len(v_str) > 80:
-                v_str = v_str[:77] + "..."
-            # Skip args already captured in the human-readable label
-            if v_str in label:
-                continue
-            parts.append(f"{k}={v_str}")
-        if parts:
-            arg_str = "  " + " ".join(parts)
-    console.print(
-        f"  [{cat_color}]│[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/] [bold]{label_short}[/]"
-        f"{arg_str}"
-    )
+
+    if len(_tool_group_entries) == 1:
+        # Single entry — unchanged format.
+        e = _tool_group_entries[0]
+        label_short = e["label"] if len(e["label"]) < 60 else e["label"][:57] + "..."
+        arg_str = _tool_args_str(e.get("args", {}), e["label"])
+        console.print(
+            f"  [{cat_color}]│[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/]"
+            f" [bold]{label_short}[/]{arg_str}"
+        )
+        if e["result"] is not None:
+            _print_tool_out_flat(e["label"], e["success"], e["result"], cat, cat_color)
+    else:
+        # Multiple consecutive same-path calls → Tree.
+        first = _tool_group_entries[0]
+        first_label = first["label"] if len(first["label"]) < 60 else first["label"][:57] + "..."
+        tree = _RichTree(
+            f"  [{cat_color}]├[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/]"
+            f" [bold]{first_label}[/]",
+            guide_style=cat_color,
+            hide_root=False,
+        )
+        for e in _tool_group_entries:
+            status = "[green]✓[/]" if e["success"] else "[red]✗[/]"
+            detail = _tool_args_str(e.get("args", {}), "", max_v=50)
+            if e["result"] is None:
+                tree.add(f"[dim]· {detail}[/]" if detail else "[dim]·[/]")
+            elif detail:
+                tree.add(f"{detail}  {status}")
+            else:
+                tree.add(f"{status}")
+        console.print(tree)
+
+    _tool_group_key = None
+    _tool_group_entries = []
 
 
-def _print_tool_out(label: str, tool_name: str, success: bool, result: str = "") -> None:
-    """Print a compact "tool finished" line with result preview."""
-    cat = _tool_category(tool_name)
-    cat_color = _TOOL_CAT_COLORS.get(cat, "dim cyan")
+def _tool_args_str(args: dict, label: str, max_v: int = 80) -> str:
+    """Build a compact args suffix, skipping values already in the label."""
+    if not args:
+        return ""
+    parts: list[str] = []
+    for k, v in args.items():
+        if v is None or v == "":
+            continue
+        v_str = str(v).replace("\n", " ")
+        if len(v_str) > max_v:
+            v_str = v_str[: max_v - 3] + "..."
+        if v_str and v_str in label:
+            continue
+        parts.append(f"{k}={v_str}")
+    return "  " + " ".join(parts) if parts else ""
+
+
+def _print_tool_out_flat(label: str, success: bool, result: str, cat: str, cat_color: str) -> None:
+    """Print a single-line tool-finished marker (used only for single-entry groups)."""
     status_icon = "[green]✓[/]" if success else "[red]✗[/]"
     label_short = label if len(label) < 60 else label[:57] + "..."
     line = f"  [{cat_color}]│[/] {status_icon} [{cat_color}]{cat}[/] [bold]{label_short}[/]"
@@ -544,6 +594,32 @@ def _print_tool_out(label: str, tool_name: str, success: bool, result: str = "")
             result_flat = result_flat[:117] + "..."
         line += f"  [dim]{result_flat}[/]"
     console.print(line)
+
+
+def _print_tool_in(label: str, tool_name: str, args: dict) -> None:
+    """Buffer or flush-print a tool-starting line, grouping same-path calls."""
+    cat = _tool_category(tool_name)
+    path = _normalize_tool_path(tool_name, args)
+    new_key = (cat, tool_name, path)
+
+    global _tool_group_key, _tool_group_entries
+    if _tool_group_key is not None and new_key != _tool_group_key:
+        _flush_tool_group()
+
+    if _tool_group_key is None:
+        _tool_group_key = new_key
+
+    _tool_group_entries.append(
+        {"label": label, "tool_name": tool_name, "args": args, "success": True, "result": None}
+    )
+
+
+def _print_tool_out(label: str, tool_name: str, success: bool, result: str = "") -> None:
+    """Mark the last buffered tool entry as complete."""
+    global _tool_group_entries
+    if _tool_group_entries:
+        _tool_group_entries[-1]["success"] = success
+        _tool_group_entries[-1]["result"] = result
 
 
 def _format_cost(cost: float) -> str:
@@ -1662,6 +1738,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                         try:
                             event = next_event_task.result()
                         except StopAsyncIteration:
+                            _flush_tool_group()
                             break
                         except _AgentInterrupted:
                             # chat_stream raised KeyboardInterrupt; we
@@ -1670,6 +1747,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                             interrupted = True
                             break
                         if event["type"] == "content":
+                            _flush_tool_group()
                             md_content += event["text"]
                             live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "reasoning":
@@ -1704,13 +1782,17 @@ async def _interactive(agent_name: str | None = None) -> None:
                             )
                             live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "truncated":
+                            _flush_tool_group()
                             md_content += f"\n\n> [truncated] {event.get('reason', '')}"
                             live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "done":
+                            _flush_tool_group()
                             break
                 except KeyboardInterrupt:
+                    _flush_tool_group()
                     interrupted = True
                 finally:
+                    _flush_tool_group()
                     _esc_event.set()
                     esc_task.cancel()
                     resize_task.cancel()
