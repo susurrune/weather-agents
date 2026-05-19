@@ -248,6 +248,38 @@ class TestFormatUserFacingError:
         msg = _format_user_facing_error("gpt-4o", ValueError("bad request"))
         assert "Bad Request" in msg
 
+    def test_content_policy_routes_to_specific_hint(self):
+        """DeepSeek's 'Content Exists Risk' / OpenAI 'content_filter' /
+        Anthropic 'safety' must NOT be misidentified as bad-request memory
+        corruption — that gave users wrong advice (clear memory) which
+        loses unrelated context."""
+        ds_err = Exception(
+            'BadRequestError: DeepseekException - {"error":{"message":'
+            '"Content Exists Risk","type":"invalid_request_error"}}'
+        )
+        msg = _format_user_facing_error("deepseek/deepseek-v4-flash", ds_err)
+        assert "内容审核" in msg
+        # Must NOT show the misleading "memory corrupted" advice
+        assert "会话消息序列可能损坏" not in msg
+        assert "/model" in msg  # the new actionable hint
+
+        oa_err = Exception("openai.BadRequestError: content_filter triggered")
+        msg2 = _format_user_facing_error("gpt-4o", oa_err)
+        assert "内容审核" in msg2
+
+        an_err = Exception("anthropic responsibleaipolicyviolation rejected")
+        msg3 = _format_user_facing_error("claude-3-5-sonnet", an_err)
+        assert "内容审核" in msg3
+
+    def test_real_bad_request_still_suggests_memory_clear(self):
+        """A genuine malformed tool_calls sequence should keep its existing
+        "memory may be corrupted" hint — only content-policy errors are
+        re-routed."""
+        err = Exception("Bad Request: tool messages must follow tool_calls")
+        msg = _format_user_facing_error("gpt-4o", err)
+        assert "memory" in msg.lower() or "会话消息" in msg
+        assert "内容审核" not in msg
+
     def test_generic_error(self):
         msg = _format_user_facing_error("gpt-4o", ValueError("something broke"))
         assert "调用失败" in msg

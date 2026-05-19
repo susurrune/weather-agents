@@ -197,6 +197,32 @@ def _format_user_facing_error(model: str, err: BaseException | None) -> str:
             f"❌  {model} 不是该 provider 的有效模型 ID。\n"
             f"运行 `wa config models` 查看可用模型，或 `wa init` 重新选择。"
         )
+    # Content moderation / safety filter (DeepSeek, OpenAI moderation,
+    # Claude safety). These are NOT message-sequence problems — clearing
+    # memory throws away unrelated context. The fix is to rephrase the
+    # offending message OR switch to a provider with looser filters.
+    if any(
+        kw in lowered
+        for kw in (
+            "content exists risk",
+            "content_policy",
+            "content_filter",
+            "content_filtered",
+            "safety",
+            "blocked by safety",
+            "responsibleaipolicyviolation",
+            "policy_violation",
+        )
+    ):
+        short = text.splitlines()[0][:200]
+        return (
+            f"❌  {model} 拒绝该请求 (内容审核)：{short}\n"
+            f"原因：provider 的内容安全过滤判定此次提问/上下文敏感。\n"
+            f"建议：\n"
+            f"  - 换一个 provider（如 OpenAI / Anthropic / 本地 Ollama）：`/model` 切换\n"
+            f"  - 把敏感关键词改写得更通用后重发\n"
+            f"  - `/memory clear` 仅在你确认是上下文里某条历史消息触发审核时使用"
+        )
     # Bad request (often due to malformed message sequence from corrupted memory)
     err_name = type(err).__name__.lower() if err else ""
     if (
