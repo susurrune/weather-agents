@@ -3125,15 +3125,51 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
             if dashboard:
                 dashboard.on_done(t.id, r.success)
 
-        _, results, summary = await orchestrate_task(
-            goal,
-            agents,
-            on_task_start=_on_start,
-            on_task_done=_on_done,
-            on_planned=_on_planned,
-            on_tool_status=dashboard.on_tool_status if dashboard else None,
-            result_truncate=500,
+        # Esc-interrupt for orchestration — race the long-running call
+        # against a key-press poller so the user can cancel mid-flow.
+        _orch_esc_event = asyncio.Event()
+        async def _orch_esc_poller():
+            while not _orch_esc_event.is_set():
+                if _poll_esc():
+                    _orch_esc_event.set()
+                    break
+                await asyncio.sleep(0.06)
+        _orch_esc_task = asyncio.create_task(_orch_esc_poller())
+        _orch_task = asyncio.create_task(
+            orchestrate_task(
+                goal,
+                agents,
+                on_task_start=_on_start,
+                on_task_done=_on_done,
+                on_planned=_on_planned,
+                on_tool_status=dashboard.on_tool_status if dashboard else None,
+                result_truncate=500,
+            )
         )
+        _orch_waiter = asyncio.create_task(_orch_esc_event.wait())
+        _orch_done, _orch_pending = await asyncio.wait(
+            {_orch_task, _orch_waiter},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        _orch_esc_task.cancel()
+        _orch_waiter.cancel()
+        with contextlib.suppress(BaseException):
+            await _orch_esc_task
+        with contextlib.suppress(BaseException):
+            await _orch_waiter
+
+        if _orch_task in _orch_pending:
+            # Esc was pressed — cancel the running orchestration
+            _orch_task.cancel()
+            with contextlib.suppress(BaseException):
+                await _orch_task
+            if dashboard:
+                dashboard.stop()
+                dashboard = None
+            console.print("  [dim]  interrupted[/dim]")
+            return
+
+        _, results, summary = _orch_task.result()
 
         if dashboard:
             dashboard.stop()
