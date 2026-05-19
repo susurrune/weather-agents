@@ -610,6 +610,35 @@ def _numbered_blocks(text: str) -> list[str]:
     return items if len(items) >= 2 else []
 
 
+def _choices_already_done(choices: list[str], activities: list[dict]) -> bool:
+    """Check if all choice items appear to have been executed by tool calls.
+
+    When an agent lists cleanup results and then asks "继续?", the listed
+    items are summaries, not actionable choices.  This detects that case
+    so we skip the redundant selection popup.
+    """
+    if not activities or not choices:
+        return False
+    # Collect all tool labels into one lower-case corpus
+    tool_text = " ".join(
+        a.get("label", "") for a in activities if a.get("status") != "error"
+    ).lower()
+    # How many choice items have a word-level match in tool labels?
+    matched = 0
+    for c in choices:
+        plain = re.sub(r"[`*_~\"'\\[\]()—–]", "", c).strip().lower()
+        # Skip very short fragments
+        if len(plain) < 4:
+            continue
+        # Check if significant words from the choice appear in tool labels
+        words = [w for w in re.split(r"[/\\\s,、，；;]+", plain) if len(w) >= 3]
+        if not words:
+            continue
+        if any(w in tool_text for w in words):
+            matched += 1
+    return matched >= len(choices) * 0.5  # >50% overlap → already done
+
+
 def _parse_simple_choices(text: str) -> list[str]:
     """Parse numbered or letter-prefixed OPTIONS (not questions) from AI response.
 
@@ -620,10 +649,6 @@ def _parse_simple_choices(text: str) -> list[str]:
     Example match::
         "1. 个人作品集\\n2. 产品官网\\n3. 博客首页"
         → ["个人作品集", "产品官网", "博客首页"]
-
-    Also matches letter prefixes::
-        "A. 功能测试\\nB. 性能测试\\nC. 安全测试"
-        → ["功能测试", "性能测试", "安全测试"]
     """
     import re
 
@@ -635,10 +660,18 @@ def _parse_simple_choices(text: str) -> list[str]:
         if not m:
             continue
         content = m.group(1).strip()
+        # Strip markdown formatting for length check
+        plain = re.sub(r"[`*_~]", "", content).strip()
         if "?" in content or "？" in content:
             continue  # questions, not choices
-        if len(content) > 70:
-            continue  # instructions, not choices
+        if len(plain) > 50:
+            continue  # summaries / descriptions, not options
+        # Skip items with table chars or em-dashes — likely summaries not options
+        if "│" in content or "—" in content or "–" in content:
+            continue
+        # Skip items describing completed actions
+        if re.search(r"(已|完成|完毕|done|completed|deleted|removed)", plain, re.I):
+            continue
         items.append(content)
     return items if len(items) >= 2 else []
 
@@ -683,39 +716,33 @@ def _parse_questionnaire(text: str) -> list[dict] | None:
     return questions if questions else None
 
 
-def _render_choice_menu(items: list[str], title: str = "") -> Table:
-    """Build the Rich renderable for a choice-selection popup."""
-    tbl = Table(show_header=False, box=None, padding=(0, 1), expand=False)
-    tbl.add_column()
+def _render_choice_menu(items: list[str], title: str = "") -> Panel:
+    """Build a clean choice-selection popup."""
+    lines: list[Text] = []
     for i, item in enumerate(items):
+        # Strip markdown for display, keep plain text
+        plain = re.sub(r"[`*_~]", "", item)
         if i == _render_choice_menu.selected:  # type: ignore[attr-defined]
-            tbl.add_row(Text(f"❯ {item}", style="bold cyan"))
+            lines.append(Text(f"  ❯ {plain}", style="bold cyan"))
         else:
-            tbl.add_row(Text(f"  {item}", style="default"))
+            lines.append(Text(f"    {plain}", style="default"))
 
-    hint_tbl = Table(show_header=False, box=None, padding=(0, 1))
-    hint_tbl.add_column()
-    hint_tbl.add_row(Text("↑↓ navigate  ·  enter select  ·  esc cancel", style="dim"))
-
-    inner = Table(show_header=False, box=None, padding=0)
+    inner = Table(show_header=False, box=None, padding=(0, 1))
     inner.add_column()
-    inner.add_row(tbl)
-    inner.add_row(hint_tbl)
+    for line in lines:
+        inner.add_row(line)
+    inner.add_row(Text(""))
+    inner.add_row(Text("  ↑↓ navigate  ·  enter select  ·  esc cancel", style="dim white"))
 
-    panel = Panel(
+    return Panel(
         inner,
         border_style="cyan",
-        box=box.ROUNDED,
-        padding=(0, 1),
-        width=min(80, console.width - 4),
-        title=Text(title, style="dim") if title else None,
+        box=box.SQUARE,
+        padding=(1, 2),
+        width=min(72, console.width - 4),
+        title=Text(f" {title} ", style="bold") if title else None,
         title_align="left",
     )
-
-    outer = Table(show_header=False, box=None, padding=0, expand=True)
-    outer.add_column(justify="center")
-    outer.add_row(panel)
-    return outer
 
 
 def _show_choice_menu(
@@ -1770,6 +1797,11 @@ async def _interactive(agent_name: str | None = None) -> None:
                 else:
                     choices = _parse_simple_choices(md_content)
                     if choices:
+                        # Skip choice menu if all items were already acted on
+                        # by tool calls (e.g. cleanup summary re-listed as
+                        # "options" after deletion already happened).
+                        if _choices_already_done(choices, activities):
+                            break  # Nothing left to choose
                         choice = _show_choice_menu(choices)
                         if choice is not None:
                             inp = choice
