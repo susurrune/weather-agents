@@ -228,7 +228,11 @@ def _is_thin_content(content: str) -> bool:
 
 
 async def _execute_with_retry(
-    agent: BaseAgent, a_task: Any, *, max_attempts: int, on_status: Callable[[str], None] | None = None,
+    agent: BaseAgent,
+    a_task: Any,
+    *,
+    max_attempts: int,
+    on_status: Callable[[str], None] | None = None,
 ) -> Any:
     """Run ``agent.execute_task`` with bounded retries on failure / exception.
 
@@ -416,7 +420,10 @@ async def _execute_pending(
                 metadata=t.metadata,
             )
             result = await _execute_with_retry(
-                agent, a_task, max_attempts=max_task_retries, on_status=on_tool_status,
+                agent,
+                a_task,
+                max_attempts=max_task_retries,
+                on_status=on_tool_status,
             )
 
             if result.success:

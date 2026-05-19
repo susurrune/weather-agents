@@ -2952,14 +2952,10 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
                         _md_content += ev["text"]
                         _live.update(_build_stream_display(target, "", _md_content))
                     elif ev["type"] == "tool_status":
-                        _live.update(
-                            _build_stream_display(target, ev["label"], _md_content)
-                        )
+                        _live.update(_build_stream_display(target, ev["label"], _md_content))
                     elif ev["type"] == "done":
                         break
-                _live.update(
-                    _build_response_panel(target, _md_content, time.monotonic() - _t0)
-                )
+                _live.update(_build_response_panel(target, _md_content, time.monotonic() - _t0))
             return
 
         # Summary

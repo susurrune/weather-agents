@@ -167,11 +167,11 @@ def _dict_to_dataclass(data: Any, schema_type: type, raw: str) -> Any:
         else:
             try:
                 val = _default_for(f)
-            except KeyError:
+            except KeyError as exc:
                 raise SchemaValidationError(
                     f"missing required field '{name}' for {schema_type.__name__}",
                     raw,
-                )
+                ) from exc
 
         # Handle nested dataclass lists (e.g. list[TaskStepSchema])
         origin = getattr(target_type, "__origin__", None)

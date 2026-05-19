@@ -520,8 +520,8 @@ class TestTaskDone:
         assert result == TASK_DONE_SENTINEL
 
     def test_tool_registered(self):
-        from weather_agents.tools.builtin import register_builtin_tools
         from weather_agents.core.tool import ToolRegistry
+        from weather_agents.tools.builtin import register_builtin_tools
 
         reg = ToolRegistry()
         register_builtin_tools(reg)

@@ -691,6 +691,10 @@ class BaseAgent:
         # drop them from the active tool set for the rest of the turn so the
         # LLM doesn't waste iterations re-calling a known-broken tool.
         suppressed_tools: set[str] = set()
+        # Rolling window of recent tool successes — used to detect stuck
+        # loops where the LLM keeps trying variations of a failing search.
+        recent_tool_outcomes: list[bool] = []
+        stuck_hint_injected = False
 
         try:
             full_content = ""
@@ -890,8 +894,12 @@ class BaseAgent:
                         task_completed = True
                         prep = next(p for p in tool_prep if p["tc"] is tc)
                         summary = (prep.get("tool_args") or {}).get("summary", "")
-                        display_result = f"[Task completed: {summary}]" if summary else "[Task completed]"
-                        self.memory.add_message("tool", display_result, name=_tool_name, tool_call_id=tc["id"])
+                        display_result = (
+                            f"[Task completed: {summary}]" if summary else "[Task completed]"
+                        )
+                        self.memory.add_message(
+                            "tool", display_result, name=_tool_name, tool_call_id=tc["id"]
+                        )
                         yield {
                             "type": "tool_done",
                             "label": f"task_done: {summary}" if summary else "task_done",
@@ -926,6 +934,41 @@ class BaseAgent:
                     await self._set_state(AgentState.IDLE)
                     yield {"type": "done"}
                     return
+
+                # Stuck-loop detection: track outcomes of this round's tool
+                # calls and, if the recent window is mostly failures, inject a
+                # system nudge so the LLM stops grinding through dead-ends. The
+                # hint fires once per turn — after that the model has been told,
+                # and repeating the same advice every round is just noise.
+                for _tc, result, success, _tool_name in exec_results:
+                    if _tool_name == "task_done":
+                        continue
+                    failed = (not success) or (
+                        isinstance(result, str) and _looks_like_failed_tool_result(result)
+                    )
+                    recent_tool_outcomes.append(not failed)
+                    if len(recent_tool_outcomes) > 6:
+                        recent_tool_outcomes.pop(0)
+                if (
+                    not stuck_hint_injected
+                    and len(recent_tool_outcomes) >= 5
+                    and sum(recent_tool_outcomes) <= 1
+                ):
+                    self.memory.add_message(
+                        "system",
+                        (
+                            "[Recovery hint] Your last several tool calls have "
+                            "mostly failed (blocked sources, no results, "
+                            "timeouts). Stop trying more variations of the "
+                            "same approach. Either: (1) synthesize a partial "
+                            "answer from any tool outputs that DID succeed, "
+                            "(2) draw on your general knowledge and clearly "
+                            "label it as such, or (3) ask the user for "
+                            "guidance. Do NOT keep calling tools that are "
+                            "failing — finalize your answer now."
+                        ),
+                    )
+                    stuck_hint_injected = True
             # Max iterations reached
             if not assistant_stored:
                 self._pop_last_user_message()
@@ -1821,6 +1864,33 @@ def _parse_tool_args(raw: str) -> dict | None:
             pass
 
     return None
+
+
+# Substrings that strongly indicate a tool call produced no useful output.
+# Treated as "failure" for stuck-loop detection even when the tool returned
+# success=True (e.g. web_search returning "No results found ..." is
+# technically a successful call but semantically a dead-end).
+_TOOL_FAILURE_MARKERS: tuple[str, ...] = (
+    "no results found",
+    "status: 4",  # 401 / 403 / 404 / 429 etc.
+    "status: 5",  # 5xx
+    "request timed out",
+    "timed out",
+    "[error",
+    "circuitbreakeropen",
+    "connection refused",
+    "name or service not known",
+    "ssl",
+)
+
+
+def _looks_like_failed_tool_result(result: str) -> bool:
+    """Heuristic: does this tool result indicate a dead-end the LLM should
+    stop retrying? Used by stuck-loop detection in _chat_stream_impl."""
+    if not result:
+        return True
+    head = result[:300].lower()
+    return any(m in head for m in _TOOL_FAILURE_MARKERS)
 
 
 def _format_args_parse_error(tool_name: str, raw_args: str) -> str:
