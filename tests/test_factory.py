@@ -555,3 +555,174 @@ class TestPlanConfirmGate:
             on_planned=_silent,
         )
         assert len(results) == 1
+
+
+# E2E integration tests for orchestration: plan -> execute -> judge -> replan.
+# Uses shaped fake agents (not Mock specs) so callback wiring runs for real.
+
+
+def _shaped_agent(name):
+    from unittest.mock import AsyncMock
+
+    class _Agent:
+        def __init__(self):
+            self.name = name
+            self._exec_seq = []
+            self._chat_seq = []
+            self._exec_idx = 0
+            self._chat_idx = 0
+            self.execute_task = AsyncMock(side_effect=self._next_exec)
+            self.chat = AsyncMock(side_effect=self._next_chat)
+            self.orchestrate = AsyncMock()
+            self.replan_for_missing = AsyncMock(return_value=[])
+
+        def queue_exec(self, result):
+            self._exec_seq.append(result)
+
+        def queue_chat(self, text):
+            self._chat_seq.append(text)
+
+        async def _next_exec(self, *_a, **_k):
+            assert self._exec_idx < len(self._exec_seq), f"unexpected execute_task call on {name}"
+            r = self._exec_seq[self._exec_idx]
+            self._exec_idx += 1
+            return r
+
+        async def _next_chat(self, *_a, **_k):
+            assert self._chat_idx < len(self._chat_seq), f"unexpected chat call on {name}"
+            r = self._chat_seq[self._chat_idx]
+            self._chat_idx += 1
+            return r
+
+    return _Agent()
+
+
+class TestOrchestrationE2E:
+    @pytest.mark.asyncio
+    async def test_happy_path_two_tasks_succeed(self):
+        from unittest.mock import Mock
+
+        from weather_agents.core.agent import Task
+
+        snow = _shaped_agent("snow")
+        fog = _shaped_agent("fog")
+        rain = _shaped_agent("rain")
+
+        async def _orch(_goal):
+            return [
+                Task(id="1", description="research X", assigned_to="fog"),
+                Task(id="2", description="write Y", assigned_to="rain", parent_id="1"),
+            ]
+
+        snow.orchestrate = _orch
+        fog.queue_exec(Mock(success=True, content="A. Milvus B. Qdrant C. Weaviate" * 5))
+        rain.queue_exec(Mock(success=True, content="## Comparison\n| name | ... |" * 5))
+        snow.queue_chat('{"achieved": true, "missing": ""}')
+        snow.queue_chat("Final synthesized answer.")
+
+        plan_seen = []
+        starts = []
+        dones = []
+
+        async def _on_plan(tasks):
+            plan_seen.append(list(tasks))
+            return True
+
+        async def _on_start(t):
+            starts.append(t.id)
+
+        async def _on_done(t, r):
+            dones.append((t.id, r.success))
+
+        tasks, results, summary = await orchestrate_task(
+            "do something",
+            agent_map={"fog": fog, "rain": rain, "snow": snow},
+            on_planned=_on_plan,
+            on_task_start=_on_start,
+            on_task_done=_on_done,
+        )
+        assert len(plan_seen) == 1
+        assert len(starts) == 2
+        assert {t for t, _ in dones} == {"1", "2"}
+        assert all(s for _, s in dones)
+        assert len(results) == 2
+        assert "Final synthesized answer" in summary
+
+    @pytest.mark.asyncio
+    async def test_replan_triggers_then_succeeds(self):
+        """2-task initial plan → both thin → judge says no → snow replans
+        1 more task → that succeeds → judge says yes → summary."""
+        from unittest.mock import Mock
+
+        from weather_agents.core.agent import Task
+
+        snow = _shaped_agent("snow")
+        fog = _shaped_agent("fog")
+
+        async def _orch(_goal):
+            return [
+                Task(id="1", description="research", assigned_to="fog"),
+                Task(id="2", description="summarize", assigned_to="fog"),
+            ]
+
+        snow.orchestrate = _orch
+        # Each task gets max_task_retries=1 attempts. With thin content
+        # each one is rejected, retried once, and finally accepted as
+        # success=True content=thin (orchestrator never marks "completed"
+        # as failed at that point; judge does the real assessment).
+        for _ in range(2 * 1):  # 2 tasks × 1 attempt each (no retry)
+            fog.queue_exec(Mock(success=True, content="调研已完成。"))
+        # Replan task: real content this time
+        fog.queue_exec(
+            Mock(success=True, content="Milvus | Qdrant | Weaviate" * 10)
+        )
+
+        snow.queue_chat('{"achieved": false, "missing": "no actual names"}')
+        snow.queue_chat('{"achieved": true, "missing": ""}')
+        snow.queue_chat("Done.")
+
+        async def _replan(*_a, **_k):
+            return [Task(id="3", description="research better", assigned_to="fog")]
+
+        snow.replan_for_missing = _replan
+
+        plan_rounds = []
+
+        async def _on_plan(tasks):
+            plan_rounds.append(len(tasks))
+            return True
+
+        _, results, _ = await orchestrate_task(
+            "research",
+            agent_map={"fog": fog, "snow": snow},
+            on_planned=_on_plan,
+            max_task_retries=1,
+        )
+        # Plan: round 1 has 2 tasks, round 2 has 3 (initial 2 + replan 1)
+        assert plan_rounds == [2, 3]
+        assert len(results) == 3
+
+    @pytest.mark.asyncio
+    async def test_cycle_detection_fails_loudly(self):
+        from weather_agents.core.agent import Task
+
+        snow = _shaped_agent("snow")
+        rain = _shaped_agent("rain")
+        t1 = Task(id="1", description="A", assigned_to="rain")
+        t1.depends_on = ["2"]
+        t2 = Task(id="2", description="B", assigned_to="rain")
+        t2.depends_on = ["1"]
+
+        async def _orch(_goal):
+            return [t1, t2]
+
+        snow.orchestrate = _orch
+        # Multi-result path: judge runs (results > 1), then summary.
+        # Both tasks are cycle-detected (failed) — judge sees no real
+        # deliverable; conservative fallback to achieved=true (so it
+        # doesn't loop forever on a doomed plan). Queue: judge + summary.
+        snow.queue_chat('{"achieved": true, "missing": ""}')
+        snow.queue_chat("summary")
+        _, results, _ = await orchestrate_task("circular", agent_map={"rain": rain, "snow": snow})
+        assert all("cycle" in r.content.lower() for r in results)
+        assert rain.execute_task.await_count == 0
