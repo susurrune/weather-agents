@@ -132,7 +132,7 @@ class LLMConfig:
 class AgentModelConfig:
     model: str | None = None
     specialty: str = ""
-    max_tool_rounds: int = 10
+    max_tool_rounds: int = 20
 
 
 @dataclass

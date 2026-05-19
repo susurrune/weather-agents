@@ -137,7 +137,7 @@ class BaseAgent:
         self._skill_config_overrides: dict[str, dict] = {}  # active overrides merged from skills
         self._base_system_prompt: str = ""
         agent_cfg = getattr(config.agents, self.name, None)
-        self._max_tool_rounds: int = agent_cfg.max_tool_rounds if agent_cfg else 10
+        self._max_tool_rounds: int = agent_cfg.max_tool_rounds if agent_cfg else 20
         # Fire-and-forget fact-extraction state. We count completed chat turns
         # so the extractor only runs every N (default 10), keeping cost low.
         self._user_turns_since_extract: int = 0

@@ -226,7 +226,7 @@ class TestMaxToolRoundsConfig:
         cfg = AppConfig()
         for name in ("fog", "rain", "frost", "snow", "dew"):
             agent_cfg = getattr(cfg.agents, name)
-            assert agent_cfg.max_tool_rounds == 10
+            assert agent_cfg.max_tool_rounds == 20
 
     def test_max_tool_rounds_loaded(self, temp_config_dir):
         from weather_agents.core.config import invalidate_cache, load_config, set_config
@@ -236,4 +236,4 @@ class TestMaxToolRoundsConfig:
         cfg = load_config()
         for name in ("fog", "rain", "frost", "snow", "dew"):
             agent_cfg = getattr(cfg.agents, name)
-            assert agent_cfg.max_tool_rounds == 10
+            assert agent_cfg.max_tool_rounds == 20

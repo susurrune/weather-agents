@@ -508,51 +508,42 @@ _TOOL_CAT_COLORS: dict[str, str] = {
 
 
 def _print_tool_in(label: str, tool_name: str, args: dict) -> None:
-    """Print a Claude Code-style "tool starting" block.
-
-    Layout: dim left bar + category icon + category name + label,
-    then args indented under the bar so the whole call reads as a
-    single visual unit.
-    """
+    """Print a compact "tool starting" line with inline args."""
     cat = _tool_category(tool_name)
     cat_color = _TOOL_CAT_COLORS.get(cat, "dim cyan")
     label_short = label if len(label) < 60 else label[:57] + "..."
     icon = "●" if cat == "Bash" else "·"
-    console.print(
-        f"  [{cat_color}]│[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/] [bold]{label_short}"
-    )
+    arg_str = ""
     if args:
+        parts = []
         for k, v in args.items():
             if v is None or v == "":
                 continue
-            v_str = str(v)
-            if len(v_str) > 120:
-                v_str = v_str[:117] + "..."
-            console.print(f"  [{cat_color}]│[/]    [dim]{k}[/] [dim]·[/] {v_str}")
-    console.print()
+            v_str = str(v).replace("\n", " ")
+            if len(v_str) > 80:
+                v_str = v_str[:77] + "..."
+            parts.append(f"{k}={v_str}")
+        if parts:
+            arg_str = "  " + " ".join(parts)
+    console.print(
+        f"  [{cat_color}]│[/] [{cat_color}]{icon}[/] [{cat_color}]{cat}[/] [bold]{label_short}[/]"
+        f"{arg_str}"
+    )
 
 
 def _print_tool_out(label: str, tool_name: str, success: bool, result: str = "") -> None:
-    """Print a Claude Code-style "tool finished" block, mirroring _print_tool_in's
-    layout but with a status glyph instead of the start icon. Result preview
-    is a single trimmed line so a long handler output doesn't dominate the
-    scrollback — the model still sees the full text in its context."""
+    """Print a compact "tool finished" line with result preview."""
     cat = _tool_category(tool_name)
     cat_color = _TOOL_CAT_COLORS.get(cat, "dim cyan")
     status_icon = "[green]✓[/]" if success else "[red]✗[/]"
     label_short = label if len(label) < 60 else label[:57] + "..."
-    console.print(f"  [{cat_color}]│[/] {status_icon} [{cat_color}]{cat}[/] [bold]{label_short}")
+    line = f"  [{cat_color}]│[/] {status_icon} [{cat_color}]{cat}[/] [bold]{label_short}[/]"
     if result:
-        lines = [ln.rstrip() for ln in result.split("\n") if ln.strip()]
-        display = ""
-        if lines:
-            first = lines[0]
-            display = first if len(first) < 200 else first[:197] + "..."
-            if len(lines) > 1:
-                display += f" [dim]…({len(lines)} lines)[/]"
-        if display:
-            console.print(f"  [{cat_color}]│[/]    {display}")
-    console.print()
+        result_flat = result.replace("\n", " ").strip()
+        if len(result_flat) > 120:
+            result_flat = result_flat[:117] + "..."
+        line += f"  [dim]{result_flat}[/]"
+    console.print(line)
 
 
 def _format_cost(cost: float) -> str:
