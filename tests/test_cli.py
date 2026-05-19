@@ -1004,7 +1004,6 @@ class TestEscPollerCIRobustness:
     @pytest.mark.asyncio
     async def test_stream_completes_when_get_key_raises(self):
         import io
-
         from unittest.mock import patch as _patch
 
         with (
