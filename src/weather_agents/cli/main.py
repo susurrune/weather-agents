@@ -131,12 +131,16 @@ _COMMAND_LOOKUP: dict[str, str] = {c[0].split()[0].lstrip("/"): c[0] for c in _C
 # Input-line history buffer (shared across all agents in the session)
 _input_history: list[str] = []
 _history_idx: int = 0
+_key_buffer: list[str] = []
 
 # ── Cross-platform key reader ─────────────────────────────────────────────
 
 
 def _get_key() -> str:
     """Read a single keypress. Returns named tokens for special keys."""
+    if _key_buffer:
+        return _key_buffer.pop(0)
+
     if sys.platform == "win32":
         ch = _msvcrt.getwch()
         if ch in ("\x00", "\xe0"):
@@ -157,7 +161,21 @@ def _get_key() -> str:
                 return "esc"
             return "esc"
         if ch == "\r":
+            # Paste detection: if more chars immediately queued, it's a paste
+            if _msvcrt.kbhit():
+                return "shift_enter"
+            # Shift+Enter: check physical Shift key state
+            try:
+                import ctypes as _ct
+
+                if _ct.windll.user32.GetAsyncKeyState(0x10) & 0x8000:  # VK_SHIFT
+                    return "shift_enter"
+            except Exception:
+                pass
             return "enter"
+        if ch == "\n":
+            # From paste, treat as newline insert
+            return "shift_enter"
         if ch == "\x08":
             return "backspace"
         if ch == "\t":
@@ -889,20 +907,31 @@ async def _run_questionnaire(questions: list[dict]) -> str | None:
     return "；".join(answers) if answers else None
 
 
-def _ime_cursor_col(display_name: str, buffer: list[str], cursor_pos: int) -> int:
-    """Calculate the terminal column of the visual cursor in the input line."""
+def _ime_cursor_col(display_name: str, buffer: list[str], cursor_pos: int) -> tuple[int, int]:
+    """Calculate terminal column and row offset for the visual cursor.
+
+    Returns (col, row_offset) where row_offset is the visual line within
+    the multi-line input (0 = prompt line, 1+ = continuation lines).
+    """
     from rich.cells import cell_len
 
-    prefix = f"  {display_name} ❯ "
-    return cell_len(prefix) + cell_len("".join(buffer[:cursor_pos]))
+    text = "".join(buffer)
+    lines = text.split("\n")
+    cursor_col = cursor_pos
+    for i, line in enumerate(lines):
+        if cursor_col <= len(line) or i == len(lines) - 1:
+            prefix = f"  {display_name} ❯ " if i == 0 else "      "
+            return cell_len(prefix) + cell_len(line[:cursor_col]), i
+        cursor_col -= len(line) + 1
+    return 0, 0
 
 
-def _place_ime_cursor(col: int) -> None:
-    """Move Windows console cursor to *col* (preserving current row).
+def _place_ime_cursor(col: int, row_offset: int = 0) -> None:
+    """Move Windows console cursor to position (col, cur_y - offset).
 
     This tells the IME where to display the candidate window instead of
     defaulting to the far-right of the terminal after a Rich ``Live``
-    update.
+    update.  *row_offset* adjusts the Y coordinate for multi-line input.
     """
     if sys.platform != "win32":
         return
@@ -918,7 +947,7 @@ def _place_ime_cursor(col: int) -> None:
         kernel32.GetConsoleScreenBufferInfo(handle, csbi)
         _, cur_y = struct.unpack_from("HH", csbi, 4)  # X, Y from dwCursorPosition
 
-        coord = ctypes.wintypes._COORD(col, cur_y)
+        coord = ctypes.wintypes._COORD(col, max(0, cur_y - row_offset))
         kernel32.SetConsoleCursorPosition(handle, coord)
     except Exception:
         pass
@@ -1092,6 +1121,45 @@ async def _init_agent_lazy(agent, ctx) -> None:
                 ctx.mcp_status = await ctx.mcp.connect_all()
 
 
+def _render_line(
+    text: Text,
+    line: str,
+    cursor_line: int,
+    cursor_col: int,
+    color: str,
+    buffer: str,
+    line_idx: int = 0,
+) -> None:
+    """Render a single input line into *text*, positioning cursor if on cursor_line."""
+    if line_idx == cursor_line:
+        pre = line[:cursor_col]
+        post = line[cursor_col:]
+
+        if line_idx == 0 and buffer.startswith("/"):
+            space_idx = pre.find(" ")
+            if space_idx > 0:
+                text.append(pre[:space_idx], style="bold cyan")
+                text.append(pre[space_idx:])
+                text.append("▌", style=f"bold {color}")
+                text.append(post)
+            elif space_idx < 0 and post:
+                text.append(pre, style="bold cyan")
+                text.append("▌", style=f"bold {color}")
+                text.append(post)
+            else:
+                text.append(pre, style="bold cyan")
+                text.append("▌", style=f"bold {color}")
+                if post:
+                    text.append(post)
+        else:
+            text.append(pre)
+            text.append("▌", style=f"bold {color}")
+            if post:
+                text.append(post)
+    else:
+        text.append(line)
+
+
 def _build_input_display(
     agent,
     ctx,
@@ -1106,7 +1174,17 @@ def _build_input_display(
     color = AGENT_COLORS.get(agent.name, "cyan")
     results: list = []
 
-    # ── Prompt line ──────────────────────────────────────────────────────────
+    # Split buffer into lines and locate cursor line/column
+    lines = buffer.split("\n")
+    cursor_line = 0
+    cursor_col = cursor_pos
+    for i, line in enumerate(lines):
+        if cursor_col <= len(line) or i == len(lines) - 1:
+            cursor_line = i
+            break
+        cursor_col -= len(line) + 1  # +1 for the \n separator
+
+    # ── Prompt line (first line) ──────────────────────────────────────────────
     prompt = Text()
     prompt.append("  ")
     if mode == "plan":
@@ -1115,36 +1193,16 @@ def _build_input_display(
         prompt.append("[AUTO] ", style="bold yellow")
     prompt.append(agent.display_name, style=f"bold {color}")
     prompt.append(" ❯ ", style=f"{color}")
-    if buffer:
-        pre = buffer[:cursor_pos]
-        post = buffer[cursor_pos:]
-        if buffer.startswith("/"):
-            space_idx = pre.find(" ")
-            if space_idx > 0:
-                prompt.append(pre[:space_idx], style="bold cyan")
-                prompt.append(pre[space_idx:])
-                prompt.append("▌", style=f"bold {color}")
-                prompt.append(post)
-            elif space_idx < 0 and post:
-                # /command followed by args — pre is the cmd, post is args
-                prompt.append(pre, style="bold cyan")
-                prompt.append("▌", style=f"bold {color}")
-                prompt.append(post)
-            else:
-                prompt.append(pre, style="bold cyan")
-                prompt.append("▌", style=f"bold {color}")
-                if post:
-                    prompt.append(post)
-        else:
-            prompt.append(pre)
-            prompt.append("▌", style=f"bold {color}")
-            if post:
-                prompt.append(post)
-    else:
-        prompt.append("▌", style=f"bold {color}")
+    _render_line(prompt, lines[0] if lines else "", cursor_line, cursor_col, color, buffer)
     results.append(prompt)
 
-    # ── Subtle separator ─────────────────────────────────────────────────────
+    # ── Continuation lines ────────────────────────────────────────────────────
+    for i in range(1, len(lines)):
+        row = Text("      ")  # indent to align below prompt text
+        _render_line(row, lines[i], cursor_line, cursor_col, color, buffer, line_idx=i)
+        results.append(row)
+
+    # ── Subtle separator ──────────────────────────────────────────────────────
     w = console.width
     sep = "─" * max(0, w - 4)
     results.append(Text(f"  {sep}", style="dim"))
@@ -1239,7 +1297,8 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
             live.update(tbl)
             # Move the console cursor to match the visual ▌ position so
             # the IME candidate window appears in the right place.
-            _place_ime_cursor(_ime_cursor_col(agent.display_name, buffer, cursor_pos))
+            ime_col, ime_row = _ime_cursor_col(agent.display_name, buffer, cursor_pos)
+            _place_ime_cursor(ime_col, ime_row)
 
             try:
                 key = _get_key()
@@ -1253,6 +1312,11 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
                     result = "".join(buffer).strip()
                 if result:
                     break
+                continue
+
+            if key in ("shift_enter", "\n"):
+                buffer.insert(cursor_pos, "\n")
+                cursor_pos += 1
                 continue
 
             if key == "esc":
