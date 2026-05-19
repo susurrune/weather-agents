@@ -296,7 +296,7 @@ class TestCacheKeyExtra:
     async def test_cache_key_extra_invalidates_on_change(self):
         """Simulate read_file: same args, but the mtime-extra value
         changes between calls — second call must NOT hit the cache."""
-        from weather_agents.core.tool import Tool, ToolParameter, _RESULT_STORE
+        from weather_agents.core.tool import _RESULT_STORE, Tool, ToolParameter
 
         _RESULT_STORE.clear()
 
@@ -335,7 +335,7 @@ class TestCacheKeyExtra:
     async def test_cache_key_extra_failure_is_safe(self):
         """If cache_key_extra raises, we shouldn't crash — fall back to a
         sentinel that won't accidentally collide with a real value."""
-        from weather_agents.core.tool import Tool, _RESULT_STORE
+        from weather_agents.core.tool import _RESULT_STORE, Tool
 
         _RESULT_STORE.clear()
 
