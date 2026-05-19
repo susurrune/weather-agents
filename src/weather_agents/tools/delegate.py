@@ -85,6 +85,13 @@ def create_delegate_tool(
             names = ", ".join(sorted(agent_map.keys()))
             return f"Unknown agent '{agent}'. Available agents: {names}"
 
+        if calling_agent and agent == calling_agent.name:
+            return (
+                f"You are already {calling_agent.display_name}. "
+                f"Complete the task directly using your own tools and knowledge "
+                f"— do not delegate to yourself."
+            )
+
         target = agent_map[agent]
 
         current_depth = _delegation_depth_var.get()
