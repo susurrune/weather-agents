@@ -147,16 +147,47 @@ Like snow: silent but all-encompassing — clear structure, thorough considerati
             )
         prior_text = "\n".join(prior_lines) if prior_lines else "(none yet)"
 
+        # Identify which agents already produced thin / failed results.
+        # snow's replan output must change tack — either reassign to a
+        # different agent OR add a fundamentally different action — rather
+        # than re-issue a near-identical task to the same agent and watch
+        # it produce the same placeholder reply.
+        from weather_agents.core.factory import _is_thin_content
+
+        failing_agents: set[str] = {
+            getattr(r, "agent", "") or ""
+            for r in prior_results
+            if not getattr(r, "success", True) or _is_thin_content(getattr(r, "content", "") or "")
+        }
+        failing_agents.discard("")
+        failing_hint = (
+            f"\n\n## 已证明无效的 agent\n"
+            f"{', '.join(sorted(failing_agents))} 已在上一轮返回占位/无交付物。\n"
+            "**禁止把同类任务再交给以上 agent**。请：\n"
+            "- 用不同的 agent（fog/rain/frost/dew/fair 中没出现过的）重试该任务，或\n"
+            "- 把任务**拆得更小更具体**（如把「调研 5 个数据库」拆成 5 个独立的"
+            "「调研单个数据库 X」），或\n"
+            "- 改用更直接的工具策略（如让 dew 直接 shell_exec curl 抓数据，"
+            "而非让 fog 反复 web_search）"
+            if failing_agents
+            else ""
+        )
+
         prompt = (
-            "之前的子任务执行后，验收员发现还有缺口。请仅针对**缺失的部分**追加新的子任务。\n\n"
+            "之前的子任务执行后，验收员发现还有缺口。请仅针对**缺失的部分**追加新的子任务，"
+            "并且**必须换一种执行策略**——重复同款任务给同款 agent 没有意义。\n\n"
             f"## 原目标\n{goal}\n\n"
             f"## 已执行子任务\n{prior_text}\n\n"
             f"## 缺口（验收员报告）\n{missing}\n\n"
-            f"## 已使用的 task id（必须避开）\n{sorted(used_ids) if used_ids else '(none)'}\n\n"
+            f"## 已使用的 task id（必须避开）\n{sorted(used_ids) if used_ids else '(none)'}"
+            f"{failing_hint}\n\n"
             "请输出新任务的 JSON 计划：\n"
             '{"steps": [{"id": "新id", "agent": "fog|rain|frost|dew|fair", '
             '"description": "具体任务", "depends_on": ["可选已完成任务id"]}]}\n'
-            "只输出新增任务，不要重复已完成的；id 必须避开上面的列表；只输出 JSON。"
+            "约束：\n"
+            "- 只输出新增任务，不要重复已完成的；id 必须避开上面的列表\n"
+            "- 控制在 2 个新任务以内（精简优先）\n"
+            "- 只输出 JSON，无其他文本"
         )
 
         self.memory.add_message("user", prompt)

@@ -3193,10 +3193,35 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
             return True
 
         async def _on_start(t):
+            # Persistent per-task header so the transcript records WHICH
+            # agent did what. Without this, after the transient dashboard
+            # vanishes the user is left with a flat sequence of tool
+            # blocks and a final summary — no way to tell that the first
+            # 5 tool calls came from fog and the next 3 from rain.
+            agent_name = t.assigned_to or "?"
+            color = AGENT_COLORS.get(agent_name, "white")
+            ag_icon = icon_text(agent_name)
+            display = t.description[:60] + "..." if len(t.description) > 63 else t.description
+            console.print()
+            console.print(
+                f"[{color}]── {ag_icon} {agent_name} · task {t.id}[/] "
+                f"[dim]{display}[/] [{color}]"
+                + "─" * max(4, 78 - len(display) - len(agent_name) - len(t.id) - 12)
+                + "[/]"
+            )
             if dashboard:
                 dashboard.on_start(t.id, t.description, t.assigned_to or "")
 
         async def _on_done(t, r):
+            # Mirror the start divider with a compact "outcome" line. Same
+            # color rule: green check on success, red cross on failure.
+            agent_name = t.assigned_to or "?"
+            color = "green" if r.success else "red"
+            glyph = "✓" if r.success else "✗"
+            console.print(
+                f"[{color}]   {glyph} task {t.id} {agent_name}[/] "
+                f"[dim]({len(r.content or '')} chars)[/]"
+            )
             if dashboard:
                 dashboard.on_done(t.id, r.success)
 
