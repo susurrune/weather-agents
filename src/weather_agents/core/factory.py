@@ -296,7 +296,7 @@ async def orchestrate_task(
     *,
     on_task_start: Callable[[Any], Awaitable[None]] | None = None,
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None = None,
-    on_planned: Callable[[list[Any]], Awaitable[None]] | None = None,
+    on_planned: Callable[[list[Any]], Awaitable[bool | None]] | None = None,
     result_truncate: int | None = 500,
     summary_prompt_template: str = "",
     max_task_retries: int = 3,
@@ -503,7 +503,7 @@ async def _run_orchestration(
     *,
     on_task_start: Callable[[Any], Awaitable[None]] | None,
     on_task_done: Callable[[Any, TaskExecutionResult], Awaitable[None]] | None,
-    on_planned: Callable[[list[Any]], Awaitable[None]] | None,
+    on_planned: Callable[[list[Any]], Awaitable[bool | None]] | None,
     result_truncate: int | None,
     summary_prompt_template: str,
     max_task_retries: int,
@@ -521,9 +521,15 @@ async def _run_orchestration(
     else:
         tasks = await snow.orchestrate(goal)  # type: ignore[attr-defined]
 
-    # Notify caller of the plan BEFORE execution — enables plan preview UI
+    # Notify caller of the plan BEFORE execution — enables plan preview UI.
+    # Treat ``on_planned`` returning ``False`` as an explicit cancellation
+    # signal (e.g. PLAN mode where the user pressed Esc). Any other return
+    # value (None, True) means "proceed". Backward-compatible because the
+    # only existing callbacks return None.
     if on_planned is not None:
-        await on_planned(tasks)
+        proceed = await on_planned(tasks)
+        if proceed is False:
+            return tasks, [], "[CANCELLED] plan rejected before execution"
 
     # Build dependency graph and execute in topological order
     completed: set[str] = set()
@@ -612,7 +618,11 @@ async def _run_orchestration(
         # (initial + all follow-ups) so re-plan UIs can grow the checklist.
         tasks.extend(extra_tasks)
         if on_planned is not None:
-            await on_planned(tasks)
+            proceed = await on_planned(tasks)
+            if proceed is False:
+                # User declined the follow-up plan; stop now and return what
+                # we have so far rather than running unconfirmed extra work.
+                break
         pending = _filter_cycles(
             [t for t in extra_tasks if t.assigned_to and t.assigned_to != "snow"]
         )

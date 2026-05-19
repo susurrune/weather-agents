@@ -438,3 +438,87 @@ class TestQualityGateAndReplan:
         # The follow-up task ran
         frost.execute_task.assert_awaited_once()
         assert any(r.id == "3" for r in results)
+
+
+class TestPlanConfirmGate:
+    """on_planned returning False must abort orchestration before any
+    sub-task runs — the contract PLAN mode relies on."""
+
+    @pytest.mark.asyncio
+    async def test_on_planned_false_aborts(self):
+        from weather_agents.core.agent import Task
+
+        snow = Mock()
+        snow.orchestrate = AsyncMock(
+            return_value=[Task(id="1", description="x", assigned_to="rain")]
+        )
+        snow.chat = AsyncMock(return_value="never called")
+
+        rain = Mock()
+        rain.execute_task = AsyncMock(return_value=Mock(success=True, content="oops"))
+
+        async def _reject(_tasks):
+            return False  # user pressed Esc
+
+        tasks, results, summary = await orchestrate_task(
+            "do thing",
+            agent_map={"rain": rain, "snow": snow},
+            on_planned=_reject,
+        )
+        # Tasks were planned but never executed
+        assert len(tasks) == 1
+        assert results == []
+        assert "CANCELLED" in summary
+        rain.execute_task.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_on_planned_true_proceeds(self):
+        from weather_agents.core.agent import Task
+
+        snow = Mock()
+        snow.orchestrate = AsyncMock(
+            return_value=[Task(id="1", description="x", assigned_to="rain")]
+        )
+        snow.chat = AsyncMock(return_value="ok")
+
+        rain = Mock()
+        rain.execute_task = AsyncMock(
+            return_value=Mock(success=True, content="real deliverable text here")
+        )
+
+        async def _accept(_tasks):
+            return True
+
+        _, results, _ = await orchestrate_task(
+            "do thing",
+            agent_map={"rain": rain, "snow": snow},
+            on_planned=_accept,
+        )
+        assert len(results) == 1
+        rain.execute_task.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_on_planned_none_proceeds_backcompat(self):
+        """Legacy callbacks returning None must still mean 'proceed'."""
+        from weather_agents.core.agent import Task
+
+        snow = Mock()
+        snow.orchestrate = AsyncMock(
+            return_value=[Task(id="1", description="x", assigned_to="rain")]
+        )
+        snow.chat = AsyncMock(return_value="ok")
+
+        rain = Mock()
+        rain.execute_task = AsyncMock(
+            return_value=Mock(success=True, content="real deliverable text here")
+        )
+
+        async def _silent(_tasks):
+            return None  # backward-compat
+
+        _, results, _ = await orchestrate_task(
+            "do thing",
+            agent_map={"rain": rain, "snow": snow},
+            on_planned=_silent,
+        )
+        assert len(results) == 1

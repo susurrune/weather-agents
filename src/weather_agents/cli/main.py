@@ -1458,71 +1458,42 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _print_help(ctx)
                 continue
 
-            # --- Default mode: route by complexity, no human gate ---
-            # Smart adaptive — `direct` short questions are one-shot, no
-            # auto-continue probing; `single`/`orchestrate` follow the autonomous
-            # path. The router runs in <1ms (rules only, no LLM).
+            # --- Mode dispatch ---
+            # DEFAULT: smart router decides per-message.
+            #   direct       → single-agent chat, NO auto-continue (one-shot Q&A).
+            #   single       → single-agent chat WITH auto-continue (normal work).
+            #   orchestrate  → multi-agent factory.orchestrate_task path.
+            # PLAN: every message goes through _run_task with a confirm gate so
+            #       the user sees and approves a structured plan first.
+            # AUTO: single-agent chat with auto-continue, never orchestration
+            #       (legacy autonomous-single-agent behavior).
             effective_mode = MODE.current
+            _route_disable_auto_continue = False
+
+            if effective_mode is InteractiveMode.PLAN:
+                # PLAN: orchestration path WITH user confirmation. Works for
+                # simple and complex goals alike (the fast path also gates
+                # behind Enter so the contract is uniform).
+                for ag in agents.values():
+                    await _init_agent_lazy(ag, ctx)
+                await _run_task(inp, agents, confirm=True)
+                continue
+
             if effective_mode is InteractiveMode.DEFAULT:
                 from weather_agents.core.router import classify
 
-                # `direct` → one-shot reply, never trigger auto-continue.
-                # `single` / `orchestrate` → behave like AUTO so the model
-                # can finish multi-step work without nagging the user.
+                cls = classify(inp)
+                if cls == "orchestrate":
+                    # Big work item — route to multi-agent DAG with judge/
+                    # replan. No confirm: DEFAULT is the no-gate smart mode.
+                    for ag in agents.values():
+                        await _init_agent_lazy(ag, ctx)
+                    await _run_task(inp, agents)
+                    continue
+                # direct → no auto-continue (one-shot answer)
+                # single → allow auto-continue (model may continue tools)
                 effective_mode = InteractiveMode.AUTO
-                _route_disable_auto_continue = classify(inp) == "direct"
-            else:
-                _route_disable_auto_continue = False
-
-            # --- Plan mode: show a plan before executing ---
-            if effective_mode is InteractiveMode.PLAN:
-                await _init_agent_lazy(agent, ctx)
-                plan_t0 = time.monotonic()
-                plan_content = ""
-                plan_live = Live(
-                    _build_stream_display(agent, "Planning...", ""),
-                    console=console,
-                    refresh_per_second=12,
-                    transient=False,
-                )
-                plan_live.start()
-                try:
-                    async for event in agent.chat_stream(f"[PLAN] {inp}"):
-                        if event["type"] == "content":
-                            plan_content += event["text"]
-                            plan_live.update(
-                                _build_stream_display(agent, "Planning...", plan_content)
-                            )
-                        elif event["type"] == "done":
-                            break
-                except KeyboardInterrupt:
-                    pass
-                finally:
-                    if plan_content.strip():
-                        plan_live.update(
-                            _build_response_panel(
-                                agent, plan_content, time.monotonic() - plan_t0, ctx=ctx
-                            )
-                        )
-                    plan_live.stop()
-
-                if not plan_content.strip():
-                    console.print("  [dim yellow]plan empty — skipping[/dim yellow]")
-                    continue
-
-                console.print()
-                console.print(
-                    "  [dim]Press [bold]Enter[/bold] to execute · [bold]Esc[/bold] to cancel[/dim]"
-                )
-                key = _get_key()
-                if key != "enter":
-                    console.print("  [dim]cancelled[/dim]")
-                    agent._pop_last_user_message()
-                    continue
-
-                # Plan confirmed: remove the [PLAN] user message so it
-                # doesn't appear twice when chat_stream adds inp again.
-                agent._pop_last_user_message()
+                _route_disable_auto_continue = cls == "direct"
 
             # --- Streaming chat with tool-call support ---
             # Inner loop: allows choice-menu re-entry with a new input
@@ -2838,7 +2809,14 @@ class _TaskDashboard:
         )
 
 
-async def _run_task(goal: str, agents=None) -> None:
+async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
+    """Run a goal through the orchestration path.
+
+    ``confirm=True`` is what PLAN mode passes — the plan is rendered and the
+    user must press Enter to proceed (Esc cancels). For the fast paths
+    (``direct``/``single`` classification) confirm also fires before the
+    single-agent call, so PLAN never executes without a confirmation gate.
+    """
     own_ctx = None
     if agents is None:
         own_ctx = create_system_context()
@@ -2871,6 +2849,17 @@ async def _run_task(goal: str, agents=None) -> None:
                     refined_goal = goal
 
                 target = agents[target_name]
+                if confirm:
+                    console.print()
+                    console.print(f"  [bold]Plan[/]  [dim]·[/] {target.display_name} will answer:")
+                    console.print(f"  [dim]>[/dim] {refined_goal}")
+                    console.print(
+                        "  [dim]Press [bold]Enter[/bold] to execute · "
+                        "[bold]Esc[/bold] to cancel[/dim]"
+                    )
+                    if _get_key() != "enter":
+                        console.print("  [dim]cancelled[/dim]")
+                        return
                 console.print()
                 console.print(f"  [bold]{target.display_name}[/bold]")
                 reply = await target.chat(refined_goal)
@@ -2884,27 +2873,48 @@ async def _run_task(goal: str, agents=None) -> None:
 
         from weather_agents.core.factory import orchestrate_task
 
-        # ── Plan → show plan → execute (with IN/OUT) → results ──
+        # ── Plan → show plan → (confirm if PLAN mode) → execute → results ──
         tasks: list[Any] = []
         results: list[Any] = []
         summary = ""
         dashboard: _TaskDashboard | None = None
+        # Render the plan once; subsequent re-plans (from the judge loop)
+        # append rather than re-print the original plan.
+        plan_rendered = False
 
         async def _on_planned(planned_tasks):
-            nonlocal tasks, dashboard
+            nonlocal tasks, dashboard, plan_rendered
             tasks = planned_tasks
             if not tasks:
-                return
+                return True
             console.print()
-            console.print(f"  [bold]== Plan[/bold]  [dim]{len(tasks)} tasks[/dim]")
+            header = "Replan" if plan_rendered else "Plan"
+            console.print(f"  [bold]== {header}[/bold]  [dim]{len(tasks)} tasks[/dim]")
             for i, t in enumerate(tasks, 1):
                 deps = t.all_deps
                 dep_str = f" [dim]← #{','.join(deps)}[/dim]" if deps else ""
                 ict = icon_text(t.assigned_to or "")
                 console.print(f"  [{i}] {ict} [bold]{t.description}[/bold]{dep_str}")
-            # Start live dashboard after plan is printed
-            dashboard = _TaskDashboard(goal, tasks)
-            dashboard.start()
+
+            # Plan-mode confirmation gate — applies on the first plan; subsequent
+            # re-plans during the judge loop run without gating (the user already
+            # opted into orchestration on round 1).
+            if confirm and not plan_rendered:
+                console.print()
+                console.print(
+                    "  [dim]Press [bold]Enter[/bold] to execute · [bold]Esc[/bold] to cancel[/dim]"
+                )
+                if _get_key() != "enter":
+                    console.print("  [dim]cancelled[/dim]")
+                    plan_rendered = True
+                    return False
+
+            plan_rendered = True
+            # Start live dashboard after plan is printed/confirmed
+            if dashboard is None:
+                dashboard = _TaskDashboard(goal, tasks)
+                dashboard.start()
+            return True
 
         async def _on_start(t):
             if dashboard:
