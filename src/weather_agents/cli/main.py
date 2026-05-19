@@ -161,9 +161,24 @@ def _get_key() -> str:
                 return "esc"
             return "esc"
         if ch == "\r":
-            # Paste detection: if more chars immediately queued, it's a paste
-            if _msvcrt.kbhit():
-                return "shift_enter"
+            # Drain all immediately queued chars to distinguish paste from Enter.
+            # Enter at normal typing speed never has extra chars queued.
+            extra = []
+            while _msvcrt.kbhit():
+                n = _msvcrt.getwch()
+                extra.append(n)
+                if len(extra) >= 16:
+                    break
+
+            if extra:
+                # \r\n from Enter → all extra chars are just \n, discard them
+                if all(c == "\n" for c in extra):
+                    pass  # consume the \n, fall through to Shift check
+                else:
+                    # Has real content → paste, stash for next reads
+                    _key_buffer.extend(extra)
+                    return "shift_enter"
+
             # Shift+Enter: check physical Shift key state
             try:
                 import ctypes as _ct
@@ -1320,6 +1335,12 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
             if key in ("shift_enter", "\n"):
                 buffer.insert(cursor_pos, "\n")
                 cursor_pos += 1
+                continue
+
+            if key == "\t":
+                # Tab from paste — insert 4 spaces
+                buffer[cursor_pos:cursor_pos] = [" ", " ", " ", " "]
+                cursor_pos += 4
                 continue
 
             if key == "esc":
