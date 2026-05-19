@@ -92,6 +92,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/status", "agent overview"),
     ("/cost", "usage & cost (reset: /cost reset)"),
     ("/compact", "compress context"),
+    ("/retry", "resend last user message (after errors)"),
     ("/history", "event log"),
     ("/mcp", "MCP server status"),
     ("/skills", "list skills"),
@@ -1488,6 +1489,41 @@ async def _interactive(agent_name: str | None = None) -> None:
                 result = await agent.compact()
                 console.print(f"  [green]✓ {result}[/green]")
                 continue
+            if cmd_lower == "/retry":
+                # Re-send the last user message. Useful after a content-
+                # filter rejection or a transient error — saves the user
+                # from re-typing a long prompt. We scan short_term in
+                # reverse for the last user role, pop the trailing
+                # user + any following assistant/tool turns (so retry
+                # doesn't see itself twice), then fall through into the
+                # normal chat path with the recovered text.
+                last_user_text: str | None = None
+                for _m in reversed(agent.memory.short_term):
+                    if _m.role == "user":
+                        last_user_text = _m.content
+                        break
+                if not last_user_text:
+                    console.print("  [dim yellow]no prior user message to retry[/dim yellow]")
+                    continue
+                with agent.memory._short_term_lock:
+                    while agent.memory.short_term and agent.memory.short_term[-1].role in (
+                        "user",
+                        "assistant",
+                        "tool",
+                    ):
+                        last = agent.memory.short_term[-1]
+                        agent.memory.short_term.pop()
+                        if last.role == "user":
+                            break
+                console.print(f"  [dim]retrying:[/] [bold]{last_user_text[:100]}[/]")
+                # Rebind inp + cmd so the remaining slash-command checks
+                # see the original text (which won't match any slash
+                # pattern for normal queries) and the chat path runs
+                # with the recovered prompt.
+                inp = last_user_text
+                cmd = inp.strip()
+                cmd_lower = cmd.lower()
+                # NO continue — fall through to chat path below.
             if cmd_lower == "/history":
                 _print_history(ctx)
                 continue
@@ -2075,6 +2111,10 @@ def _print_help(ctx) -> None:
                 ("/cost", _h("用量与费用", "usage & cost")),
                 ("/cost reset", _h("重置计数", "reset counters")),
                 ("/compact", _h("压缩上下文", "compress context")),
+                (
+                    "/retry",
+                    _h("重发上一条消息（出错后）", "resend last user message (after errors)"),
+                ),
                 ("/history", _h("事件日志", "event log")),
                 ("/mcp", _h("MCP 服务器状态", "MCP status")),
                 ("/memory", _h("记忆层状态", "memory stats")),
@@ -3324,6 +3364,28 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
         console.print(
             f"  [{result_color}]{'✓' if ok == total else '!'} {ok}/{total} tasks completed[/{result_color}]"
         )
+
+        # Aggregate every artifact across all tasks. The per-task
+        # [Artifacts produced] block lives inside each result.content
+        # but is easy to miss when a long summary follows. Pulling them
+        # all into one terminal block at the very end gives the user a
+        # single shopping-list of "here is what was actually written".
+        _all_artifacts: list[str] = []
+        _seen: set[str] = set()
+        import re as _re_local
+
+        _artifact_pat = _re_local.compile(r"`([A-Za-z]:[\\/][^`\n]+|[/~][^`\n]+)`")
+        for r in results:
+            for m in _artifact_pat.finditer(r.content or ""):
+                path = m.group(1)
+                if path not in _seen:
+                    _seen.add(path)
+                    _all_artifacts.append(path)
+        if _all_artifacts:
+            console.print()
+            console.print(f"  [bold cyan]Files produced ({len(_all_artifacts)})[/]")
+            for p in _all_artifacts:
+                console.print(f"    [cyan]·[/] [bold]{p}[/]")
 
         if summary:
             console.print(
