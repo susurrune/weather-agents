@@ -397,6 +397,36 @@ class BaseAgent:
             )
         )
 
+        async def _extend(n: int = 10) -> str:
+            old = self._max_tool_rounds
+            self._max_tool_rounds += n
+            return (
+                f"✓ Tool-round limit extended by {n} "
+                f"(was {old}, now {self._max_tool_rounds}). "
+                "You have more iterations to complete the task."
+            )
+
+        self.tool_registry.register(
+            Tool(
+                name="extend_rounds",
+                description=(
+                    "Extend the tool-call budget for the current turn. Call this "
+                    "when you know you need more iterations to finish — e.g. before "
+                    "the limit is hit. Accepts a positive integer (default 10). "
+                    "The limit can be extended multiple times per turn."
+                ),
+                parameters=[
+                    ToolParameter(
+                        name="n",
+                        type="integer",
+                        description="Number of additional rounds to add (default 10)",
+                        required=False,
+                    ),
+                ],
+                handler=_extend,
+            )
+        )
+
     def activate_skill(self, name: str) -> bool:
         """Activate a skill by name. Invokes handler for custom tool injection.
 
@@ -495,11 +525,23 @@ class BaseAgent:
         else:
             # Index skills by name so we don't depend on _skills list order.
             by_name = {s.name: s for s in self._skills}
-            skill_prompts = [
-                by_name[name].system_prompt
-                for name in sorted(self._active_skills)
-                if name in by_name and by_name[name].system_prompt
-            ]
+            skill_prompts: list[str] = []
+            for name in sorted(self._active_skills):
+                s = by_name.get(name)
+                if not s:
+                    continue
+                parts: list[str] = []
+                if s.system_prompt:
+                    parts.append(s.system_prompt)
+                # Append resource-dir hint so the LLM can find skill assets
+                # without searching the filesystem first.
+                if s.resource_dir:
+                    lang = getattr(self.config.llm, "language", "zh")
+                    if lang == "en":
+                        parts.append(f"Resource directory: {s.resource_dir}")
+                    else:
+                        parts.append(f"资源目录: {s.resource_dir}")
+                skill_prompts.append("\n\n".join(parts))
             prompt = self._base_system_prompt
             if skill_prompts:
                 prompt += "\n\n" + "\n\n".join(skill_prompts)
@@ -705,7 +747,12 @@ class BaseAgent:
 
         try:
             full_content = ""
-            for _iteration in range(self._max_tool_rounds):
+            _round_limit = self._max_tool_rounds
+            _round_count = 0
+            while _round_count < _round_limit:
+                _round_count += 1
+                # extend_rounds tool may raise the limit mid-turn.
+                _round_limit = max(_round_limit, self._max_tool_rounds)
                 messages = await self._messages_with_recall()
                 tool_names = [t for t in self._active_tool_names() if t not in suppressed_tools]
                 # Narrow the active tool set to those most relevant to the
@@ -1460,7 +1507,11 @@ class BaseAgent:
         )
 
         try:
-            for _ in range(mi):
+            _limit = mi
+            _rounds = 0
+            while _rounds < _limit:
+                _rounds += 1
+                _limit = max(_limit, self._max_tool_rounds)
                 messages = await self._messages_with_recall()
                 if on_status:
                     on_status("thinking...")

@@ -105,6 +105,7 @@ def _get_claude_skills() -> list[Skill]:
         try:
             skill = Skill.from_markdown(skill_file)
             if skill:
+                skill.resource_dir = str(entry)
                 skills.append(skill)
         except Exception:
             continue

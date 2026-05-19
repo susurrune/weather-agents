@@ -54,6 +54,9 @@ class Skill:
     # ``list_skills + use_skill`` for common patterns. Empty list = no
     # auto-trigger (skill is only activatable explicitly).
     triggers: list[str] = field(default_factory=list)
+    # Directory path this skill was loaded from (set by loader). Used by the
+    # agent to tell the LLM where to find the skill's templates and assets.
+    resource_dir: str | None = None
 
     @classmethod
     def from_markdown(cls, path: Path) -> Skill | None:
@@ -163,6 +166,7 @@ class SkillRegistry:
                 continue
             skill = Skill.from_markdown(md_file)
             if skill:
+                skill.resource_dir = str(dir_path)
                 self.register(skill)
                 loaded.append(skill)
 
