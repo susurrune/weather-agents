@@ -1462,9 +1462,14 @@ class BaseAgent:
         self.memory.set_working("current_task", task)
 
         prompt = (
-            f"Complete this task NOW using your available tools. "
-            f"Actually write files, execute commands, or produce the needed output — "
-            f"do NOT just describe a plan or explain what you would do.\n\n"
+            "Complete this task NOW using your available tools. "
+            "Actually write files, execute commands, or produce the needed output — "
+            "do NOT just describe a plan or explain what you would do.\n"
+            "Do NOT return placeholder replies like 'done', 'completed', 'task finished', "
+            "'已完成', or '好的' alone — those count as failure and will be retried. "
+            "Produce the actual deliverable. If you genuinely cannot complete the task, "
+            "explain what's blocking in concrete terms (missing file, missing permission, "
+            "tool error, etc.) rather than returning a success-shaped acknowledgement.\n\n"
             f"Task: {task.description}"
         )
         if task.metadata:

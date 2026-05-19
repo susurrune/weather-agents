@@ -341,3 +341,100 @@ class TestCreateSystemContext:
             ctx = create_system_context()
             assert len(ctx.agent_map) == 6
             assert set(ctx.agent_map.keys()) == {"fog", "rain", "frost", "snow", "dew", "fair"}
+
+
+class TestQualityGateAndReplan:
+    """Quality gate (thin/placeholder/truncated rejection) and the
+    judge-driven re-plan loop. Together these ensure the orchestrator
+    doesn't quietly accept "Done." and stop early."""
+
+    def test_is_thin_content_classifies_placeholders(self):
+        from weather_agents.core.factory import _is_thin_content
+
+        assert _is_thin_content("") is True
+        assert _is_thin_content("   ") is True
+        assert _is_thin_content("Done.") is True
+        assert _is_thin_content("好的") is True
+        assert _is_thin_content("[truncated] max rounds reached") is True
+        assert _is_thin_content("[Error: tool 'x' not found]") is True
+        # Real (even short) answers must NOT be flagged
+        assert _is_thin_content("code written") is False
+        assert _is_thin_content("Read the file: lines 1-12") is False
+        # Real sentence containing the word "done" survives
+        assert _is_thin_content("All preflight checks done; proceeding.") is False
+
+    @pytest.mark.asyncio
+    async def test_thin_content_triggers_retry(self):
+        """An agent returning 'Done.' must be retried by the orchestrator."""
+        from weather_agents.core.agent import Task
+
+        attempts = {"n": 0}
+
+        async def _flaky(_t):
+            attempts["n"] += 1
+            # First attempt: placeholder ack. Second: real output.
+            if attempts["n"] == 1:
+                return Mock(success=True, content="Done.")
+            return Mock(success=True, content="actual deliverable here")
+
+        rain = Mock()
+        rain.execute_task = AsyncMock(side_effect=_flaky)
+
+        snow = Mock()
+        snow.orchestrate = AsyncMock(
+            return_value=[Task(id="1", description="write something", assigned_to="rain")]
+        )
+        snow.chat = AsyncMock(return_value="ok")
+
+        _, results, _ = await orchestrate_task(
+            "write something",
+            agent_map={"rain": rain, "snow": snow},
+            max_task_retries=3,
+        )
+        assert attempts["n"] >= 2, "thin content should have triggered a retry"
+        assert "actual deliverable" in results[0].content
+
+    @pytest.mark.asyncio
+    async def test_replan_called_when_judge_says_not_achieved(self):
+        """Multi-task plan: if judge returns achieved=false, snow.replan_for_missing
+        must be invoked with the missing description."""
+        from weather_agents.core.agent import Task
+
+        snow = Mock()
+        # Initial plan: two tasks
+        snow.orchestrate = AsyncMock(
+            return_value=[
+                Task(id="1", description="step A", assigned_to="fog"),
+                Task(id="2", description="step B", assigned_to="rain"),
+            ]
+        )
+        # Judge says "no, missing X" on round 1, "achieved" on round 2,
+        # then a final summary. The judge runs each round, so we need
+        # enough side-effects to cover all calls.
+        snow.chat = AsyncMock(
+            side_effect=[
+                '{"achieved": false, "missing": "测试用例覆盖率"}',
+                '{"achieved": true, "missing": ""}',
+                "final summary",
+            ]
+        )
+        # Replan returns one extra task
+        snow.replan_for_missing = AsyncMock(
+            return_value=[Task(id="3", description="add tests", assigned_to="frost")]
+        )
+
+        fog = Mock()
+        fog.execute_task = AsyncMock(return_value=Mock(success=True, content="A done"))
+        rain = Mock()
+        rain.execute_task = AsyncMock(return_value=Mock(success=True, content="B done"))
+        frost = Mock()
+        frost.execute_task = AsyncMock(return_value=Mock(success=True, content="tests added"))
+
+        _, results, _ = await orchestrate_task(
+            "build thing",
+            agent_map={"fog": fog, "rain": rain, "frost": frost, "snow": snow},
+        )
+        snow.replan_for_missing.assert_awaited_once()
+        # The follow-up task ran
+        frost.execute_task.assert_awaited_once()
+        assert any(r.id == "3" for r in results)

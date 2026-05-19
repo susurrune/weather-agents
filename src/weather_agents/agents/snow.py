@@ -131,6 +131,66 @@ Like snow: silent but all-encompassing — clear structure, thorough considerati
         tasks = self._parse_task_plan(response.content, goal)
         return tasks
 
+    async def replan_for_missing(
+        self,
+        goal: str,
+        prior_results: list,  # noqa: ANN001 — list[TaskExecutionResult] from factory
+        missing: str,
+        *,
+        existing_ids: set[str] | None = None,
+    ) -> list[Task]:
+        """Produce additional tasks that close the gap reported by the judge.
+
+        Called by the orchestrator after a round whose results were judged
+        insufficient. The prompt explicitly tells snow what's missing and
+        which task ids are already used, so the new tasks have non-colliding
+        ids and depend on the right upstream outputs.
+        """
+        used_ids = existing_ids or set()
+        prior_lines: list[str] = []
+        for r in prior_results:
+            status = "成功" if getattr(r, "success", True) else "失败"
+            prior_lines.append(
+                f"- task {r.id} ({r.agent}, {status}): {(getattr(r, 'content', '') or '')[:200]}"
+            )
+        prior_text = "\n".join(prior_lines) if prior_lines else "(none yet)"
+
+        prompt = (
+            "之前的子任务执行后，验收员发现还有缺口。请仅针对**缺失的部分**追加新的子任务。\n\n"
+            f"## 原目标\n{goal}\n\n"
+            f"## 已执行子任务\n{prior_text}\n\n"
+            f"## 缺口（验收员报告）\n{missing}\n\n"
+            f"## 已使用的 task id（必须避开）\n{sorted(used_ids) if used_ids else '(none)'}\n\n"
+            "请输出新任务的 JSON 计划：\n"
+            '{"steps": [{"id": "新id", "agent": "fog|rain|frost|dew|fair", '
+            '"description": "具体任务", "depends_on": ["可选已完成任务id"]}]}\n'
+            "只输出新增任务，不要重复已完成的；id 必须避开上面的列表；只输出 JSON。"
+        )
+
+        self.memory.add_message("user", prompt)
+        response = await self._llm_loop()
+        self.memory.add_message("assistant", response.content)
+
+        from weather_agents.core.schemas import parse_task_plan
+
+        parsed = parse_task_plan(response.content)
+        if parsed is not None and parsed.steps:
+            new_tasks = self._schema_to_tasks(parsed, goal)
+        else:
+            new_tasks = self._parse_task_plan(response.content, goal)
+
+        # Filter out any IDs that collide with already-used tasks; if the LLM
+        # ignored the constraint we re-id them to "rN_<original>" so they
+        # remain distinct from the original plan.
+        deduped: list[Task] = []
+        for t in new_tasks:
+            if t.id in used_ids:
+                new_id = f"r{len(used_ids) + len(deduped) + 1}_{t.id}"
+                t.id = new_id
+            deduped.append(t)
+            used_ids = used_ids | {t.id}
+        return deduped
+
     def _schema_to_tasks(self, plan: TaskPlanSchema, goal: str) -> list[Task]:
         """Convert schema-validated plan to Task objects."""
         tasks: list[Task] = []
