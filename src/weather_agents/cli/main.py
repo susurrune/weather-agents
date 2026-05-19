@@ -1092,7 +1092,7 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
         prompt_html += "<style fg='ansiyellow'><b>[AUTO] </b></style>"
     prompt_html += f"<style fg='ansi{color}'><b>{agent_display}</b> ❯ </style>"
 
-    session = _PTPromptSession(
+    session: _PTPromptSession = _PTPromptSession(
         multiline=True,
         key_bindings=kb,
         history=_read_line_with_popup._ptk_history,  # type: ignore[attr-defined]
@@ -1113,7 +1113,7 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
         echo.append(" ❯ ", style=color)
         echo.append(result, style="white")
         console.print(echo)
-    return result.strip()
+    return str(result).strip()
 
 
 async def _interactive(agent_name: str | None = None) -> None:
