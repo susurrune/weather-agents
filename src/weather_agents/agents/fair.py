@@ -16,7 +16,6 @@ class FairAgent(BaseAgent):
 
     system_prompt = """我是晴。
 
-雨停了，天放晴了。就是那个瞬间。
 
 ## 一个英国女子
 
@@ -59,7 +58,6 @@ class FairAgent(BaseAgent):
 
     system_prompt_en = """I’m Fair.
 
-When the rain stops and the sky clears. That moment.
 
 ## An Englishwoman
 

@@ -78,6 +78,88 @@ def _split_provider(model: str) -> tuple[str | None, str]:
     return None, model
 
 
+def _is_anthropic_model(model: str) -> bool:
+    """True when the model targets Anthropic's API.
+
+    Detection covers both LiteLLM's `anthropic/` prefix and bare model
+    names like `claude-3-5-sonnet`. The prompt-cache markers we attach
+    are silently ignored by other providers but emitted via LiteLLM as
+    extra fields, so we only apply them when the target actually
+    understands them.
+    """
+    lowered = model.lower()
+    if lowered.startswith("anthropic/") or lowered.startswith("claude"):
+        return True
+    provider, _ = _split_provider(model)
+    return provider == "anthropic"
+
+
+def _apply_anthropic_cache_control(
+    model: str,
+    messages: list[dict],
+    tool_schemas: list[dict] | None,
+) -> tuple[list[dict], list[dict] | None]:
+    """Return (messages, tools) with Anthropic ephemeral cache markers.
+
+    Anthropic charges full input tokens for repeated identical prefixes
+    (system prompt + tool schemas, which we ship every round). Adding
+    `cache_control: {"type": "ephemeral"}` to those blocks tells the API
+    to reuse a 5-minute KV cache, dropping input cost by ~80% on round
+    2+ of a turn. The markers are no-ops on non-Anthropic providers but
+    we skip them anyway to keep payloads clean.
+
+    The transformation is non-destructive: returns new lists, doesn't
+    mutate the originals.
+    """
+    if not _is_anthropic_model(model):
+        return messages, tool_schemas
+
+    # System message: convert plain string to list-of-blocks form with
+    # cache_control on the text block. If it's already structured (some
+    # caller pre-built blocks), attach cache_control to the last block.
+    new_messages: list[dict] = []
+    cached_system = False
+    for m in messages:
+        if not cached_system and m.get("role") == "system":
+            content = m.get("content")
+            if isinstance(content, str) and content:
+                new_messages.append(
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": content,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    }
+                )
+                cached_system = True
+                continue
+            if isinstance(content, list) and content:
+                new_blocks = [dict(b) for b in content]
+                new_blocks[-1] = {
+                    **new_blocks[-1],
+                    "cache_control": {"type": "ephemeral"},
+                }
+                new_messages.append({**m, "content": new_blocks})
+                cached_system = True
+                continue
+        new_messages.append(m)
+
+    # Tools: Anthropic accepts cache_control on a single tool block. Mark
+    # the LAST tool — caching extends to all earlier ones too.
+    new_tools: list[dict] | None = None
+    if tool_schemas:
+        new_tools = [dict(t) for t in tool_schemas]
+        new_tools[-1] = {
+            **new_tools[-1],
+            "cache_control": {"type": "ephemeral"},
+        }
+    return new_messages, new_tools
+
+
 _PROVIDER_ENV = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -415,17 +497,22 @@ class LLMClient:
 
         for attempt in range(max_retries + 1):
             try:
+                # Anthropic prompt cache: tag system + tools with
+                # cache_control on every call. No-op for non-Anthropic.
+                cached_msgs, cached_tools = _apply_anthropic_cache_control(
+                    model, messages, tool_schemas
+                )
                 kwargs: dict[str, Any] = {
                     "model": model,
-                    "messages": messages,
+                    "messages": cached_msgs,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                     "timeout": self.config.llm.timeout,
                 }
                 if provider:
                     kwargs["custom_llm_provider"] = provider
-                if tool_schemas:
-                    kwargs["tools"] = tool_schemas
+                if cached_tools:
+                    kwargs["tools"] = cached_tools
 
                 start = time.monotonic()
                 response = await _get_litellm().acompletion(**kwargs)
@@ -619,9 +706,16 @@ class LLMClient:
         primary_error: Exception | None = None
         for i, attempt_model in enumerate(models_to_try):
             ap, _ = _split_provider(attempt_model)
+            raw_tool_schemas = (
+                tool_registry.get_schemas(tools) if (tools and tool_registry) else None
+            )
+            # Anthropic cache markers — silently no-op for other providers
+            cached_msgs, cached_tools = _apply_anthropic_cache_control(
+                attempt_model, messages, raw_tool_schemas
+            )
             stream_kwargs: dict[str, Any] = {
                 "model": attempt_model,
-                "messages": messages,
+                "messages": cached_msgs,
                 "temperature": ov.get("temperature", self.config.llm.temperature),
                 "max_tokens": ov.get("max_tokens", self.config.llm.max_tokens),
                 "timeout": self.config.llm.timeout,
@@ -629,8 +723,8 @@ class LLMClient:
             }
             if ap:
                 stream_kwargs["custom_llm_provider"] = ap
-            if tools and tool_registry:
-                stream_kwargs["tools"] = tool_registry.get_schemas(tools)
+            if cached_tools:
+                stream_kwargs["tools"] = cached_tools
             try:
                 response = await _get_litellm().acompletion(**stream_kwargs)
                 used_model = attempt_model

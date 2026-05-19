@@ -232,7 +232,11 @@ class BaseAgent:
                 "If a file write/edit succeeded, read it back to confirm the content is correct. "
                 "Report the final verified state, not just the attempt.\n"
                 "7. Never expand task scope. Do only what the user asked — no extra files, no bonus "
-                "features, no 'while I'm at it' additions. When the core request is done, stop."
+                "features, no 'while I'm at it' additions. When the core request is done, stop.\n"
+                "8. Batch independent tool calls. When you need data from multiple unrelated sources "
+                "(several files, several URLs, several searches), emit ALL the tool calls in ONE "
+                "response — they run in parallel. Don't sequence what doesn't need sequencing. "
+                "Only chain when a later call genuinely depends on an earlier call's result."
             )
         else:
             rules = (
@@ -247,7 +251,10 @@ class BaseAgent:
                 "6. 执行后验证：工具执行后检查结果，如有错误立即诊断并重试修正。"
                 "写入/编辑文件后应读取确认内容正确。汇报最终验证后的状态，而非仅说已尝试。\n"
                 "7. 禁止擅自扩展任务范围。用户要求什么就做什么——不多创建文件、不添加额外功能、"
-                "不做「顺便也做个…」。核心请求完成后立即停止，不要自作主张深化或扩展。"
+                "不做「顺便也做个…」。核心请求完成后立即停止，不要自作主张深化或扩展。\n"
+                "8. 并行批量调用工具。当你需要多个不相关来源的数据（多个文件 / 多个 URL / "
+                "多次搜索），在**一次回复**里发出全部工具调用——它们会并行执行。不要把不需要"
+                "排序的事情串行做。只有后一个调用真的依赖前一个的结果时才链式调用。"
             )
         return prompt + rules
 

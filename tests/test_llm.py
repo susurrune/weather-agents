@@ -697,3 +697,76 @@ class TestLazyLitellm:
     def test_get_litellm_sentinel(self):
         lm = _get_litellm()
         assert lm is not None
+
+
+class TestAnthropicPromptCache:
+    """Anthropic prompt cache markers cut input cost ~80% on round 2+
+    of a turn by reusing a 5-min KV cache of system + tools. The
+    transformation must be a no-op for non-Anthropic providers."""
+
+    def test_detects_anthropic_models(self):
+        from weather_agents.core.llm import _is_anthropic_model
+
+        assert _is_anthropic_model("claude-3-5-sonnet") is True
+        assert _is_anthropic_model("anthropic/claude-opus-4") is True
+        assert _is_anthropic_model("claude-haiku-3") is True
+        assert _is_anthropic_model("deepseek/v4") is False
+        assert _is_anthropic_model("gpt-4o") is False
+        assert _is_anthropic_model("openai/gpt-5") is False
+
+    def test_anthropic_system_gets_cache_control(self):
+        from weather_agents.core.llm import _apply_anthropic_cache_control
+
+        msgs = [
+            {"role": "system", "content": "You are fog."},
+            {"role": "user", "content": "hi"},
+        ]
+        m2, _ = _apply_anthropic_cache_control("claude-3-5-sonnet", msgs, None)
+        # System rewritten to content-block form with cache marker
+        assert isinstance(m2[0]["content"], list)
+        block = m2[0]["content"][0]
+        assert block["type"] == "text"
+        assert block["text"] == "You are fog."
+        assert block["cache_control"] == {"type": "ephemeral"}
+        # User message untouched
+        assert m2[1] == {"role": "user", "content": "hi"}
+
+    def test_anthropic_last_tool_gets_cache_control(self):
+        from weather_agents.core.llm import _apply_anthropic_cache_control
+
+        tools = [
+            {"type": "function", "function": {"name": "a"}},
+            {"type": "function", "function": {"name": "b"}},
+        ]
+        _, t2 = _apply_anthropic_cache_control(
+            "claude-3-5-sonnet", [{"role": "user", "content": "x"}], tools
+        )
+        assert t2 is not None
+        # Only the LAST tool gets the marker (caches all earlier ones too)
+        assert "cache_control" not in t2[0]
+        assert t2[-1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_non_anthropic_passthrough(self):
+        from weather_agents.core.llm import _apply_anthropic_cache_control
+
+        msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+        tools = [{"type": "function", "function": {"name": "x"}}]
+        m2, t2 = _apply_anthropic_cache_control("deepseek/v4", msgs, tools)
+        # Inputs returned UNCHANGED for non-Anthropic targets
+        assert m2 is msgs or m2 == msgs
+        assert t2 is tools or t2 == tools
+        # No cache_control anywhere
+        assert "cache_control" not in str(m2[0]["content"])
+        assert "cache_control" not in t2[0]
+
+    def test_non_destructive(self):
+        """Helper must not mutate the inputs."""
+        from weather_agents.core.llm import _apply_anthropic_cache_control
+
+        msgs = [{"role": "system", "content": "sys"}]
+        tools = [{"type": "function", "function": {"name": "x"}}]
+        msgs_before = [dict(m) for m in msgs]
+        tools_before = [dict(t) for t in tools]
+        _apply_anthropic_cache_control("claude-3-5-sonnet", msgs, tools)
+        assert msgs == msgs_before
+        assert tools == tools_before
