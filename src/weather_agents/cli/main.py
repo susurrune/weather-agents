@@ -639,6 +639,29 @@ def _choices_already_done(choices: list[str], activities: list[dict]) -> bool:
     return matched >= len(choices) * 0.5  # >50% overlap → already done
 
 
+def _extract_choice_prompt(text: str, choices: list[str]) -> str:
+    """Find the question / instruction that precedes the first choice."""
+    if not choices:
+        return ""
+    lines = text.split("\n")
+    # Find the line range where choices appear
+    choice_indices = []
+    for i, line in enumerate(lines):
+        plain = re.sub(r"^[─-╿☐☑☒◦●○▪▸➔‣•★☆✦※*\-–—\s]+", "", line).strip()
+        m = re.match(r"^(?:\d+|[A-Za-z])[.、\)\s]\s*(.+)$", plain)
+        if m:
+            choice_indices.append(i)
+    if not choice_indices:
+        return ""
+    # Walk backwards from first choice to find a question line
+    first = choice_indices[0]
+    for i in range(first - 1, max(first - 8, -1), -1):
+        candidate = lines[i].strip()
+        if "?" in candidate or "？" in candidate:
+            return candidate[:60]  # Truncate long questions
+    return ""
+
+
 def _parse_simple_choices(text: str) -> list[str]:
     """Parse numbered or letter-prefixed OPTIONS (not questions) from AI response.
 
@@ -660,17 +683,17 @@ def _parse_simple_choices(text: str) -> list[str]:
         if not m:
             continue
         content = m.group(1).strip()
-        # Strip markdown formatting for length check
+        # Strip markdown formatting for checks
         plain = re.sub(r"[`*_~]", "", content).strip()
         if "?" in content or "？" in content:
             continue  # questions, not choices
-        if len(plain) > 50:
-            continue  # summaries / descriptions, not options
-        # Skip items with table chars or em-dashes — likely summaries not options
-        if "│" in content or "—" in content or "–" in content:
+        if len(plain) > 200:
+            continue  # prose, not options
+        # Skip table-row content (not choices)
+        if "│" in content:
             continue
-        # Skip items describing completed actions
-        if re.search(r"(已|完成|完毕|done|completed|deleted|removed)", plain, re.I):
+        # Skip items describing already-completed actions
+        if re.search(r"(已\S*(执行|删除|清理|完成)|完成|完毕$)", plain):
             continue
         items.append(content)
     return items if len(items) >= 2 else []
@@ -1802,7 +1825,8 @@ async def _interactive(agent_name: str | None = None) -> None:
                         # "options" after deletion already happened).
                         if _choices_already_done(choices, activities):
                             break  # Nothing left to choose
-                        choice = _show_choice_menu(choices)
+                        prompt = _extract_choice_prompt(md_content, choices)
+                        choice = _show_choice_menu(choices, title=prompt)
                         if choice is not None:
                             inp = choice
                             continue  # Restart streaming with selected choice
