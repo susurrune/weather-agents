@@ -969,6 +969,34 @@ class BaseAgent:
                         ),
                     )
                     stuck_hint_injected = True
+
+                # Hard escape: if the LLM ignored the soft hint and 8+ of
+                # the most-recent tool calls are still failing, break out
+                # ourselves. Better to return an honest "I'm stuck" than
+                # burn the entire 20-round budget rejecting the same dead
+                # ends. The user can ask again with more context.
+                if len(recent_tool_outcomes) >= 8 and sum(recent_tool_outcomes) == 0:
+                    self.memory.add_message(
+                        "assistant",
+                        (
+                            "I tried multiple approaches but every tool call is "
+                            "failing (the file/path may not exist, search "
+                            "backends are blocked, or the resource is "
+                            "unavailable). Please give me more context — a "
+                            "correct file path, an alternative source, or "
+                            "clarification on what you're looking for."
+                        ),
+                    )
+                    yield {
+                        "type": "content",
+                        "text": (
+                            "\n\n[stuck] every recent tool call failed — "
+                            "stopping rather than burning more iterations.\n"
+                        ),
+                    }
+                    await self._set_state(AgentState.IDLE)
+                    yield {"type": "done"}
+                    return
             # Max iterations reached
             if not assistant_stored:
                 self._pop_last_user_message()
@@ -1871,16 +1899,30 @@ def _parse_tool_args(raw: str) -> dict | None:
 # success=True (e.g. web_search returning "No results found ..." is
 # technically a successful call but semantically a dead-end).
 _TOOL_FAILURE_MARKERS: tuple[str, ...] = (
+    # Search backends returning nothing
     "no results found",
-    "status: 4",  # 401 / 403 / 404 / 429 etc.
-    "status: 5",  # 5xx
+    "no matches for",  # grep / code_search returning empty
+    # File ops on non-existent paths — the model's most common dead-end
+    # when guessing import paths or searching the wrong tree.
+    "file not found",
+    "directory not found",
+    "permission denied",
+    # HTTP failures (4xx / 5xx)
+    "status: 4",
+    "status: 5",
+    # Network / timeout
     "request timed out",
     "timed out",
-    "[error",
-    "circuitbreakeropen",
     "connection refused",
     "name or service not known",
     "ssl",
+    # Generic error prefixes from the tool layer
+    "[error",
+    "error: tool",  # invalid args, etc.
+    "error: file",  # file not found wrapper
+    "error: directory",
+    "circuitbreakeropen",
+    "execution failed:",
 )
 
 

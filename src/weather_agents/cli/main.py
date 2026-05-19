@@ -2741,11 +2741,17 @@ class _TaskDashboard:
         bar_filled = int(pct / 5)
         bar_empty = 20 - bar_filled
         bar_color = "green" if self._done == self._total else "yellow"
-        bar = f"[{bar_color}]{'━' * bar_filled}{'╌' * bar_empty}[/]"
+        # Text.append(str, style=...) does NOT parse rich markup — it
+        # appends the literal characters. That's why "[yellow]...[/]"
+        # was showing verbatim in the panel. Build the colored segments
+        # by appending with the style applied, then concatenate.
         progress = Text()
         progress.append("  ")
         progress.append(f"{self._done}/{self._total}", style=f"bold {bar_color}")
-        progress.append(f"  {bar}  ", style="bold")
+        progress.append("  ")
+        progress.append("━" * bar_filled, style=f"bold {bar_color}")
+        progress.append("╌" * bar_empty, style="dim")
+        progress.append("  ")
         progress.append(f"{int(pct)}%  ", style="dim")
         progress.append(self._elapsed, style="dim")
         grid.add_row(progress)
