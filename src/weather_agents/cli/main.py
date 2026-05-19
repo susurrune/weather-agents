@@ -1055,6 +1055,10 @@ def _read_line_with_popup(agent, ctx, mode: str = "auto") -> str:
         if b.text.strip():
             b.validate_and_handle()
 
+    @kb.add("s-enter")
+    def _newline(event):
+        event.current_buffer.insert_text("\n")
+
     @kb.add("escape", "enter")
     def _alt_enter(event):
         event.current_buffer.insert_text("\n")
