@@ -1547,9 +1547,66 @@ async def _interactive(agent_name: str | None = None) -> None:
                 esc_task = asyncio.create_task(_esc_poller(_esc_event))
                 resize_task = asyncio.create_task(_resize_watcher(live))
 
+                # We need Esc to interrupt EVEN WHILE the agent is blocked
+                # inside a long LLM call or a slow tool (e.g. 12s http_get
+                # timeout). Polling `_esc_event` only between events leaves
+                # the user staring at a frozen UI for the full slow-op
+                # duration. Solution: race each __anext__ against the esc
+                # event, and cancel the iteration task if Esc wins.
+                stream_iter = agent.chat_stream(inp).__aiter__()
+                esc_wait_task = asyncio.create_task(_esc_event.wait())
+
+                class _AgentInterrupted(Exception):
+                    """Sentinel: KeyboardInterrupt converted to a normal
+                    Exception so it can flow through the task's captured
+                    exception and through .result()'s re-raise. On Python
+                    3.13 BaseException-derived KI escapes Task wrappers
+                    and propagates straight through the event loop, which
+                    bypasses user-level try/except entirely."""
+
+                async def _pull_next_event(it=stream_iter):
+                    # Wrap __anext__ in a real coroutine — create_task wants
+                    # a coroutine, not the raw Awaitable that __anext__ returns.
+                    try:
+                        return await it.__anext__()
+                    except KeyboardInterrupt as exc:
+                        raise _AgentInterrupted() from exc
+
                 try:
-                    async for event in agent.chat_stream(inp):
-                        if _esc_event.is_set():
+                    while True:
+                        next_event_task = asyncio.create_task(_pull_next_event())
+                        try:
+                            done, _pending = await asyncio.wait(
+                                {next_event_task, esc_wait_task},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                        except KeyboardInterrupt:
+                            # KI from within the task can surface here on
+                            # some Python versions instead of being captured
+                            # in the task object. Cancel cleanly and treat
+                            # as an Esc-style interrupt.
+                            interrupted = True
+                            next_event_task.cancel()
+                            with contextlib.suppress(BaseException):
+                                await next_event_task
+                            break
+                        if esc_wait_task in done:
+                            # Esc pressed — kill the in-flight stream task
+                            # immediately so the LLM call / tool execution
+                            # aborts instead of running to completion.
+                            next_event_task.cancel()
+                            with contextlib.suppress(BaseException):
+                                await next_event_task
+                            interrupted = True
+                            break
+                        try:
+                            event = next_event_task.result()
+                        except StopAsyncIteration:
+                            break
+                        except _AgentInterrupted:
+                            # chat_stream raised KeyboardInterrupt; we
+                            # converted it inside _pull_next_event so it
+                            # could be caught here as a normal Exception.
                             interrupted = True
                             break
                         if event["type"] == "content":
@@ -1597,10 +1654,23 @@ async def _interactive(agent_name: str | None = None) -> None:
                     _esc_event.set()
                     esc_task.cancel()
                     resize_task.cancel()
+                    esc_wait_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await esc_task
                     with contextlib.suppress(asyncio.CancelledError):
                         await resize_task
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await esc_wait_task
+                    # Close the async generator so its finally blocks run
+                    # (memory cleanup, _pop_last_user_message, etc.).
+                    # aclose is a no-op if iteration already finished. The
+                    # static type is AsyncIterator (no aclose) but the
+                    # runtime object IS an async generator — fetch via
+                    # getattr so mypy doesn't object.
+                    _aclose = getattr(stream_iter, "aclose", None)
+                    if _aclose is not None:
+                        with contextlib.suppress(Exception):
+                            await _aclose()
                     if md_content.strip():
                         live.update(
                             _build_response_panel(
