@@ -673,9 +673,7 @@ class TestOrchestrationE2E:
         for _ in range(2 * 1):  # 2 tasks × 1 attempt each (no retry)
             fog.queue_exec(Mock(success=True, content="调研已完成。"))
         # Replan task: real content this time
-        fog.queue_exec(
-            Mock(success=True, content="Milvus | Qdrant | Weaviate" * 10)
-        )
+        fog.queue_exec(Mock(success=True, content="Milvus | Qdrant | Weaviate" * 10))
 
         snow.queue_chat('{"achieved": false, "missing": "no actual names"}')
         snow.queue_chat('{"achieved": true, "missing": ""}')
