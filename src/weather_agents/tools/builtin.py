@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from weather_agents.core.constants import TASK_DONE_SENTINEL
 from weather_agents.core.tool import Tool, ToolParameter, ToolRegistry
 
 _MAX_FILE_BYTES = 50_000
@@ -21,8 +22,6 @@ _MAX_SEARCH_OUTPUT = 10_000
 _MAX_CODE_SEARCH_FILES = 5_000
 _MAX_GREP_FILES = 10_000
 _MAX_GREP_MATCHES = 200
-
-from weather_agents.core.constants import TASK_DONE_SENTINEL
 
 # Paths that write/delete tools should never touch.
 _WRITE_PROTECT_EXACT = {

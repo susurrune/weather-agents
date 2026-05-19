@@ -15,7 +15,7 @@ from weather_agents.core.factory import (
     create_system_context,
     orchestrate_task,
 )
-from weather_agents.core.icons import AGENT_COLORS, AGENT_EMOJI, icon_text
+from weather_agents.core.icons import AGENT_COLORS, AGENT_EMOJI
 from weather_agents.core.tool import ToolRegistry
 
 
