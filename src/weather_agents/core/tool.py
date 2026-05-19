@@ -122,6 +122,12 @@ class Tool:
     retry_delay: float = 0.5
     dangerous: bool = False  # high-risk tools need audit + approval
     cacheable: bool = True  # read-only tools can cache results across calls
+    # Optional callback that adds an extra string into the cache key based on
+    # the call's kwargs. read_file uses this to mix in the file's mtime so a
+    # cached result is invalidated whenever the source file changes on disk.
+    # Without it, "read same path twice" returns stale content if anyone
+    # edited the file between calls. Signature: (kwargs) -> str.
+    cache_key_extra: Callable[[dict], str] | None = None
 
     def __post_init__(self) -> None:
         # Tool fields are immutable after construction — the schema is too,
@@ -221,11 +227,24 @@ class Tool:
             )
 
         should_cache = self.cacheable and not self.dangerous
+
         # Result cache hit (read-only tools only — avoids repeated I/O).
-        # The store is process-wide, keyed by (tool_name, kwargs), so
-        # entries survive tool re-registration (skill toggle, MCP reconnect).
+        # The store is process-wide, keyed by (tool_name, kwargs [+ extra]),
+        # so entries survive tool re-registration (skill toggle, MCP
+        # reconnect). cache_key_extra lets tools mix in side-channel
+        # state (file mtime, etc.) so the cache invalidates correctly.
+        def _build_cache_key() -> str:
+            base = _make_cache_key(kwargs)
+            if self.cache_key_extra is not None:
+                try:
+                    extra = self.cache_key_extra(kwargs)
+                except Exception:
+                    extra = "extra_failed"
+                return f"{base}::{extra}"
+            return base
+
         if should_cache:
-            key = _make_cache_key(kwargs)
+            key = _build_cache_key()
             cached = _RESULT_STORE.get(self.name, key)
             if cached is not None:
                 return cached
@@ -236,7 +255,7 @@ class Tool:
             try:
                 result = await self.handler(**kwargs)
                 if should_cache:
-                    key = _make_cache_key(kwargs)
+                    key = _build_cache_key()
                     _RESULT_STORE.set(self.name, key, result)
                 breaker.record_success()
                 await self._run_post_hooks(

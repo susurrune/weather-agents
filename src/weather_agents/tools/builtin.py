@@ -1163,6 +1163,23 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
         return
     reg = registry or ToolRegistry()
 
+    def _read_file_cache_extra(kw: dict) -> str:
+        """Mix file mtime into the read_file cache key.
+
+        Without this, two consecutive read_file calls with the same args
+        but a file that changed between calls would return the cached
+        first result — silently feeding the LLM stale content. With
+        mtime in the key, any disk change invalidates the entry.
+        ``missing`` is a sentinel that never matches a successful read.
+        """
+        path = kw.get("path", "")
+        if not isinstance(path, str) or not path:
+            return "no-path"
+        try:
+            return str(os.stat(os.path.expanduser(path)).st_mtime_ns)
+        except OSError:
+            return "missing"
+
     tools = [
         Tool(
             name="read_file",
@@ -1185,6 +1202,7 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
                 ),
             ],
             handler=_read_file,
+            cache_key_extra=_read_file_cache_extra,
         ),
         Tool(
             name="write_file",

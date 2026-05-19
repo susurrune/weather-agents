@@ -286,3 +286,71 @@ class TestToolNameSuggestions:
         r = ToolRegistry()
         r.register(Tool(name="echo", description="Echo input"))
         assert _suggest_tool_names("xyzzy", r) == []
+
+
+class TestCacheKeyExtra:
+    """Tools with cache_key_extra (e.g. read_file with mtime) must
+    invalidate cached results when their side-channel state changes."""
+
+    @pytest.mark.asyncio
+    async def test_cache_key_extra_invalidates_on_change(self):
+        """Simulate read_file: same args, but the mtime-extra value
+        changes between calls — second call must NOT hit the cache."""
+        from weather_agents.core.tool import Tool, ToolParameter, _RESULT_STORE
+
+        _RESULT_STORE.clear()
+
+        call_count = {"n": 0, "extra": "v1"}
+
+        async def _handler(**_kw):
+            call_count["n"] += 1
+            return f"call-{call_count['n']}"
+
+        def _extra(_kw: dict) -> str:
+            return call_count["extra"]
+
+        t = Tool(
+            name="read_stateful",
+            description="x",
+            parameters=[ToolParameter(name="path", type="string", description="p")],
+            handler=_handler,
+            cache_key_extra=_extra,
+        )
+
+        # First call — populates cache under extra=v1
+        r1 = await t.execute(path="x")
+        assert r1 == "call-1"
+        # Same args, extra unchanged — cache hit (no new handler call)
+        r2 = await t.execute(path="x")
+        assert r2 == "call-1"
+        assert call_count["n"] == 1
+        # Now mutate the side-channel (e.g. file mtime changed)
+        call_count["extra"] = "v2"
+        r3 = await t.execute(path="x")
+        # Must re-execute (different key) and return fresh value
+        assert r3 == "call-2"
+        assert call_count["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_key_extra_failure_is_safe(self):
+        """If cache_key_extra raises, we shouldn't crash — fall back to a
+        sentinel that won't accidentally collide with a real value."""
+        from weather_agents.core.tool import Tool, _RESULT_STORE
+
+        _RESULT_STORE.clear()
+
+        async def _h(**_):
+            return "ok"
+
+        def _broken(_kw: dict) -> str:
+            raise RuntimeError("boom")
+
+        t = Tool(
+            name="break_extra",
+            description="x",
+            handler=_h,
+            cache_key_extra=_broken,
+        )
+        # Must not raise — error path uses the "extra_failed" sentinel.
+        result = await t.execute()
+        assert result == "ok"
