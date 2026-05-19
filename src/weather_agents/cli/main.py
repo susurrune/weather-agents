@@ -2932,17 +2932,33 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
 
         if not tasks:
             console.print("  [dim]  no tasks generated[/dim]")
-            # Fallback: answer with a single agent instead of dead-ending
+            # Fallback: answer with streaming single agent
             available = {name for name, ag in agents.items() if ag is not None}
             target_name = pick_agent_for_goal(goal, available)
             target = agents[target_name]
-            reply = await target.chat(goal)
-            console.print(
-                Padding(
-                    Markdown(_strip_hr(reply), code_theme=_CODE_THEME),
-                    pad=(0, 0, 0, 2),
+            from rich.live import Live as _Live
+
+            with _Live(
+                _build_stream_display(target, "", ""),
+                console=console,
+                refresh_per_second=12,
+                transient=False,
+            ) as _live:
+                _t0 = time.monotonic()
+                _md_content = ""
+                async for ev in target.chat_stream(goal):
+                    if ev["type"] == "content":
+                        _md_content += ev["text"]
+                        _live.update(_build_stream_display(target, "", _md_content))
+                    elif ev["type"] == "tool_status":
+                        _live.update(
+                            _build_stream_display(target, ev["label"], _md_content)
+                        )
+                    elif ev["type"] == "done":
+                        break
+                _live.update(
+                    _build_response_panel(target, _md_content, time.monotonic() - _t0)
                 )
-            )
             return
 
         # Summary

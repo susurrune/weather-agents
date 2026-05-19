@@ -113,7 +113,11 @@ Like snow: silent but all-encompassing — clear structure, thorough considerati
         prompt = (
             f"请将以下目标分解为子任务，并分配给合适的 Agent。\n\n"
             f"目标: {goal}\n\n"
-            f"请严格按照 JSON 格式输出任务计划。"
+            f"请严格按照以下 JSON Schema 输出，不要包含其他内容：\n"
+            f'{{"goal": "目标描述", "steps": [{{"id": "1", "description": "任务描述", "agent": "fog"}}]}}\n\n'
+            f"可用 Agent: fog(调研/搜索), rain(代码生成/写作), frost(审查/安全), "
+            f"dew(部署/运维), fair(陪伴/闲聊)\n"
+            f"注意：不要使用工具，直接输出 JSON 即可。"
         )
 
         self.memory.add_message("user", prompt)
