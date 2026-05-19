@@ -1560,18 +1560,40 @@ class BaseAgent:
         prompt = (
             "Complete this task NOW using your available tools. "
             "Actually write files, execute commands, or produce the needed output — "
-            "do NOT just describe a plan or explain what you would do.\n"
-            "Do NOT return placeholder replies like 'done', 'completed', 'task finished', "
-            "'已完成', or '好的' alone — those count as failure and will be retried. "
-            "Produce the actual deliverable. If you genuinely cannot complete the task, "
-            "explain what's blocking in concrete terms (missing file, missing permission, "
-            "tool error, etc.) rather than returning a success-shaped acknowledgement.\n\n"
+            "do NOT just describe a plan or explain what you would do.\n\n"
+            "**Critical reply format**:\n"
+            "• Do NOT return placeholder replies like 'done', 'completed', "
+            "'已完成', '报告已就位', '文件已写好' — those count as failure and "
+            "will be retried.\n"
+            "• If you wrote a file: your FINAL reply MUST include the actual "
+            "content you wrote (or a substantial excerpt of ≥500 chars when "
+            "very long). Just saying 'file saved to X' is NOT enough — the "
+            "verifier cannot read your files; it only sees what you write "
+            "in this reply.\n"
+            "• For research tasks: list the actual named entities, key "
+            "facts, links — not just '已调研完成'.\n"
+            "• For writing tasks: include the full text or a representative "
+            "excerpt directly in your reply.\n"
+            "• If you genuinely cannot complete, explain what's blocking in "
+            "concrete terms (missing file, missing permission, tool error).\n\n"
             f"Task: {task.description}"
         )
         if task.metadata:
             ctx_data = {k: v for k, v in task.metadata.items() if k != "goal"}
             if ctx_data:
                 prompt += f"\nContext: {json.dumps(ctx_data, ensure_ascii=False)}"
+
+        # Orchestration-task isolation. Each sub-task is independent — the
+        # agent should not see (and be confused by) the running chat history
+        # from earlier turns, nor by sibling tasks the same agent already
+        # ran in this orchestration. Without this, fog's task 3 saw fog's
+        # task 1 + assistant + tool calls and produced output about SQLite
+        # debugging instead of vector databases. Save / restore the chat
+        # short_term around the task so direct `chat()` continuity is
+        # preserved for the user-facing path.
+        with self.memory._short_term_lock:
+            saved_short_term = list(self.memory.short_term)
+            self.memory.short_term = [m for m in saved_short_term if m.role == "system"]
 
         self.memory.add_message("user", prompt)
 
@@ -1593,6 +1615,11 @@ class BaseAgent:
             self.memory._prune_dangling_tool_calls()
             await self._set_state(AgentState.ERROR)
             return TaskResult(success=False, content=str(e))
+        finally:
+            # Restore chat history so interactive `chat()` continuity isn't
+            # broken by the task isolation above.
+            with self.memory._short_term_lock:
+                self.memory.short_term = saved_short_term
 
     async def _check_tool_approval(self, tool_name: str, tool_args: dict) -> bool:
         """Check whether a dangerous tool call is approved.

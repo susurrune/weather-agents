@@ -364,7 +364,8 @@ async def orchestrate_task(
     result_truncate: int | None = 500,
     summary_prompt_template: str = "",
     max_task_retries: int = 3,
-    max_replan_rounds: int = 2,
+    max_replan_rounds: int = 1,
+    max_total_tasks: int = 6,
 ) -> tuple[list[Any], list[TaskExecutionResult], str]:
     """Orchestrate a multi-agent task: plan -> execute -> judge -> [re-plan] -> summarize.
 
@@ -392,6 +393,7 @@ async def orchestrate_task(
         summary_prompt_template=summary_prompt_template,
         max_task_retries=max_task_retries,
         max_replan_rounds=max_replan_rounds,
+        max_total_tasks=max_total_tasks,
     )
 
 
@@ -623,6 +625,7 @@ async def _run_orchestration(
     summary_prompt_template: str,
     max_task_retries: int,
     max_replan_rounds: int,
+    max_total_tasks: int = 6,
 ) -> tuple[list[Any], list[TaskExecutionResult], str]:
     """Inner orchestration loop -- executes planned tasks in DAG order, then
     iterates with re-planning if the judge says the goal isn't achieved."""
@@ -727,6 +730,22 @@ async def _run_orchestration(
             _log.warning("replan_failed: %s", exc)
             break
         if not extra_tasks:
+            break
+
+        # Hard cap on total tasks per orchestration. Without this the
+        # judge-driven loop can cascade: snow keeps adding 2 more tasks
+        # every round, each round costs ~80s, user waits 8+ minutes. The
+        # default ceiling of 6 means at most one full re-plan and we
+        # accept partial completion rather than burning compute forever.
+        if len(tasks) + len(extra_tasks) > max_total_tasks:
+            _log.info(
+                "replan_capped",
+                extra={
+                    "current_total": len(tasks),
+                    "extra_proposed": len(extra_tasks),
+                    "cap": max_total_tasks,
+                },
+            )
             break
 
         # Surface the new round so dashboards / users see progress and what's
