@@ -2932,6 +2932,17 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
 
         if not tasks:
             console.print("  [dim]  no tasks generated[/dim]")
+            # Fallback: answer with a single agent instead of dead-ending
+            available = {name for name, ag in agents.items() if ag is not None}
+            target_name = pick_agent_for_goal(goal, available)
+            target = agents[target_name]
+            reply = await target.chat(goal)
+            console.print(
+                Padding(
+                    Markdown(_strip_hr(reply), code_theme=_CODE_THEME),
+                    pad=(0, 0, 0, 2),
+                )
+            )
             return
 
         # Summary
