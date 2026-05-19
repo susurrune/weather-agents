@@ -22,6 +22,10 @@ _MAX_CODE_SEARCH_FILES = 5_000
 _MAX_GREP_FILES = 10_000
 _MAX_GREP_MATCHES = 200
 
+# Sentinel returned by task_done() to signal the agent loop to stop cleanly.
+# The agent calls task_done when it believes the user's request is fully satisfied.
+TASK_DONE_SENTINEL = "__TASK_DONE__"
+
 # Paths that write/delete tools should never touch.
 _WRITE_PROTECT_EXACT = {
     "/",
@@ -86,6 +90,11 @@ def _truncate(text: str, limit: int, label: str = "output") -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n\n[... truncated, total {len(text)} chars of {label}]"
+
+
+async def _task_done(summary: str = "", **kwargs) -> str:
+    """Signal that the current task is complete."""
+    return TASK_DONE_SENTINEL
 
 
 # -- File Tools --
@@ -1595,6 +1604,18 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
             description="Get the current working directory path",
             parameters=[],
             handler=_get_cwd,
+        ),
+        Tool(
+            name="task_done",
+            description="Signal that the task is complete. Call this when you have fully satisfied the user's request. Do NOT use this if the user's message is a simple greeting or question that doesn't need multiple steps.",
+            parameters=[
+                ToolParameter(
+                    name="summary",
+                    type="string",
+                    description="Brief summary of what was accomplished",
+                ),
+            ],
+            handler=_task_done,
         ),
     ]
 

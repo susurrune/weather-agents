@@ -497,3 +497,36 @@ class TestGitTools:
 
         result = await _git_commit("")
         assert "cannot be empty" in result.lower()
+
+
+class TestTaskDone:
+    def test_sentinel_value(self):
+        from weather_agents.tools.builtin import TASK_DONE_SENTINEL
+
+        assert TASK_DONE_SENTINEL == "__TASK_DONE__"
+
+    @pytest.mark.asyncio
+    async def test_task_done_returns_sentinel(self):
+        from weather_agents.tools.builtin import TASK_DONE_SENTINEL, _task_done
+
+        result = await _task_done(summary="test complete")
+        assert result == TASK_DONE_SENTINEL
+
+    @pytest.mark.asyncio
+    async def test_task_done_empty_summary(self):
+        from weather_agents.tools.builtin import TASK_DONE_SENTINEL, _task_done
+
+        result = await _task_done()
+        assert result == TASK_DONE_SENTINEL
+
+    def test_tool_registered(self):
+        from weather_agents.tools.builtin import register_builtin_tools
+        from weather_agents.core.tool import ToolRegistry
+
+        reg = ToolRegistry()
+        register_builtin_tools(reg)
+        tool = reg.get("task_done")
+        assert tool is not None
+        assert tool.name == "task_done"
+        param_names = [p.name for p in tool.parameters]
+        assert "summary" in param_names

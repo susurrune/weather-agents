@@ -20,6 +20,7 @@ from weather_agents.core.logger import get_logger
 from weather_agents.core.memory import Memory
 from weather_agents.core.skill import Skill, SkillRegistry
 from weather_agents.core.tool import Tool, ToolRegistry
+from weather_agents.tools.builtin import TASK_DONE_SENTINEL
 
 _log = get_logger("agent")
 
@@ -879,9 +880,26 @@ class BaseAgent:
                 exec_results = await asyncio.gather(*[_exec_one(p) for p in tool_prep])
 
                 # ── Phase 3: Record results in original order ──
+                task_completed = False
                 for tc, result, success, _tool_name in exec_results:
                     if isinstance(result, str) and "[CircuitBreakerOpen]" in result:
                         suppressed_tools.add(_tool_name)
+                    # task_done() signals the agent believes the task is complete.
+                    # Store the user-facing summary instead of the sentinel.
+                    if _tool_name == "task_done" and result == TASK_DONE_SENTINEL:
+                        task_completed = True
+                        prep = next(p for p in tool_prep if p["tc"] is tc)
+                        summary = (prep.get("tool_args") or {}).get("summary", "")
+                        display_result = f"[Task completed: {summary}]" if summary else "[Task completed]"
+                        self.memory.add_message("tool", display_result, name=_tool_name, tool_call_id=tc["id"])
+                        yield {
+                            "type": "tool_done",
+                            "label": f"task_done: {summary}" if summary else "task_done",
+                            "success": True,
+                            "tool_name": "task_done",
+                            "result": display_result,
+                        }
+                        continue
                     self.memory.add_message("tool", result, name=_tool_name, tool_call_id=tc["id"])
                     label = next(p["tool_label"] for p in tool_prep if p["tc"] is tc)
                     yield {
@@ -901,6 +919,13 @@ class BaseAgent:
                         prep = next(p for p in tool_prep if p["tc"] is tc)
                         target = (prep.get("tool_args") or {}).get("agent", "?")
                         delegations.append((target, success))
+                # Agent called task_done — exit cleanly without truncation warning.
+                if task_completed:
+                    if not assistant_stored:
+                        self._pop_last_user_message()
+                    await self._set_state(AgentState.IDLE)
+                    yield {"type": "done"}
+                    return
             # Max iterations reached
             if not assistant_stored:
                 self._pop_last_user_message()
