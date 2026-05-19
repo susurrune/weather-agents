@@ -993,3 +993,38 @@ class TestShouldAutoContinue:
         from weather_agents.cli.main import _should_auto_continue
 
         assert not _should_auto_continue("所有任务已完成，无需额外操作。")
+
+
+class TestEscPollerCIRobustness:
+    """The Esc poller calls _get_key in an executor. On CI hosts where
+    stdin is redirected, _get_key raises io.UnsupportedOperation. The
+    poller must swallow this and the chat must continue normally rather
+    than the exception leaking out of finally and aborting the test."""
+
+    @pytest.mark.asyncio
+    async def test_stream_completes_when_get_key_raises(self):
+        import io
+
+        from unittest.mock import patch as _patch
+
+        with (
+            _patch("weather_agents.cli.main.create_system_context") as mock_create,
+            _patch("weather_agents.cli.main.console.input", side_effect=["hi", "/quit"]),
+            # Simulate CI: every call to _get_key raises UnsupportedOperation
+            _patch(
+                "weather_agents.cli.main._get_key",
+                side_effect=io.UnsupportedOperation("no fileno"),
+            ),
+            _patch("weather_agents.cli.main._poll_esc", side_effect=OSError("no console")),
+            _patch("weather_agents.cli.main.Live") as mock_live_cls,
+        ):
+            mock_ctx = _make_ctx()
+            mock_create.return_value = mock_ctx
+            mock_live_cls.return_value = MagicMock()
+
+            mock_ctx.agent_map["fog"].chat_stream = lambda _msg: _async_iter(
+                [{"type": "content", "text": "ok"}, {"type": "done"}]
+            )
+
+            # Must not raise — broken poller is acceptable, chat completes.
+            await _run_interactive("fog")

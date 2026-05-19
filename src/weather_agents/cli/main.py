@@ -1507,17 +1507,31 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _esc_event = asyncio.Event()
 
                 async def _esc_poller(ev: asyncio.Event):
-                    """Poll Esc on the main event loop — reliable everywhere."""
+                    """Poll Esc on the main event loop — reliable everywhere.
+
+                    Wrapped in broad except so a non-TTY stdin (CI runners
+                    where sys.stdin.fileno() raises io.UnsupportedOperation)
+                    silently disables the poller instead of killing the task
+                    and leaking the exception into the event loop.
+                    """
                     loop = asyncio.get_running_loop()
                     while not ev.is_set():
                         if sys.platform == "win32":
                             # Main-thread msvcrt is reliable; executor-thread is not.
-                            if _poll_esc():
-                                ev.set()
-                                break
+                            try:
+                                if _poll_esc():
+                                    ev.set()
+                                    break
+                            except Exception:
+                                return  # console gone; nothing more to do
                             await asyncio.sleep(0.06)
                         else:
-                            key = await loop.run_in_executor(None, _get_key)
+                            try:
+                                key = await loop.run_in_executor(None, _get_key)
+                            except Exception:
+                                # No TTY (CI, pipe, etc.) — exit the poller so
+                                # the rest of the chat loop runs normally.
+                                return
                             if key == "esc":
                                 ev.set()
                                 break
@@ -1655,12 +1669,13 @@ async def _interactive(agent_name: str | None = None) -> None:
                     esc_task.cancel()
                     resize_task.cancel()
                     esc_wait_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await esc_task
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await resize_task
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await esc_wait_task
+                    # Broad suppress: the poller can die with stdin-related
+                    # OSErrors on non-TTY hosts (CI runners). Awaiting the
+                    # dead task re-raises that exception; we don't care here
+                    # because the chat already finished its work.
+                    for _t in (esc_task, resize_task, esc_wait_task):
+                        with contextlib.suppress(BaseException):
+                            await _t
                     # Close the async generator so its finally blocks run
                     # (memory cleanup, _pop_last_user_message, etc.).
                     # aclose is a no-op if iteration already finished. The
