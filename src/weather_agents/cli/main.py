@@ -471,6 +471,7 @@ _TOOL_CATEGORIES: dict[str, str] = {
     "http_post": "Web",
     "shell_exec": "Bash",
     "get_cwd": "Bash",
+    "task_done": "Done",
     "lint_file": "Lint",
     "scan_deps": "Scan",
     "delegate_to": "Delegate",
@@ -508,7 +509,7 @@ _TOOL_CAT_COLORS: dict[str, str] = {
 
 
 def _print_tool_in(label: str, tool_name: str, args: dict) -> None:
-    """Print a compact "tool starting" line with inline args."""
+    """Print a compact "tool starting" line with non-redundant inline args."""
     cat = _tool_category(tool_name)
     cat_color = _TOOL_CAT_COLORS.get(cat, "dim cyan")
     label_short = label if len(label) < 60 else label[:57] + "..."
@@ -522,6 +523,9 @@ def _print_tool_in(label: str, tool_name: str, args: dict) -> None:
             v_str = str(v).replace("\n", " ")
             if len(v_str) > 80:
                 v_str = v_str[:77] + "..."
+            # Skip args already captured in the human-readable label
+            if v_str in label:
+                continue
             parts.append(f"{k}={v_str}")
         if parts:
             arg_str = "  " + " ".join(parts)
@@ -1545,9 +1549,7 @@ async def _interactive(agent_name: str | None = None) -> None:
 
                 try:
                     async for event in agent.chat_stream(inp):
-                        if _esc_event.is_set() or _poll_esc():
-                            if not _esc_event.is_set():
-                                _esc_event.set()
+                        if _esc_event.is_set():
                             interrupted = True
                             break
                         if event["type"] == "content":
