@@ -2757,15 +2757,35 @@ class _TaskDashboard:
         self._start_ts: float = 0.0
         self._live: Live | None = None
 
+        self._ingest_tasks(tasks)
+
+    def _ingest_tasks(self, tasks: list[Any]) -> None:
+        """Register or refresh task metadata. Used both at construction
+        and when the orchestrator re-plans mid-run: the dashboard needs
+        to know about the new tasks' agents/descriptions/deps, otherwise
+        the table renders them with "?" placeholders and the progress
+        bar sees a stale denominator (e.g. "3/2  150%")."""
         for t in tasks:
             tid = t.id
-            self._task_states[tid] = t.status
+            # Existing tasks: keep their (already-tracked) state; refresh
+            # metadata in case the planner overwrote description / deps.
+            if tid not in self._task_states:
+                self._task_states[tid] = t.status
+                if t.status in (
+                    TaskState.COMPLETED,
+                    TaskState.FAILED,
+                    TaskState.SKIPPED,
+                ):
+                    self._done += 1
             self._task_agents[tid] = t.assigned_to or "?"
             self._task_descs[tid] = t.description
             self._task_deps[tid] = t.all_deps
-            if t.status in (TaskState.COMPLETED, TaskState.FAILED, TaskState.SKIPPED):
-                self._done += 1
-        self._total = len(tasks)
+        self._total = len(self._task_states)
+
+    def merge_tasks(self, tasks: list[Any]) -> None:
+        """Public hook for the orchestrator's replan path."""
+        self._ingest_tasks(tasks)
+        self._refresh()
 
     @property
     def _elapsed(self) -> str:
@@ -3028,10 +3048,17 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
                     return False
 
             plan_rendered = True
-            # Start live dashboard after plan is printed/confirmed
+            # Start live dashboard after first plan; for subsequent re-plans
+            # merge the new tasks into the existing dashboard so the table
+            # picks up their agent icons / descriptions / deps and the
+            # progress bar uses the updated denominator. Without this the
+            # added tasks rendered with "?" agent and progress showed
+            # "3/2 150%".
             if dashboard is None:
                 dashboard = _TaskDashboard(goal, tasks)
                 dashboard.start()
+            else:
+                dashboard.merge_tasks(tasks)
             return True
 
         async def _on_start(t):
