@@ -107,7 +107,9 @@ class TestSystemContext:
         mcp.connect_all = AsyncMock(return_value=["server1"])
 
         agents = {"snow": Mock(init=AsyncMock(), close=AsyncMock())}
-        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp, tool_registry=registry)
+        ctx = SystemContext(
+            config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp, tool_registry=registry
+        )
         await ctx.init_all()
 
         mcp.connect_all.assert_awaited_once()
@@ -125,7 +127,9 @@ class TestSystemContext:
         mcp.connect_all = AsyncMock(side_effect=Exception("boom"))
 
         agents = {"snow": Mock(init=AsyncMock(), close=AsyncMock())}
-        ctx = SystemContext(config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp, tool_registry=registry)
+        ctx = SystemContext(
+            config=cfg, bus=bus, llm=llm, agent_map=agents, mcp=mcp, tool_registry=registry
+        )
         # Should not raise
         await ctx.init_all()
         agents["snow"].init.assert_awaited_once()

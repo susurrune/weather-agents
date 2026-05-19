@@ -149,6 +149,14 @@ class BaseAgent:
         # Human-in-loop approval gate: the CLI (or test) sets this to a
         # callable that prompts the user.  ``None`` = auto-approve.
         self.approval_callback: Callable[[str, dict], Awaitable[bool]] | None = None
+        # Serialize entry into chat/chat_stream/execute_task on this agent.
+        # Concurrent turns on the same agent (e.g. snow.gather(
+        # delegate_to(fog, A), delegate_to(fog, B))) used to interleave
+        # short_term messages mid-turn — A appends "user A", B appends
+        # "user B", A reads short_term and sees BOTH user messages as its
+        # own context, LLM returns a confused assistant_A based on both
+        # tasks. The lock makes concurrent callers queue instead of mix.
+        self._turn_lock: asyncio.Lock = asyncio.Lock()
 
     def _resolve_system_prompt(self) -> str:
         """Pick the language-appropriate system prompt based on config."""
@@ -332,11 +340,13 @@ class BaseAgent:
         use_skill(name) to activate one.  The system prompt is rebuilt only
         on activation — no token cost for inactive skills.
 
-        Registered once globally; the ContextVar set by chat_stream ensures
-        the handler reaches the agent that made the call.
+        Each agent has its OWN ToolRegistry (created in factory.create_system_context
+        per agent, not the global singleton), so the closures defined here
+        capture this agent's ``self``. Cross-agent leakage is impossible by
+        construction — there is no ContextVar involved.
         """
         if self.tool_registry.get("use_skill"):
-            return  # already registered (shared global registry)
+            return  # already registered on this agent's registry
 
         from weather_agents.core.tool import ToolParameter
 
@@ -525,6 +535,17 @@ class BaseAgent:
         ]
 
     async def close(self) -> None:
+        # Drain in-flight background work BEFORE closing memory. Fact
+        # extraction and any other _bg_tasks may still be writing to the
+        # SQLite DB; closing the DB first turns those writes into swallowed
+        # exceptions and silently loses the data.
+        pending = list(self._pending_extracts) + list(self._bg_tasks)
+        if pending:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=10.0,
+                )
         await self.memory.close()
         self.bus.unsubscribe(self.name)
 
@@ -575,7 +596,8 @@ class BaseAgent:
             on_status: Called with a status string when state changes
                        (e.g. "thinking...", "calling read_file...").
         """
-        return await self._chat_impl(message, on_status)
+        async with self._turn_lock:
+            return await self._chat_impl(message, on_status)
 
     async def _chat_impl(
         self,
@@ -627,17 +649,20 @@ class BaseAgent:
         # when the skill isn't already active, so explicit /skill activation
         # still takes precedence.
         self._auto_activate_skills(message)
-        try:
-            async for ev in self._chat_stream_impl(message):
-                yield ev
-        except BaseException:
-            # If _chat_stream_impl crashed before persisting the assistant
-            # response, remove the dangling user message so memory stays
-            # consistent — every user message should have a matching
-            # assistant response or be cleaned up.
-            if self.memory.short_term and self.memory.short_term[-1].role == "user":
-                self._pop_last_user_message()
-            raise
+        # Serialize concurrent turns on this agent so short_term doesn't
+        # get interleaved by two parallel callers (see _turn_lock comment).
+        async with self._turn_lock:
+            try:
+                async for ev in self._chat_stream_impl(message):
+                    yield ev
+            except BaseException:
+                # If _chat_stream_impl crashed before persisting the assistant
+                # response, remove the dangling user message so memory stays
+                # consistent — every user message should have a matching
+                # assistant response or be cleaned up.
+                if self.memory.short_term and self.memory.short_term[-1].role == "user":
+                    self._pop_last_user_message()
+                raise
 
     async def _chat_stream_impl(self, message: str) -> AsyncIterator[dict]:
         await self._set_state(AgentState.THINKING)
@@ -1424,7 +1449,8 @@ class BaseAgent:
         on_status: Callable[[str], None] | None = None,
     ) -> TaskResult:
         """Execute a specific task using agent specialty."""
-        return await self._execute_task_impl(task, on_status)
+        async with self._turn_lock:
+            return await self._execute_task_impl(task, on_status)
 
     async def _execute_task_impl(
         self,

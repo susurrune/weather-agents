@@ -947,3 +947,58 @@ class TestSkillAutoActivation:
             skill_registry=reg,
         )
         assert agent._auto_activate_skills("hello there") == []
+
+
+class TestTurnLockSerialization:
+    """Concurrent chat/execute_task on the same agent must serialize,
+    not interleave — otherwise short_term gets corrupted with mixed turns."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_chat_serializes(self, app_config, bus, mock_llm, tool_registry):
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent.init()
+        # Sentinel to detect interleaving: each chat appends one user + one
+        # assistant message. If serialized, short_term grows in clean pairs.
+        import asyncio as _asyncio
+
+        await _asyncio.gather(
+            agent.chat("msg one"),
+            agent.chat("msg two"),
+            agent.chat("msg three"),
+        )
+        # 3 user + 3 assistant messages (plus any system). For each user
+        # message the next non-system message must be an assistant — never
+        # another user.
+        non_sys = [m for m in agent.memory.short_term if m.role != "system"]
+        for i in range(0, len(non_sys) - 1, 2):
+            assert non_sys[i].role == "user", f"position {i} expected user, got {non_sys[i].role}"
+            assert non_sys[i + 1].role == "assistant", (
+                f"position {i + 1} expected assistant, got {non_sys[i + 1].role}"
+            )
+        await agent.close()
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_pending_extracts(self, app_config, bus, mock_llm, tool_registry):
+        import asyncio as _asyncio
+
+        from weather_agents.agents.fog import FogAgent
+
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        await agent.init()
+
+        # Inject a slow-completing fake extract task so we can verify close
+        # actually waits for it.
+        completed = {"ok": False}
+
+        async def _slow_task():
+            await _asyncio.sleep(0.1)
+            completed["ok"] = True
+
+        task = _asyncio.create_task(_slow_task())
+        agent._pending_extracts.add(task)
+        task.add_done_callback(agent._pending_extracts.discard)
+
+        await agent.close()
+        assert completed["ok"], "close() returned before _pending_extracts drained"

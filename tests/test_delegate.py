@@ -185,6 +185,32 @@ class TestDelegateNestingGuard:
         result = await tool.execute(agent="frost", task="should work")
         assert "completed" in result
 
+    @pytest.mark.asyncio
+    async def test_concurrent_fanout_not_falsely_rejected(self, agent_map):
+        """Snow delegating to three peers in parallel must not see any of
+        them rejected with "depth limit reached" — they're siblings, not
+        nested. Previously a per-tool counter shared across coroutines
+        misclassified the 3rd concurrent call as nested."""
+        import asyncio as _asyncio
+
+        tool = create_delegate_tool(agent_map)
+
+        async def _slow(_t):
+            # Hold the "running" state so all three are in flight at once.
+            await _asyncio.sleep(0.05)
+            return TaskResult(success=True, content="done")
+
+        for name in ("fog", "rain", "frost"):
+            agent_map[name].execute_task = _slow
+
+        results = await _asyncio.gather(
+            tool.execute(agent="fog", task="task A"),
+            tool.execute(agent="rain", task="task B"),
+            tool.execute(agent="frost", task="task C"),
+        )
+        for r in results:
+            assert "depth limit" not in r.lower(), f"falsely rejected: {r}"
+
 
 class TestAgentSpecialties:
     def test_all_agents_have_specialties(self):
@@ -220,7 +246,6 @@ class TestBuildSharedContext:
         assert result == ""
 
     def test_with_recent_non_system_messages(self):
-        from unittest.mock import PropertyMock
 
         from weather_agents.tools.delegate import _build_shared_context
 

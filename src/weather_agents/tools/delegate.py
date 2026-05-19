@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import contextvars
 from typing import TYPE_CHECKING
 
 from weather_agents.core.bus import Event, EventType
 from weather_agents.core.icons import icon_text
 from weather_agents.core.logger import get_logger
 from weather_agents.core.tool import Tool, ToolParameter
+
+# Depth of the current delegation *chain* (snow → fog → frost = 2). A
+# ContextVar — not a closure-local int — so concurrent delegations from the
+# same caller (snow doing asyncio.gather(delegate_to(fog), delegate_to(rain))
+# don't share a single counter and falsely trip the depth limit on their
+# siblings. ContextVars are inherited by spawned tasks, so true nesting
+# (snow → fog → frost) still counts correctly down the chain.
+_delegation_depth_var: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_delegation_depth", default=0
+)
 
 if TYPE_CHECKING:
     from weather_agents.core.agent import BaseAgent
@@ -67,25 +78,23 @@ def create_delegate_tool(
     """
     from weather_agents.core.agent import AgentState, Task
 
-    _delegation_depth = 0
     _MAX_DEPTH = 2  # allow 1 level of nesting (0→1→2, blocked at 3)
 
     async def _handle(agent: str, task: str, context: str = "") -> str:
-        nonlocal _delegation_depth
-
         if agent not in agent_map:
             names = ", ".join(sorted(agent_map.keys()))
             return f"Unknown agent '{agent}'. Available agents: {names}"
 
         target = agent_map[agent]
 
-        if _delegation_depth >= _MAX_DEPTH:
+        current_depth = _delegation_depth_var.get()
+        if current_depth >= _MAX_DEPTH:
             return (
                 f"Nested delegation depth limit ({_MAX_DEPTH}) reached. "
                 f"Agent '{agent}' must complete the task directly using its own tools."
             )
 
-        _delegation_depth += 1
+        _token = _delegation_depth_var.set(current_depth + 1)
         try:
             await target.init()
 
@@ -103,7 +112,7 @@ def create_delegate_tool(
                 extra={
                     "target": agent,
                     "task": task[:120],
-                    "depth": _delegation_depth,
+                    "depth": current_depth + 1,
                 },
             )
 
@@ -166,7 +175,7 @@ def create_delegate_tool(
             _log.exception("delegation_error: %s", exc)
             return f"Delegation to '{agent}' failed: {exc}"
         finally:
-            _delegation_depth -= 1
+            _delegation_depth_var.reset(_token)
 
     return Tool(
         name="delegate_to",

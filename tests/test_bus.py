@@ -156,9 +156,7 @@ class TestMessageBus:
 
         bus.subscribe("target", failing)
         bus.subscribe("target", ok)
-        await bus.publish(
-            Event(type=EventType.TASK_ASSIGNED, source="snow", target="target")
-        )
+        await bus.publish(Event(type=EventType.TASK_ASSIGNED, source="snow", target="target"))
         assert len(good) == 1
 
     @pytest.mark.asyncio

@@ -177,6 +177,16 @@ class MCPClient:
                 "mcp_stdio_read_error",
                 extra={"server": self.config.name, "error": str(e)},
             )
+        finally:
+            # Stdout EOF or read error means no further responses can arrive
+            # for this client — fail every in-flight request so callers
+            # unblock with CancelledError instead of waiting until their
+            # asyncio.wait_for timeout fires. Cancellation belongs here (the
+            # response stream is dead) and explicitly NOT in _drain_stderr
+            # (which only manages the side-channel log pipe).
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.cancel()
 
     async def _drain_stderr(self) -> None:
         """Continuously drain the subprocess's stderr pipe so it never
@@ -206,10 +216,11 @@ class MCPClient:
             # Stderr drain must never crash the client; pipe closure during
             # shutdown surfaces as a generic OSError on Windows.
             return
-        finally:
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.cancel()
+        # NOTE: pending-future cancellation deliberately lives in
+        # _read_stdio_loop's finally, not here. stderr EOF can happen while
+        # stdout is still serving responses (e.g. a server that closes its
+        # log channel but keeps the RPC channel alive); cancelling pending
+        # from here would unnecessarily fail those in-flight requests.
 
     async def _request_stdio(
         self, method: str, params: dict, timeout: float = 10.0

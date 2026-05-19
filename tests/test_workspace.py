@@ -167,7 +167,9 @@ class TestWorkspaceDetectRoot:
 
         from weather_agents.core.workspace import _get_drive_list
 
-        with patch("weather_agents.core.workspace.shutil.disk_usage", side_effect=OSError("no disk")):
+        with patch(
+            "weather_agents.core.workspace.shutil.disk_usage", side_effect=OSError("no disk")
+        ):
             drives = _get_drive_list()
             assert drives == []
 

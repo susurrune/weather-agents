@@ -169,7 +169,6 @@ class TestLLMCacheKey:
 
 class TestLLMCacheLifecycle:
     def test_expired_entry_returns_none(self):
-        import time as _time
 
         from weather_agents.core.cache import LLMCache
 
@@ -384,8 +383,14 @@ class TestCompleteWithRetry:
     def client(self, app_config, tool_registry):
         return LLMClient(app_config, tool_registry)
 
-    def _mock_litellm_response(self, content="", tool_calls=None, model="gpt-4o-mini",
-                                prompt_tokens=10, completion_tokens=20):
+    def _mock_litellm_response(
+        self,
+        content="",
+        tool_calls=None,
+        model="gpt-4o-mini",
+        prompt_tokens=10,
+        completion_tokens=20,
+    ):
         """Build a mock response shaped like litellm's acompletion return value."""
         msg = Mock()
         msg.content = content
@@ -447,9 +452,7 @@ class TestCompleteWithRetry:
         mock_resp = self._mock_litellm_response(content="finally ok")
         with patch("weather_agents.core.llm._get_litellm") as mock_get:
             mock_lm = Mock()
-            mock_lm.acompletion = AsyncMock(
-                side_effect=[TimeoutError("timeout"), mock_resp]
-            )
+            mock_lm.acompletion = AsyncMock(side_effect=[TimeoutError("timeout"), mock_resp])
             mock_get.return_value = mock_lm
 
             result = await client._complete_with_retry(
@@ -464,9 +467,7 @@ class TestCompleteWithRetry:
     async def test_non_transient_error_raises(self, client):
         with patch("weather_agents.core.llm._get_litellm") as mock_get:
             mock_lm = Mock()
-            mock_lm.acompletion = AsyncMock(
-                side_effect=ValueError("bad request")
-            )
+            mock_lm.acompletion = AsyncMock(side_effect=ValueError("bad request"))
             mock_get.return_value = mock_lm
 
             with pytest.raises(ValueError):
@@ -490,9 +491,7 @@ class TestCompleteWithRetry:
             mock_lm.acompletion = AsyncMock()
             mock_get.return_value = mock_lm
 
-            result = await client._complete_with_retry(
-                "gpt-4o-mini", msgs
-            )
+            result = await client._complete_with_retry("gpt-4o-mini", msgs)
 
         assert result.content == "cached response"
         mock_lm.acompletion.assert_not_awaited()
@@ -534,6 +533,7 @@ class TestStream:
     @pytest.mark.asyncio
     async def test_stream_yields_content(self, client):
         chunks = [self._make_chunk("Hello"), self._make_chunk(" World")]
+
         # Make a mock that works as an async iterable
         async def async_iter():
             for c in chunks:
