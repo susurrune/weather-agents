@@ -197,11 +197,54 @@ _PLACEHOLDER_PATTERNS: tuple[str, ...] = (
     "ok!",
 )
 
+# Status-update keywords that, when present in a SHORT response, indicate
+# the model emitted a "report on the work" instead of the actual
+# deliverable. Distinct from _PLACEHOLDER_PATTERNS because the response
+# may include some text ("调研工作已完成。") yet still contain zero
+# concrete output (no entity names, data, code, links, file paths).
+_STATUS_REPORT_KEYWORDS: tuple[str, ...] = (
+    "已完成",
+    "完成了",
+    "已成功",
+    "已经完成",
+    "工作已",
+    "任务已",
+    "task complete",
+    "task is complete",
+    "i have completed",
+    "i've completed",
+    "successfully completed",
+    "finished the",
+    "i finished",
+    "已经写好",
+    "已经写完",
+    "已经做好",
+    "写完了",
+    "做完了",
+)
+
+# Concrete-deliverable markers. If a response contains any of these it
+# is plausibly a real artifact, not just a status report. Note that
+# short responses without ANY of these markers AND containing a
+# status-update keyword are flagged as thin.
+_DELIVERABLE_MARKERS: tuple[str, ...] = (
+    "```",  # code or table fence
+    "http://",
+    "https://",
+    "|",  # markdown table separator
+    "## ",  # markdown heading
+    "###",
+    "- [ ]",  # checkbox
+    "1.",  # numbered list (usually real content)
+    "/",  # file paths
+    "\\",
+)
+
 
 def _is_thin_content(content: str) -> bool:
     """True if ``content`` is too thin to count as a real deliverable.
 
-    Catches three failure modes that previously slipped past the orchestrator
+    Catches four failure modes that previously slipped past the orchestrator
     as ``success=True``:
 
     1. Empty / whitespace-only output.
@@ -209,11 +252,14 @@ def _is_thin_content(content: str) -> bool:
        emits when it ran out of iterations or didn't actually do the work.
     3. Truncation markers from the agent layer (``[truncated]``,
        ``[Error: ...]``).
+    4. Status-update responses: "调研工作已完成。包括 Milvus 等数据库。"
+       — sounds substantive but contains zero concrete entities, data,
+       code, links, or file paths the user can verify. The heuristic:
+       short content (≤ 200 chars) + a status-update keyword + no
+       deliverable markers ⇒ thin.
 
-    Deliberately NOT enforcing a minimum length — short legitimate answers
-    in Chinese (e.g. "把日志切成 7 天滚动") would otherwise be wrongly
-    rejected. The placeholder match is exact-after-trimming so real
-    sentences containing "done" or "ok" mid-text survive.
+    Deliberately NOT enforcing a hard minimum length on legitimate
+    answers — only the status-update bucket adds a length condition.
     """
     if not content:
         return True
@@ -224,7 +270,17 @@ def _is_thin_content(content: str) -> bool:
     if lowered.startswith(("[truncated]", "[error:")):
         return True
     bare = lowered.rstrip(".!?。！？ ").strip()
-    return bare in _PLACEHOLDER_PATTERNS
+    if bare in _PLACEHOLDER_PATTERNS:
+        return True
+    # Status-update detection. Only fires when the response is short AND
+    # claims completion AND shows no concrete artifact markers. Long
+    # responses survive even if they contain "已完成" mid-text; short
+    # responses with code blocks / URLs / file paths also survive.
+    return (
+        len(stripped) <= 200
+        and any(kw in lowered for kw in _STATUS_REPORT_KEYWORDS)
+        and not any(m in stripped for m in _DELIVERABLE_MARKERS)
+    )
 
 
 async def _execute_with_retry(
@@ -401,16 +457,41 @@ async def _execute_pending(
 
             description = t.description
             upstream_sections: list[str] = []
+            thin_upstream_ids: list[str] = []
             for dep_id in t.all_deps:
                 if dep_id in results_by_id:
                     parent_result = results_by_id[dep_id]
                     full_content = full_contents_by_id.get(dep_id, parent_result.content or "")
-                    upstream_sections.append(
-                        f"## 上游产出 (task {parent_result.id} · {parent_result.agent})\n"
-                        f"{full_content}"
-                    )
+                    # If the upstream output is itself thin / placeholder,
+                    # do NOT pretend it's a real deliverable. Mark it so
+                    # the downstream agent knows it's working without a
+                    # real upstream and must either flag the gap or
+                    # produce the upstream content itself.
+                    if _is_thin_content(full_content):
+                        thin_upstream_ids.append(parent_result.id)
+                        upstream_sections.append(
+                            f"## 上游产出缺失 (task {parent_result.id} · "
+                            f"{parent_result.agent})\n"
+                            f"⚠ 上游任务声称完成但未产出实际内容。"
+                            f"请勿基于占位回复继续执行——你应：(1) 自己"
+                            f"补齐上游应当输出的内容；或 (2) 明确报告"
+                            f"无法基于空上游完成本任务。\n\n"
+                            f"原始回复（供参考，明显不构成可用上游）：\n"
+                            f"{full_content}"
+                        )
+                    else:
+                        upstream_sections.append(
+                            f"## 上游产出 (task {parent_result.id} · "
+                            f"{parent_result.agent})\n"
+                            f"{full_content}"
+                        )
             if upstream_sections:
                 description = f"{t.description}\n\n" + "\n\n".join(upstream_sections)
+            if thin_upstream_ids:
+                _log.warning(
+                    "thin_upstream",
+                    extra={"task": t.id, "thin_upstream": thin_upstream_ids},
+                )
 
             a_task = AgentTask(
                 id=t.id,
@@ -469,19 +550,37 @@ async def _judge_goal_achievement(
     bullets: list[str] = []
     for r in results:
         status = "成功" if r.success else "失败"
-        excerpt = (r.content or "")[:400]
-        bullets.append(f"- [task {r.id} · {r.agent} · {status}] {excerpt}")
+        # Show more of the content (800 chars vs 400) so the judge can
+        # see whether the response is genuinely substantive or just a
+        # padded status report.
+        excerpt = (r.content or "")[:800]
+        bullets.append(
+            f"- [task {r.id} · agent={r.agent} · status={status}] "
+            f"len={len(r.content or '')}chars\n  {excerpt}"
+        )
     bullets_text = "\n".join(bullets)
 
     prompt = (
-        "你是一名严格的项目验收员。下面是用户提出的目标和已执行子任务的结果。\n"
-        "请判断当前结果是否真的达成了目标。注意：\n"
-        "1. 占位回复（'已完成' / 'Done' 等）不算达成。\n"
-        "2. 关键交付物缺失则不算达成。\n"
-        "3. 如果只是细节有瑕疵但主要目标完成，仍判为已达成。\n\n"
-        f"## 用户目标\n{goal}\n\n## 已执行子任务结果\n{bullets_text}\n\n"
+        "你是一名极严格的项目验收员。你的工作是验证 sub-task 真的产出了"
+        "**可验证的交付物**，而不是仅声称完成。LLM agent 经常返回"
+        "「调研已完成，包括 X/Y/Z」这种状态报告但不附带任何实际内容——"
+        "此类一律判为未达成。\n\n"
+        "## 验收规则（严格执行，任一违反即 achieved=false）\n\n"
+        "1. **「调研/搜集/查询」类**：必须列出具体被调研对象的名称、"
+        "对应的数据/特性/链接。仅写「已调研完成」、「包括以下 5 个数据库」"
+        "而无具体特性内容 ⇒ 未达成。\n"
+        "2. **「撰写/生成/写作」类**：必须包含**实际的文本/代码/markdown 正文**。"
+        "仅写「文章已写好/已生成」而不附内容 ⇒ 未达成。\n"
+        "3. **「审查/审计/对比」类**：必须列出具体问题点或具体对比维度，"
+        "并明确指向哪个具体对象。审查不存在的产物 ⇒ 未达成。\n"
+        "4. **下游任务依赖上游**：如果某子任务的内容明显与原目标无关"
+        "（例如审查的文件路径与上游任务无关），整体判未达成。\n"
+        "5. **细节瑕疵**可以容忍，但**核心交付物缺失**绝不容忍。\n\n"
+        f"## 用户原目标\n{goal}\n\n"
+        f"## 子任务执行结果\n{bullets_text}\n\n"
         "严格按下列 JSON 格式输出（除 JSON 之外不要任何其他字符）：\n"
-        '{"achieved": true/false, "missing": "未达成时简述还缺什么；已达成则填空字符串"}'
+        '{"achieved": true/false, "missing": "若未达成，逐项列出哪个子任务'
+        '缺什么具体交付物"}'
     )
     try:
         raw = await snow.chat(prompt)

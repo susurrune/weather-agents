@@ -363,6 +363,40 @@ class TestQualityGateAndReplan:
         # Real sentence containing the word "done" survives
         assert _is_thin_content("All preflight checks done; proceeding.") is False
 
+    def test_is_thin_content_catches_status_reports(self):
+        """The "声称完成但无交付物" failure class — a short response that
+        claims completion but contains no actual artifact markers."""
+        from weather_agents.core.factory import _is_thin_content
+
+        # Short status reports — should be flagged
+        assert _is_thin_content("调研工作已完成。") is True
+        assert _is_thin_content("已成功完成了调研任务。") is True
+        assert _is_thin_content("文章已经写好。") is True
+        assert _is_thin_content("Successfully completed the research.") is True
+        assert _is_thin_content("I have completed the task as requested.") is True
+
+        # Status keyword + real markdown content — must NOT be flagged
+        long_real = (
+            "## 5 个向量数据库对比\n\n"
+            "| 名称 | 特性 |\n|---|---|\n| Milvus | 分布式 |\n"
+            "调研已完成，详见上表。"
+        )
+        assert _is_thin_content(long_real) is False
+        # Status keyword + URL — has a deliverable marker
+        assert _is_thin_content("调研完成，参考 https://milvus.io 文档。") is False
+        # Status keyword + code block
+        assert _is_thin_content("已完成。\n```py\nfrom x import y\n```") is False
+        # Long detailed response with "已完成" buried — survives
+        assert (
+            _is_thin_content(
+                "Milvus 是分布式向量数据库，支持 HNSW 索引，单机可处理 10 亿向量。"
+                "Qdrant 用 Rust 写，提供 REST API。Weaviate 内建多模态支持。"
+                "Chroma 是嵌入式方案，适合原型。Vespa 是 Yahoo 出品，工业级。"
+                "调研已完成。" * 2
+            )
+            is False
+        )
+
     @pytest.mark.asyncio
     async def test_thin_content_triggers_retry(self):
         """An agent returning 'Done.' must be retried by the orchestrator."""
