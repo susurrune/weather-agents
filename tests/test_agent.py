@@ -1002,3 +1002,37 @@ class TestTurnLockSerialization:
 
         await agent.close()
         assert completed["ok"], "close() returned before _pending_extracts drained"
+
+
+class TestArgsParseErrorFormatter:
+    """The 'Invalid JSON' tool-result was misleading when the LLM hit
+    max_tokens mid-content. _format_args_parse_error should detect that
+    case and tell the model to chunk instead of parroting 'invalid JSON'."""
+
+    def test_truncated_unclosed_string_detected(self):
+        from weather_agents.core.agent import _format_args_parse_error
+
+        # Realistic write_file truncation: content string never closes,
+        # no trailing brace.
+        raw = '{"path": "weather.html", "content": "<!DOCTYPE html><html><body><h1>'
+        msg = _format_args_parse_error("write_file", raw)
+        assert "truncated" in msg.lower()
+        assert "max_tokens" in msg
+        assert "chunk" in msg.lower() or "split" in msg.lower()
+
+    def test_truncated_unclosed_object_detected(self):
+        from weather_agents.core.agent import _format_args_parse_error
+
+        # No string opened, but missing closing brace
+        raw = '{"path": "x", "content": "ok"'
+        msg = _format_args_parse_error("write_file", raw)
+        assert "truncated" in msg.lower()
+
+    def test_genuinely_malformed_json_not_called_truncated(self):
+        from weather_agents.core.agent import _format_args_parse_error
+
+        # Properly closed, just malformed in the middle
+        raw = '{"path": "x", "content": }'
+        msg = _format_args_parse_error("write_file", raw)
+        assert "truncated" not in msg.lower()
+        assert "invalid JSON" in msg

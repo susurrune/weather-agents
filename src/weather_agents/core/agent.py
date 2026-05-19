@@ -790,7 +790,7 @@ class BaseAgent:
                     if isinstance(raw_args, str):
                         tool_args = _parse_tool_args(raw_args)
                         parse_error = (
-                            f"Invalid JSON in tool call arguments for '{tool_name}': {raw_args[:200]}"
+                            _format_args_parse_error(tool_name, raw_args)
                             if tool_args is None
                             else None
                         )
@@ -1360,7 +1360,7 @@ class BaseAgent:
                     if isinstance(raw_args, str):
                         tool_args = _parse_tool_args(raw_args)
                         if tool_args is None:
-                            parse_error = f"Invalid JSON in tool call arguments for '{tool_name}': {raw_args[:200]}"
+                            parse_error = _format_args_parse_error(tool_name, raw_args)
                     else:
                         tool_args = raw_args
 
@@ -1796,6 +1796,47 @@ def _parse_tool_args(raw: str) -> dict | None:
             pass
 
     return None
+
+
+def _format_args_parse_error(tool_name: str, raw_args: str) -> str:
+    """Produce a tool-result error string that helps the LLM recover.
+
+    Detects the common failure mode where the model hit max_tokens
+    mid-content (huge write_file payloads, etc.) and the JSON tool args
+    end in an unclosed string. In that case "Invalid JSON" is misleading
+    — the args parsed fine syntactically up to where they stopped — so we
+    point the model at the real fix (chunk the content or use edit_file).
+
+    The truncation heuristic: count unescaped quotes; if odd, the last
+    string was never closed. Combined with no trailing brace, that
+    practically always means max_tokens cut the response.
+    """
+    stripped = raw_args.rstrip()
+    has_closing_brace = stripped.endswith(("}", "]"))
+    # Crude quote counter — treat backslash as escape one char ahead.
+    in_string = False
+    i = 0
+    while i < len(stripped):
+        ch = stripped[i]
+        if ch == "\\" and in_string:
+            i += 2
+            continue
+        if ch == '"':
+            in_string = not in_string
+        i += 1
+    looks_truncated = in_string or not has_closing_brace
+
+    preview = raw_args[:200] + ("...[truncated]" if len(raw_args) > 200 else "")
+    if looks_truncated:
+        return (
+            f"Error: tool '{tool_name}' arguments were truncated by the model's "
+            f"output budget (max_tokens). The JSON ended mid-value so it cannot "
+            f"be parsed. For large content, split into multiple smaller calls "
+            f"(write_file with a shorter chunk, then edit_file or write_file to "
+            f"append the rest), or break the deliverable into pieces. "
+            f"Args preview: {preview}"
+        )
+    return f"Error: invalid JSON in tool call arguments for '{tool_name}': {preview}"
 
 
 def _suggest_tool_names(missing: str, registry: ToolRegistry, max_n: int = 3) -> list[str]:

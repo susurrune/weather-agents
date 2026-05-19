@@ -116,7 +116,12 @@ def get_model_context_window(model_name: str) -> int:
 class LLMConfig:
     default_model: str = "deepseek/deepseek-v4-flash"
     temperature: float = 0.7
-    max_tokens: int = 4096
+    # 4096 was too low: write_file with a typical HTML page (~3-10KB)
+    # routinely hit the cap mid-content, leaving the JSON tool_args
+    # unclosed and the call rejected as "Invalid JSON". 8192 covers
+    # the vast majority of one-shot writes; chunk-and-edit handles
+    # the rest via the helpful truncation hint we now emit.
+    max_tokens: int = 8192
     timeout: int = 120
     max_retries: int = 2
     api_keys: dict[str, str] = field(default_factory=dict)
