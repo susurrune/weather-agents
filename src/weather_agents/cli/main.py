@@ -1198,6 +1198,9 @@ def _build_input_display(
 
     # ── Continuation lines ────────────────────────────────────────────────────
     for i in range(1, len(lines)):
+        # Skip empty trailing lines that don't contain the cursor
+        if not lines[i] and i != cursor_line:
+            continue
         row = Text("      ")  # indent to align below prompt text
         _render_line(row, lines[i], cursor_line, cursor_col, color, buffer, line_idx=i)
         results.append(row)
