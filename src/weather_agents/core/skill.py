@@ -108,6 +108,16 @@ class Skill:
             if isinstance(triggers_raw, list)
             else []
         )
+        # Auto-derive triggers from the description when the YAML
+        # frontmatter doesn't specify any. Anthropic's skill descriptions
+        # follow a stable pattern — quoted tokens like `"deck,"` and
+        # `"slides,"` plus file extensions like `.pptx` / `.pdf` ARE the
+        # triggers; not extracting them meant pptx / pdf / etc. never
+        # auto-activated, costing a full list_skills + use_skill round
+        # trip on every "make a deck" request. Manual `triggers:` always
+        # wins so authored intent isn't overridden.
+        if not triggers and isinstance(description, str) and description:
+            triggers = _derive_triggers_from_description(description)
 
         # Anthropic skill-spec extras: license (display-only) and
         # allowed-tools (restriction list). YAML uses kebab-case for the
@@ -136,6 +146,57 @@ class Skill:
             license=license,
             allowed_tools=allowed_tools,
         )
+
+
+# Patterns for auto-deriving triggers from skill descriptions. Each
+# pattern targets a stable shape Anthropic / community skill authors
+# use to embed keyword hints in prose.
+_TRIGGER_QUOTED = re.compile(r"[\"'“‘]([^\"'”’\n]{1,40})[\"'”’]")
+# File extension references like .pptx / .pdf / .ipynb. The leading dot
+# is preserved so a substring match against "file.pdf" still hits.
+_TRIGGER_EXT = re.compile(r"(?<![A-Za-z0-9])\.[A-Za-z0-9]{2,6}\b")
+# Punctuation/whitespace to strip from extracted candidates so
+# `"deck,"` extracts to `deck` (trailing comma removed).
+_TRIGGER_STRIP = " \t,.;:!?，。、；：！？、。"
+
+
+def _derive_triggers_from_description(description: str) -> list[str]:
+    """Pull candidate trigger phrases out of a skill description.
+
+    The rules are conservative — we only emit substrings that appeared
+    *quoted* in the description (the author's explicit hint) or look
+    like file-extension tokens. Free-prose words are NOT extracted: the
+    auto-activator already uses case-insensitive substring matching, and
+    matching against common short prose words ('use', 'create', 'when')
+    would over-trigger and activate every skill on every message.
+
+    Deduplicated, case-preserving, max 12 entries (enough for the
+    typical skill that lists 5-8 keywords + 1-2 extensions).
+    """
+    raw: list[str] = []
+    for m in _TRIGGER_QUOTED.finditer(description):
+        raw.append(m.group(1))
+    for m in _TRIGGER_EXT.finditer(description):
+        raw.append(m.group(0))
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for token in raw:
+        # Only strip TRAILING punctuation. Leading dots are meaningful:
+        # `.pptx` is a file-extension trigger that must keep the dot,
+        # otherwise a user message that wrote ".pptx" (with the dot)
+        # wouldn't substring-match against a stripped "pptx" candidate.
+        cleaned = token.rstrip(_TRIGGER_STRIP).lstrip(" \t")
+        if not cleaned or len(cleaned) < 2:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+        if len(out) >= 12:
+            break
+    return out
 
 
 def _parse_frontmatter(text: str) -> tuple[dict | None, str]:

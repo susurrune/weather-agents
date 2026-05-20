@@ -606,7 +606,12 @@ async def _judge_goal_achievement(
         '缺什么具体交付物"}'
     )
     try:
-        raw = await snow.chat(prompt)
+        # chat_oneshot bypasses the tool loop + memory persistence and
+        # routes to the configured lightweight_model. The judge is a
+        # JSON yes/no classifier — it doesn't need reasoning tokens or
+        # tool access, and persisting the verification prompt into
+        # snow's short_term was just dilution.
+        raw = await snow.chat_oneshot(prompt)
     except Exception as exc:
         _log.warning("judge_llm_failed: %s", exc)
         return True, ""
@@ -814,7 +819,10 @@ async def _run_orchestration(
             # section in the final panel. H3 renders as plain bold color
             # without the rule and keeps the output dense.
             summary_prompt += f"### 任务 {r.id} ({r.agent}) - {status}\n{r.content[:300]}\n\n"
-        summary = await snow.chat(summary_prompt)
+        # Summary is pure synthesis — no tools needed, no skill prompts
+        # needed, and the lightweight model handles "paraphrase these
+        # bullet points" perfectly. Same rationale as the judge call.
+        summary = await snow.chat_oneshot(summary_prompt)
 
     # If we hit the re-plan budget without the judge ever returning achieved,
     # tag the summary so the user knows we capped out rather than confirming

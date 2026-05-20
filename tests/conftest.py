@@ -46,17 +46,36 @@ def tool_registry():
 @pytest.fixture
 def mock_llm():
     llm = Mock()
-    llm.complete = AsyncMock(
-        return_value=Mock(
-            content="test response",
-            tool_calls=[],
-            model="gpt-4o-mini",
-            usage={"prompt_tokens": 10, "completion_tokens": 5},
-            # Set reasoning_content explicitly so Mock auto-attribute doesn't
-            # return a stub Mock object and end up serialized to the DB.
-            reasoning_content=None,
-        )
+    default_response = Mock(
+        content="test response",
+        tool_calls=[],
+        model="gpt-4o-mini",
+        usage={"prompt_tokens": 10, "completion_tokens": 5},
+        # Set reasoning_content explicitly so Mock auto-attribute doesn't
+        # return a stub Mock object and end up serialized to the DB.
+        reasoning_content=None,
     )
+    # Capture every complete() call's overrides into a public attribute
+    # so tests can assert on routing decisions (chat_oneshot's model
+    # override, skill config overrides, etc.) without subclassing the
+    # mock. We still honour `mock_llm.complete.return_value = ...` for
+    # the pre-existing test pattern by reading the AsyncMock's own
+    # return_value at call time — that way tests can override it after
+    # the fixture builds.
+    llm.last_overrides = None
+    llm.last_tools = None
+    llm.complete = AsyncMock(return_value=default_response)
+
+    real_complete = llm.complete
+
+    async def _complete(*args, **kwargs):
+        llm.last_overrides = kwargs.get("overrides")
+        llm.last_tools = kwargs.get("tools")
+        # Re-fetch return_value every call so test-level reassignment
+        # (mock_llm.complete.return_value = Mock(...)) still works.
+        return real_complete.return_value
+
+    llm.complete.side_effect = _complete
     llm.stream = AsyncMock()
     llm.get_usage_stats = Mock(return_value={})
     llm.get_total_cost = Mock(return_value=0.0)

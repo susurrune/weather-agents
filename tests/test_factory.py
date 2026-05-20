@@ -148,6 +148,8 @@ class TestOrchestrateTask:
         snow.orchestrate = AsyncMock(return_value=[])
         snow.chat = AsyncMock(return_value="nothing to do")
 
+        snow.chat_oneshot = AsyncMock(return_value="nothing to do")
+
         tasks, results, summary = await orchestrate_task("do something", {}, snow=snow)
         assert tasks == []
         assert results == []
@@ -161,6 +163,8 @@ class TestOrchestrateTask:
         snow = Mock()
         snow.orchestrate = AsyncMock(return_value=[task])
         snow.chat = AsyncMock(return_value="done")
+
+        snow.chat_oneshot = AsyncMock(return_value="done")
 
         rain = Mock()
         rain.execute_task = AsyncMock(return_value=Mock(success=True, content="code written"))
@@ -185,6 +189,8 @@ class TestOrchestrateTask:
         snow.orchestrate = AsyncMock(return_value=[task1, task2])
         snow.chat = AsyncMock(return_value="summary")
 
+        snow.chat_oneshot = AsyncMock(return_value="summary")
+
         fog = Mock()
         fog.execute_task = AsyncMock(return_value=Mock(success=True, content="research done"))
         rain = Mock()
@@ -205,6 +211,8 @@ class TestOrchestrateTask:
         snow = Mock()
         snow.orchestrate = AsyncMock(return_value=[task])
         snow.chat = AsyncMock(return_value="summary")
+
+        snow.chat_oneshot = AsyncMock(return_value="summary")
 
         rain = Mock()
         rain.execute_task = AsyncMock(return_value=Mock(success=True, content="done"))
@@ -236,6 +244,8 @@ class TestOrchestrateTask:
         snow.orchestrate = AsyncMock(return_value=[task])
         snow.chat = AsyncMock(return_value="ok")
 
+        snow.chat_oneshot = AsyncMock(return_value="ok")
+
         rain = Mock()
         rain.execute_task = AsyncMock(return_value=Mock(success=True, content="x" * 100))
 
@@ -255,6 +265,8 @@ class TestOrchestrateTask:
         snow.orchestrate = AsyncMock(return_value=[task])
         snow.chat = AsyncMock(return_value="summary")
 
+        snow.chat_oneshot = AsyncMock(return_value="summary")
+
         _, results, _ = await orchestrate_task("test", agent_map={"snow": snow})
         assert results[0].success is False
         assert "not found" in results[0].content
@@ -273,6 +285,8 @@ class TestOrchestrateTask:
             ]
         )
         snow.chat = AsyncMock(return_value="summary")
+
+        snow.chat_oneshot = AsyncMock(return_value="summary")
         snow.memory = Mock()
         snow.memory.get_active_session = Mock(return_value=None)
 
@@ -309,6 +323,8 @@ class TestOrchestrateTask:
         snow = Mock()
         snow.orchestrate = AsyncMock(return_value=[task])
         snow.chat = AsyncMock(return_value="summary")
+
+        snow.chat_oneshot = AsyncMock(return_value="summary")
 
         rain = Mock()
         rain.execute_task = AsyncMock(return_value=Mock(success=True, content="oops"))
@@ -419,6 +435,8 @@ class TestQualityGateAndReplan:
         )
         snow.chat = AsyncMock(return_value="ok")
 
+        snow.chat_oneshot = AsyncMock(return_value="ok")
+
         _, results, _ = await orchestrate_task(
             "write something",
             agent_map={"rain": rain, "snow": snow},
@@ -442,15 +460,16 @@ class TestQualityGateAndReplan:
             ]
         )
         # Judge says "no, missing X" on round 1, "achieved" on round 2,
-        # then a final summary. The judge runs each round, so we need
-        # enough side-effects to cover all calls.
-        snow.chat = AsyncMock(
-            side_effect=[
-                '{"achieved": false, "missing": "测试用例覆盖率"}',
-                '{"achieved": true, "missing": ""}',
-                "final summary",
-            ]
-        )
+        # then a final summary. Both the judge and the summary route via
+        # chat_oneshot since round 2 (lightweight-model path); chat is
+        # kept around for any code path that still uses it.
+        _chat_seq = [
+            '{"achieved": false, "missing": "测试用例覆盖率"}',
+            '{"achieved": true, "missing": ""}',
+            "final summary",
+        ]
+        snow.chat_oneshot = AsyncMock(side_effect=_chat_seq)
+        snow.chat = AsyncMock(side_effect=list(_chat_seq))
         # Replan returns one extra task
         snow.replan_for_missing = AsyncMock(
             return_value=[Task(id="3", description="add tests", assigned_to="frost")]
@@ -487,6 +506,8 @@ class TestPlanConfirmGate:
         )
         snow.chat = AsyncMock(return_value="never called")
 
+        snow.chat_oneshot = AsyncMock(return_value="never called")
+
         rain = Mock()
         rain.execute_task = AsyncMock(return_value=Mock(success=True, content="oops"))
 
@@ -514,6 +535,8 @@ class TestPlanConfirmGate:
         )
         snow.chat = AsyncMock(return_value="ok")
 
+        snow.chat_oneshot = AsyncMock(return_value="ok")
+
         rain = Mock()
         rain.execute_task = AsyncMock(
             return_value=Mock(success=True, content="real deliverable text here")
@@ -540,6 +563,8 @@ class TestPlanConfirmGate:
             return_value=[Task(id="1", description="x", assigned_to="rain")]
         )
         snow.chat = AsyncMock(return_value="ok")
+
+        snow.chat_oneshot = AsyncMock(return_value="ok")
 
         rain = Mock()
         rain.execute_task = AsyncMock(
@@ -573,6 +598,12 @@ def _shaped_agent(name):
             self._chat_idx = 0
             self.execute_task = AsyncMock(side_effect=self._next_exec)
             self.chat = AsyncMock(side_effect=self._next_chat)
+            # chat_oneshot was added in round 2 to route judge/summary
+            # through the lightweight model. The fake serves both from
+            # the same queue so existing queue_chat scripts keep working
+            # — production code is also designed so any single call site
+            # uses one OR the other, not both.
+            self.chat_oneshot = AsyncMock(side_effect=self._next_chat)
             self.orchestrate = AsyncMock()
             self.replan_for_missing = AsyncMock(return_value=[])
 
@@ -975,3 +1006,122 @@ class TestHardCapLowered:
             skill_registry=SkillRegistry(),
         )
         assert agent._max_tool_rounds_hard_cap == 40
+
+
+class TestChatOneshotLightweightRouting:
+    """chat_oneshot must route through the configured lightweight_model
+    when available, and must NOT pollute the agent's chat history. Both
+    properties are the reason for the helper's existence — the original
+    judge/summary path used snow.chat() which persisted the verification
+    prompt into short_term and routed through the heavy model."""
+
+    @pytest.mark.asyncio
+    async def test_uses_lightweight_model_when_configured(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        app_config.llm.lightweight_model = "deepseek/deepseek-v4-flash"
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=SkillRegistry(),
+        )
+        await agent.chat_oneshot("classify this")
+        # The mock LLM records the overrides it received — verify the
+        # lightweight model was selected, not the agent's default.
+        call_overrides = mock_llm.last_overrides
+        assert call_overrides and call_overrides.get("model") == ("deepseek/deepseek-v4-flash")
+
+    @pytest.mark.asyncio
+    async def test_explicit_model_arg_wins_over_config(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        app_config.llm.lightweight_model = "deepseek/deepseek-v4-flash"
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=SkillRegistry(),
+        )
+        await agent.chat_oneshot("x", model="claude-haiku-4-5")
+        assert mock_llm.last_overrides["model"] == "claude-haiku-4-5"
+
+    @pytest.mark.asyncio
+    async def test_does_not_persist_to_short_term(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=SkillRegistry(),
+        )
+        before = len(agent.memory.short_term)
+        await agent.chat_oneshot("don't pollute memory")
+        # The base prompt itself may be added by other init paths, but
+        # chat_oneshot specifically must not append a user message or
+        # assistant reply for its own call.
+        after = len(agent.memory.short_term)
+        assert after == before
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_default_when_lightweight_unset(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        app_config.llm.lightweight_model = None
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=SkillRegistry(),
+        )
+        await agent.chat_oneshot("x")
+        # No model override -> LLMClient picks the agent default.
+        overrides = mock_llm.last_overrides
+        assert overrides is None or "model" not in overrides
+
+    @pytest.mark.asyncio
+    async def test_judge_routes_through_chat_oneshot(self):
+        """Regression: _judge_goal_achievement must call snow.chat_oneshot,
+        not snow.chat — the previous routing was the largest avoidable
+        spend in the orchestration loop (heavy model for JSON yes/no)."""
+        from weather_agents.core.agent import Task
+
+        snow = _shaped_agent("snow")
+        fog = _shaped_agent("fog")
+        rain = _shaped_agent("rain")
+
+        async def _orch(_goal):
+            return [
+                Task(id="1", description="a", assigned_to="fog"),
+                Task(id="2", description="b", assigned_to="rain"),
+            ]
+
+        snow.orchestrate = _orch
+        # Thin content forces the judge path (fast-path won't fire).
+        fog.queue_exec(Mock(success=True, content="thin"))
+        rain.queue_exec(Mock(success=True, content="thin"))
+        # Two chats: judge says achieved, then summary.
+        snow.queue_chat('{"achieved": true, "missing": ""}')
+        snow.queue_chat("done")
+
+        await orchestrate_task(
+            "g",
+            agent_map={"fog": fog, "rain": rain, "snow": snow},
+        )
+        # chat_oneshot mock should have been called twice (judge + summary).
+        # snow.chat (heavy model) must not have been called.
+        assert snow.chat_oneshot.await_count == 2
+        assert snow.chat.await_count == 0

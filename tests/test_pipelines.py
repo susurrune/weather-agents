@@ -87,6 +87,10 @@ def _fake_agent(name: str, *, chat_result: str = "answer", success: bool = True)
     a = MagicMock()
     a.name = name
     a.chat = AsyncMock(return_value=chat_result)
+    # chat_oneshot (added in round 2 for lightweight-model routing) is
+    # used by the judge and summary paths. Mirror chat's return value
+    # so existing pipeline tests don't need a separate queue.
+    a.chat_oneshot = AsyncMock(return_value=chat_result)
     result = MagicMock(success=success, content=chat_result)
     a.execute_task = AsyncMock(return_value=result)
     a.orchestrate = AsyncMock()  # will not be called when pipeline matches
@@ -137,8 +141,11 @@ class TestFactoryShortCircuits:
             "rain": _fake_agent("rain", chat_result="writeup result"),
         }
         # research_then_write pipeline → 2 tasks → real summary call expected.
+        # Round 2 routed judge/summary through chat_oneshot (lightweight
+        # model), so the awaited mock is the one-shot variant, not the
+        # full chat method.
         _t, _r, summary = await orchestrate_task("先调研再写一篇", agent_map, snow)
-        snow.chat.assert_awaited()
+        snow.chat_oneshot.assert_awaited()
         assert summary == "aggregated summary"
 
     @pytest.mark.asyncio

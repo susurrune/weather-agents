@@ -641,6 +641,55 @@ class BaseAgent:
         elif event.type == EventType.AGENT_RESPONSE and event.target == self.name:
             self._handle_response(event)
 
+    async def chat_oneshot(
+        self,
+        prompt: str,
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """One-off LLM call with no tools, no memory persistence, no skills.
+
+        For auxiliary calls the agent makes to itself (judge / summary /
+        classification / rewrite) where the response should NOT pollute
+        chat history and tool-loop machinery is pure overhead. By default
+        routes to ``llm.lightweight_model`` if configured — a deepseek
+        flash variant or haiku run at ~10× lower cost than the reasoning
+        models we use for the main loop. Pass ``model=`` to override.
+
+        Skips:
+          - the tool_router scan (~5-50ms),
+          - _messages_with_recall (~30-150ms on a populated fact store),
+          - skill-prompt assembly,
+          - add_message persistence on both prompt and reply.
+
+        Returns the assistant content string (empty on LLM error — the
+        caller decides whether that's recoverable).
+        """
+        overrides: dict = {}
+        # Resolve model: explicit arg > configured lightweight > None
+        # (None means LLMClient picks the agent's default).
+        if model is not None:
+            overrides["model"] = model
+        else:
+            lw = getattr(self.config.llm, "lightweight_model", None)
+            if isinstance(lw, str) and lw.strip():
+                overrides["model"] = lw
+        if temperature is not None:
+            overrides["temperature"] = temperature
+        if max_tokens is not None:
+            overrides["max_tokens"] = max_tokens
+
+        messages = [{"role": "user", "content": prompt}]
+        response = await self.llm.complete(
+            messages=messages,
+            agent_name=self.name,
+            tools=None,
+            overrides=overrides or None,
+        )
+        return response.content
+
     async def chat(
         self,
         message: str,
@@ -705,12 +754,12 @@ class BaseAgent:
         # for common patterns where the trigger is unambiguous. Only fires
         # when the skill isn't already active, so explicit /skill activation
         # still takes precedence.
-        self._auto_activate_skills(message)
+        activated_now = self._auto_activate_skills(message)
         # Serialize concurrent turns on this agent so short_term doesn't
         # get interleaved by two parallel callers (see _turn_lock comment).
         async with self._turn_lock:
             try:
-                async for ev in self._chat_stream_impl(message):
+                async for ev in self._chat_stream_impl(message, auto_activated=activated_now):
                     yield ev
             except BaseException:
                 # If _chat_stream_impl crashed before persisting the assistant
@@ -721,7 +770,12 @@ class BaseAgent:
                     self._pop_last_user_message()
                 raise
 
-    async def _chat_stream_impl(self, message: str) -> AsyncIterator[dict]:
+    async def _chat_stream_impl(
+        self,
+        message: str,
+        *,
+        auto_activated: list[str] | None = None,
+    ) -> AsyncIterator[dict]:
         await self._set_state(AgentState.THINKING)
         self.memory.add_message("user", message)
         assistant_stored = False
@@ -747,6 +801,29 @@ class BaseAgent:
         # drop them from the active tool set for the rest of the turn so the
         # LLM doesn't waste iterations re-calling a known-broken tool.
         suppressed_tools: set[str] = set()
+        # When an auto-trigger already activated the matching skill(s),
+        # the LLM has zero reason to call list_skills — that's a full
+        # extra round-trip (~1-2s + the skill catalog ~1k tokens) to
+        # re-derive information we already used. Suppressing the tool
+        # for the rest of the turn directly removes the temptation.
+        # Inject a one-line system note so the model knows it shouldn't
+        # try (and so it can decide to call use_skill for something
+        # else if needed). use_skill stays available — the user might
+        # mention several skills the trigger heuristic doesn't catch.
+        if auto_activated:
+            suppressed_tools.add("list_skills")
+            self.memory.add_message(
+                "system",
+                (
+                    "[Auto-activated skills: "
+                    + ", ".join(auto_activated)
+                    + "] These were chosen from your message's keywords; "
+                    "their prompts and tools are already loaded. Do NOT "
+                    "call list_skills — proceed directly with the task. "
+                    "Only call use_skill(name) if you need a DIFFERENT "
+                    "skill that wasn't auto-activated."
+                ),
+            )
         # Rolling window of recent tool successes — used to detect stuck
         # loops where the LLM keeps trying variations of a failing search.
         recent_tool_outcomes: list[bool] = []

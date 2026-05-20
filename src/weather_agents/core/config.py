@@ -115,6 +115,12 @@ def get_model_context_window(model_name: str) -> int:
 @dataclass
 class LLMConfig:
     default_model: str = "deepseek/deepseek-v4-flash"
+    # Cheap classifier/summary model. Used by chat_oneshot() for judge,
+    # summary, and other auxiliary LLM calls that don't need reasoning.
+    # None falls back to default_model — but explicit aliasing matters:
+    # a deepseek-v4-pro user paying ~10× per token for "yes/no" JSON
+    # classification was the biggest wasted spend in the audit.
+    lightweight_model: str | None = None
     temperature: float = 0.7
     # 8192 was still too low once DeepSeek reasoning content (~0.5-2K
     # tokens) competed with tool-call JSON for the same budget — a
@@ -377,6 +383,7 @@ def _load_config_uncached() -> AppConfig:
     # LLM settings
     if llm := merged.get("llm"):
         cfg.llm.default_model = llm.get("default_model", cfg.llm.default_model)
+        cfg.llm.lightweight_model = llm.get("lightweight_model", cfg.llm.lightweight_model)
         cfg.llm.temperature = llm.get("temperature", cfg.llm.temperature)
         cfg.llm.max_tokens = llm.get("max_tokens", cfg.llm.max_tokens)
         cfg.llm.timeout = llm.get("timeout", cfg.llm.timeout)
@@ -508,7 +515,7 @@ def set_config(key: str, value: str) -> tuple[bool, str]:
     """Set a config key and persist to user config.
 
     Supported keys:
-      default_model, temperature, max_tokens, timeout
+      default_model, lightweight_model, temperature, max_tokens, timeout
       model.<agent>      (fog/rain/frost/snow/dew/fair)
       api_key.<provider> (openai/anthropic/deepseek/google)
     """
@@ -562,7 +569,13 @@ def set_config(key: str, value: str) -> tuple[bool, str]:
         return False, f"unknown tts key: {parts[1]}"
 
     # Simple keys under llm
-    SIMPLE_LLM_KEYS = ("default_model", "temperature", "max_tokens", "timeout")
+    SIMPLE_LLM_KEYS = (
+        "default_model",
+        "lightweight_model",
+        "temperature",
+        "max_tokens",
+        "timeout",
+    )
     if key in SIMPLE_LLM_KEYS:
         typed_val: str | float | int = value
         try:
@@ -635,7 +648,13 @@ def delete_config(key: str) -> tuple[bool, str]:
             return True, "default_agent reset to fog"
         return True, "default_agent already at fog"
 
-    SIMPLE_LLM_KEYS = ("default_model", "temperature", "max_tokens", "timeout")
+    SIMPLE_LLM_KEYS = (
+        "default_model",
+        "lightweight_model",
+        "temperature",
+        "max_tokens",
+        "timeout",
+    )
     if key in SIMPLE_LLM_KEYS:
         removed = data.get("llm", {}).pop(key, None)
         if removed:
