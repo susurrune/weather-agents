@@ -97,6 +97,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/mcp", "MCP server status"),
     ("/skills", "list skills"),
     ("/skills refresh", "reload skills from disk (no restart)"),
+    ("/skills migrate", "copy skills from ~/.claude/ into wa's own folder"),
     ("/use ", "activate a skill"),
     ("/deactivate", "deactivate skills"),
     ("/sessions", "list sessions"),
@@ -1469,6 +1470,23 @@ async def _interactive(agent_name: str | None = None) -> None:
     workspace_path = ws if isinstance(ws, str) else ""
     _print_welcome(model, workspace_path)
 
+    # One-time migration hint. When wa's own skills directory is empty
+    # but the user already has Anthropic-format skills installed under
+    # ~/.claude/skills/, tell them how to bring those over. Quiet —
+    # one line, only printed when the condition is genuinely actionable.
+    with contextlib.suppress(Exception):
+        from weather_agents.skills.loader import (
+            has_legacy_claude_skills,
+            wa_skills_dir_empty,
+        )
+
+        if wa_skills_dir_empty() and has_legacy_claude_skills():
+            console.print(
+                "  [dim]Found Anthropic-format skills at ~/.claude/skills/ — "
+                "run [/]\\[cyan]/skills migrate[/cyan][dim] to copy them into "
+                "wa's own folder.[/]"
+            )
+
     try:
         agents = ctx.agent_map
 
@@ -1622,10 +1640,39 @@ async def _interactive(agent_name: str | None = None) -> None:
             if cmd_lower == "/skills":
                 _print_skills(agent)
                 continue
+            if cmd_lower == "/skills migrate":
+                # Copy user-level skills + plugins from ~/.claude/ into
+                # wa's own ~/.weather-agents/ tree. Idempotent: existing
+                # destination dirs are skipped, not overwritten. After
+                # migration, /skills refresh picks up the new content
+                # without restarting wa.
+                from weather_agents.skills.loader import migrate_from_claude
+
+                summary = migrate_from_claude()
+                sk_c = summary["skills_copied"]
+                sk_s = summary["skills_skipped"]
+                pg_c = summary["plugins_copied"]
+                pg_s = summary["plugins_skipped"]
+                console.print(
+                    f"  [green]✓ migrated[/]  "
+                    f"[dim]skills +{len(sk_c)} ({len(sk_s)} skipped), "
+                    f"plugins +{len(pg_c)} ({len(pg_s)} skipped)[/]"
+                )
+                if sk_c:
+                    console.print(f"    [green]+skills:[/] {', '.join(sk_c[:10])}")
+                if sk_s:
+                    console.print(
+                        f"    [yellow]skipped (already present):[/] {', '.join(sk_s[:10])}"
+                    )
+                if pg_c:
+                    console.print(f"    [green]+plugins:[/] {', '.join(pg_c[:6])}")
+                console.print("    [dim]tip: run `/skills refresh` to load the new skills now.[/]")
+                continue
             if cmd_lower == "/skills refresh":
                 # Re-scan the on-disk skill sources without restarting wa.
-                # Useful after installing a new Claude Code skill into
-                # ~/.claude/skills/ or a new plugin into ~/.claude/plugins/.
+                # Useful after installing a new skill into
+                # ~/.weather-agents/skills/ or a new plugin under
+                # ~/.weather-agents/plugins/.
                 from weather_agents.core.skill import SkillRegistry
                 from weather_agents.skills.loader import register_all_skills
 
@@ -2221,6 +2268,13 @@ def _print_help(ctx) -> None:
             [
                 ("/skills", _h("列出技能", "list available skills")),
                 ("/skills refresh", _h("从磁盘重新加载技能", "reload skills from disk")),
+                (
+                    "/skills migrate",
+                    _h(
+                        "把 ~/.claude/ 下的技能复制到 wa 自己的目录",
+                        "copy ~/.claude skills into wa's own folder",
+                    ),
+                ),
                 ("/use <skill>", _h("激活技能", "activate a skill")),
                 ("/deactivate", _h("停用所有技能", "deactivate all skills")),
             ],
