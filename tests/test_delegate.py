@@ -282,3 +282,121 @@ class TestBuildSharedContext:
         result = _build_shared_context(agent, "")
         assert "system prompt" not in result
         assert "user query" in result
+
+
+class TestParentSkillsPropagation:
+    """Round 4: when the parent has skills active, the delegate context
+    must mention them so the sub-agent doesn't burn a list_skills round
+    trip rediscovering what the parent already knew."""
+
+    def test_active_skills_included_in_context(self):
+        from weather_agents.tools.delegate import _build_shared_context
+
+        agent = Mock()
+        agent.memory = Mock()
+        agent.memory.short_term = []
+        agent._active_skills = {"pptx", "web_research"}
+
+        result = _build_shared_context(agent, "")
+        assert "Parent agent had these skills active" in result
+        # Sorted output — pptx before web_research alphabetically.
+        assert "pptx" in result
+        assert "web_research" in result
+
+    def test_no_skills_line_when_empty(self):
+        from weather_agents.tools.delegate import _build_shared_context
+
+        agent = Mock()
+        agent.memory = Mock()
+        agent.memory.short_term = []
+        agent._active_skills = set()
+
+        result = _build_shared_context(agent, "")
+        assert "Parent agent had these skills active" not in result
+
+    def test_robust_against_non_set_attribute(self):
+        """Defensive: Mock auto-attributes return Mock objects which are
+        not iterable. The helper must NOT raise — it must treat the
+        attribute as 'no active skills' instead."""
+        from weather_agents.tools.delegate import _build_shared_context
+
+        agent = Mock()
+        agent.memory = Mock()
+        agent.memory.short_term = []
+        # Don't set _active_skills — Mock auto-attr returns another Mock.
+
+        # Should not raise; should produce empty/short result.
+        result = _build_shared_context(agent, "")
+        assert "Parent agent had these skills active" not in result
+
+
+class TestDelegateAutoActivatesSkillsOnTarget:
+    """Round 4 perf: the delegate handler must call the target's
+    _auto_activate_skills(task) BEFORE execute_task. Without this the
+    sub-agent's chat_stream is the first chance triggers fire — but
+    execute_task doesn't go through chat_stream, so the sub-agent would
+    pay list_skills + use_skill round-trips inside its tool loop."""
+
+    @pytest.mark.asyncio
+    async def test_target_auto_activate_called_with_task(self, agent_map):
+        tool = create_delegate_tool(agent_map)
+        target = agent_map["frost"]
+        target._auto_activate_skills = Mock(return_value=[])
+
+        await tool.handler(agent="frost", task="review this pptx file please", context="")
+
+        target._auto_activate_skills.assert_called_once_with("review this pptx file please")
+
+    @pytest.mark.asyncio
+    async def test_auto_activate_failure_is_swallowed(self, agent_map):
+        """If _auto_activate_skills raises for any reason, delegation
+        must still proceed — the auto-activation is an optimization,
+        not a correctness requirement."""
+        tool = create_delegate_tool(agent_map)
+        target = agent_map["frost"]
+        target._auto_activate_skills = Mock(side_effect=RuntimeError("boom"))
+
+        # Must not raise out of the handler.
+        result = await tool.handler(agent="frost", task="anything", context="")
+        assert "delegated_response" in result
+
+
+class TestPostDelegationTrustClause:
+    """Round 4: the framing wrapped around the delegate's reply must
+    explicitly forbid the caller from redoing the same work — the PPT
+    case study showed fog re-running its own review immediately after
+    frost's delegated review returned, paying ~5 min for the same
+    conclusion."""
+
+    @pytest.mark.asyncio
+    async def test_success_includes_dont_redo_hint(self, agent_map):
+        tool = create_delegate_tool(agent_map)
+
+        result = await tool.handler(
+            agent="frost",
+            task="review the diff",
+            context="",
+        )
+        # Success path: must include the trust clause.
+        assert "COMPLETE" in result
+        assert any(
+            tok in result.lower()
+            for tok in ("re-verify", "re-audit", "re-implement", "do not", "don't")
+        )
+
+    @pytest.mark.asyncio
+    async def test_failure_does_not_include_trust_clause(self, agent_map):
+        tool = create_delegate_tool(agent_map)
+        agent_map["frost"].execute_task = AsyncMock(
+            return_value=TaskResult(success=False, content="nope")
+        )
+
+        result = await tool.handler(
+            agent="frost",
+            task="review the diff",
+            context="",
+        )
+        # Failure framing must NOT tell the caller to trust the result —
+        # the caller should reconsider, retry, or escalate.
+        assert "COMPLETE" not in result
+        assert "failed" in result.lower()

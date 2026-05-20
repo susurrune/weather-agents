@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,10 @@ def _build_shared_context(calling_agent: BaseAgent | None, context: str) -> str:
     """Assemble shared context for the delegated agent.
 
     Includes the most recent conversation exchange from the calling agent
-    so the delegate arrives with enough information to work independently.
+    so the delegate arrives with enough information to work independently,
+    plus a list of the parent's currently-active skills so the delegate
+    knows which capabilities the parent already brought to the problem
+    (and doesn't waste a list_skills round-trip discovering them).
     """
     parts: list[str] = []
     if context:
@@ -43,6 +47,28 @@ def _build_shared_context(calling_agent: BaseAgent | None, context: str) -> str:
             msg_text = "\n".join(f"[{m.role}] {(m.content or '')[:500]}" for m in ctx_msgs)
             if msg_text:
                 parts.append(f"Calling agent context:\n{msg_text}")
+
+        raw_active = getattr(calling_agent, "_active_skills", None)
+        # Be defensive: in tests calling_agent may be a bare Mock whose
+        # auto-attribute returns another Mock (not iterable). Only treat
+        # the value as the active skill set when it's actually a
+        # set/list/tuple of strings.
+        if isinstance(raw_active, (set, frozenset, list, tuple)):
+            active = sorted(str(s) for s in raw_active if isinstance(s, str))
+        else:
+            active = []
+        if active:
+            # Just inform — actual activation on the target happens via
+            # trigger matching against the task description, which is
+            # more precise than blindly copying the parent's skill set
+            # (frost reviewing a deck doesn't need the pptx skill that
+            # fog used to generate it).
+            parts.append(
+                "Parent agent had these skills active when delegating: "
+                + ", ".join(active)
+                + ". If you need the same context, call use_skill(name); "
+                "otherwise proceed with your own specialty."
+            )
 
     return "\n\n".join(parts)
 
@@ -104,6 +130,15 @@ def create_delegate_tool(
         _token = _delegation_depth_var.set(current_depth + 1)
         try:
             await target.init()
+
+            # Run trigger-based skill activation on the target against
+            # the task description before execute_task. Without this the
+            # target would still need to discover skills via list_skills /
+            # use_skill, paying the same round-trip cost the parent's
+            # chat_stream auto-activation was designed to avoid.
+            with contextlib.suppress(Exception):
+                if hasattr(target, "_auto_activate_skills"):
+                    target._auto_activate_skills(task)
 
             shared_ctx = _build_shared_context(calling_agent, context)
 
@@ -168,14 +203,31 @@ def create_delegate_tool(
             # data, not its own voice. Without explicit delimiters the
             # caller tends to mimic the delegate's tone/phrasing on its
             # next turn (observed: rain echoing fog/fair after a
-            # delegation).
+            # delegation). The "do not redo" half is the round-4 add —
+            # the PPT case study showed fog re-running its own review
+            # immediately after frost delegated-review came back, paying
+            # ~5 minutes of compute for the same conclusion.
+            trust_clause = (
+                f"[Hint: {target.display_name}'s work above is COMPLETE and "
+                "authoritative for the sub-task you delegated. Do NOT "
+                "re-verify, re-audit, re-implement, or repeat the same "
+                "operation in your own voice — that doubles the cost for "
+                "the same answer. Synthesize a brief reply in YOUR OWN "
+                "voice citing their conclusion, and only do MORE work if "
+                "it's distinctly different from what they completed.]"
+                if result.success
+                else (
+                    f"[Hint: {target.display_name}'s attempt failed. "
+                    "Decide whether to retry with a different approach, "
+                    "ask the user for guidance, or skip this sub-task. "
+                    "Don't just call delegate_to again with the same task.]"
+                )
+            )
             return (
                 f"<delegated_response from='{target.display_name}'>\n"
                 f"{header}\n\n{content}\n"
                 f"</delegated_response>\n"
-                f"[Hint: above is {target.display_name}'s reply. "
-                f"Synthesize a brief reply in YOUR OWN voice; do not quote or "
-                f"continue their text verbatim.]"
+                f"{trust_clause}"
             )
 
         except Exception as exc:
