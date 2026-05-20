@@ -938,51 +938,72 @@ class TestPromptSkillPick:
         from weather_agents.cli.main import _prompt_skill_pick
 
         names = ["alpha", "beta", "gamma"]
-        with patch("weather_agents.cli.main.console.input", return_value="2"), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(names)
+        with (
+            patch("weather_agents.cli.main.console.input", return_value="2"),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(names)
         assert pick == "beta"
 
     def test_numeric_out_of_range_returns_none(self):
         from weather_agents.cli.main import _prompt_skill_pick
 
         names = ["alpha", "beta"]
-        with patch("weather_agents.cli.main.console.input", return_value="99"), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(names)
+        with (
+            patch("weather_agents.cli.main.console.input", return_value="99"),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(names)
         assert pick is None
 
     def test_empty_input_cancels(self):
         from weather_agents.cli.main import _prompt_skill_pick
 
-        with patch("weather_agents.cli.main.console.input", return_value=""), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(["a", "b"])
+        with (
+            patch("weather_agents.cli.main.console.input", return_value=""),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(["a", "b"])
         assert pick is None
 
     def test_q_cancels(self):
         from weather_agents.cli.main import _prompt_skill_pick
 
-        with patch("weather_agents.cli.main.console.input", return_value="q"), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(["a", "b"])
+        with (
+            patch("weather_agents.cli.main.console.input", return_value="q"),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(["a", "b"])
         assert pick is None
 
     def test_exact_name_match(self):
         from weather_agents.cli.main import _prompt_skill_pick
 
-        with patch("weather_agents.cli.main.console.input", return_value="beta"), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(["alpha", "beta"])
+        with (
+            patch("weather_agents.cli.main.console.input", return_value="beta"),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(["alpha", "beta"])
         assert pick == "beta"
 
     def test_unique_prefix_resolves(self):
         from weather_agents.cli.main import _prompt_skill_pick
 
-        with patch("weather_agents.cli.main.console.input", return_value="code_rev"), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(["code_reviewer", "code_generator"])
+        with (
+            patch("weather_agents.cli.main.console.input", return_value="code_rev"),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(["code_reviewer", "code_generator"])
         assert pick == "code_reviewer"
 
     def test_ambiguous_prefix_returns_none(self):
         from weather_agents.cli.main import _prompt_skill_pick
 
-        with patch("weather_agents.cli.main.console.input", return_value="code"), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(["code_reviewer", "code_generator"])
+        with (
+            patch("weather_agents.cli.main.console.input", return_value="code"),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(["code_reviewer", "code_generator"])
         # Two matches → caller refuses to guess; user retries.
         assert pick is None
 
@@ -991,8 +1012,11 @@ class TestPromptSkillPick:
         cancel, same as pressing Enter."""
         from weather_agents.cli.main import _prompt_skill_pick
 
-        with patch("weather_agents.cli.main.console.input", side_effect=EOFError), patch("weather_agents.cli.main.console.print"):
-                pick = _prompt_skill_pick(["a"])
+        with (
+            patch("weather_agents.cli.main.console.input", side_effect=EOFError),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            pick = _prompt_skill_pick(["a"])
         assert pick is None
 
     def test_empty_skill_names_short_circuits(self):
