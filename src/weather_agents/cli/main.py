@@ -1823,6 +1823,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                 t0 = time.monotonic()
                 interrupted = False
                 md_content = ""
+                reasoning_acc = ""  # accumulated DeepSeek reasoning for progress display
                 status_text = "Thinking..."
                 activities: list[dict] = []
                 _empty_retried = False
@@ -1951,7 +1952,11 @@ async def _interactive(agent_name: str | None = None) -> None:
                             md_content += event["text"]
                             live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "reasoning":
-                            status_text = "Thinking..."
+                            reasoning_acc += event["text"]
+                            # Show last ~80 chars of reasoning as progress
+                            # so users can see the model is actually working.
+                            preview = reasoning_acc[-80:].replace("\n", " ")
+                            status_text = f"Thinking: {preview}" if preview else "Thinking..."
                             live.update(_build_stream_display(agent, status_text, md_content))
                         elif event["type"] == "tool_status":
                             status_text = event["label"]

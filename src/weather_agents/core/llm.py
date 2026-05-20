@@ -752,7 +752,8 @@ class LLMClient:
             if cached_tools:
                 stream_kwargs["tools"] = cached_tools
             try:
-                response = await _get_litellm().acompletion(**stream_kwargs)
+                async with asyncio.timeout(self.config.llm.timeout):
+                    response = await _get_litellm().acompletion(**stream_kwargs)
                 used_model = attempt_model
                 provider = ap
                 break
