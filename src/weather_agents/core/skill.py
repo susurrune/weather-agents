@@ -57,6 +57,14 @@ class Skill:
     # Directory path this skill was loaded from (set by loader). Used by the
     # agent to tell the LLM where to find the skill's templates and assets.
     resource_dir: str | None = None
+    # Anthropic skill-spec fields (matches ~/.claude/skills/<name>/SKILL.md).
+    # license: display-only attribution / restriction notice.
+    license: str | None = None
+    # allowed_tools: when set, restricts the agent's active tool set to
+    # these names while this skill is active. None = no restriction
+    # (skill works alongside all other tools). Used by the tool router
+    # to honor Claude Code skill-spec security boundaries.
+    allowed_tools: list[str] | None = None
 
     @classmethod
     def from_markdown(cls, path: Path) -> Skill | None:
@@ -101,6 +109,21 @@ class Skill:
             else []
         )
 
+        # Anthropic skill-spec extras: license (display-only) and
+        # allowed-tools (restriction list). YAML uses kebab-case for the
+        # latter; accept both kebab and snake forms.
+        license_raw = fm.get("license")
+        license = (
+            license_raw.strip() if isinstance(license_raw, str) and license_raw.strip() else None
+        )
+        allowed_raw = fm.get("allowed-tools", fm.get("allowed_tools"))
+        allowed_tools: list[str] | None = None
+        if isinstance(allowed_raw, list):
+            allowed_tools = [t for t in allowed_raw if isinstance(t, str)] or None
+        elif isinstance(allowed_raw, str) and allowed_raw.strip():
+            # Some YAMLs use comma-separated strings; tolerate both.
+            allowed_tools = [t.strip() for t in allowed_raw.split(",") if t.strip()] or None
+
         return cls(
             name=name,
             description=description,
@@ -110,6 +133,8 @@ class Skill:
             temperature=temperature if isinstance(temperature, (int, float)) else None,
             max_tokens=max_tokens if isinstance(max_tokens, int) else None,
             triggers=triggers,
+            license=license,
+            allowed_tools=allowed_tools,
         )
 
 

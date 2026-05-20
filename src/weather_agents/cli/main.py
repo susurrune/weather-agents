@@ -96,6 +96,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/history", "event log"),
     ("/mcp", "MCP server status"),
     ("/skills", "list skills"),
+    ("/skills refresh", "reload skills from disk (no restart)"),
     ("/use ", "activate a skill"),
     ("/deactivate", "deactivate skills"),
     ("/sessions", "list sessions"),
@@ -1621,6 +1622,37 @@ async def _interactive(agent_name: str | None = None) -> None:
             if cmd_lower == "/skills":
                 _print_skills(agent)
                 continue
+            if cmd_lower == "/skills refresh":
+                # Re-scan the on-disk skill sources without restarting wa.
+                # Useful after installing a new Claude Code skill into
+                # ~/.claude/skills/ or a new plugin into ~/.claude/plugins/.
+                from weather_agents.core.skill import SkillRegistry
+                from weather_agents.skills.loader import register_all_skills
+
+                old_skill_names = set(agent.skill_registry.list_names())
+                fresh = SkillRegistry()
+                register_all_skills(fresh)
+                # Mutate the agent's existing registry in place so all the
+                # other places holding the same SkillRegistry reference
+                # see the update.
+                agent.skill_registry._skills.clear()
+                agent.skill_registry._skills.update(fresh._skills)
+                new_skill_names = set(agent.skill_registry.list_names())
+                added_skills = sorted(new_skill_names - old_skill_names)
+                removed_skills = sorted(old_skill_names - new_skill_names)
+                # Refresh the agent's bound _skills cache so list_skills /
+                # use_skill see the new set.
+                agent._skills = agent.skill_registry.get_skills()
+                console.print(
+                    f"  [green]✓ skills refreshed[/]  "
+                    f"[dim]total {len(new_skill_names)}, "
+                    f"+{len(added_skills)} −{len(removed_skills)}[/]"
+                )
+                if added_skills:
+                    console.print(f"    [green]new:[/] {', '.join(added_skills[:8])}")
+                if removed_skills:
+                    console.print(f"    [red]gone:[/] {', '.join(removed_skills[:8])}")
+                continue
             if cmd_lower.startswith("/use "):
                 skill_name = cmd[5:].strip()
                 if agent.activate_skill(skill_name):
@@ -2188,6 +2220,7 @@ def _print_help(ctx) -> None:
             _h("技能", "Skills"),
             [
                 ("/skills", _h("列出技能", "list available skills")),
+                ("/skills refresh", _h("从磁盘重新加载技能", "reload skills from disk")),
                 ("/use <skill>", _h("激活技能", "activate a skill")),
                 ("/deactivate", _h("停用所有技能", "deactivate all skills")),
             ],

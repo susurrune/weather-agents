@@ -1289,9 +1289,21 @@ class BaseAgent:
         return int(usage["estimated_tokens"]) > max_ctx * 0.92
 
     def _active_tool_names(self) -> list[str]:
-        """All tool names available to this agent (registry tools + active skill tools)."""
+        """All tool names available to this agent (registry tools + active
+        skill tools), filtered by any active skill's ``allowed_tools``.
+
+        Anthropic skill-spec semantics: a skill that declares
+        ``allowed-tools`` in its frontmatter wants the LLM restricted to
+        ONLY those tools while it's active. When multiple skills are
+        active their allowed_tools sets UNION (combined capabilities
+        rather than the empty intersection). A single active skill with
+        no allowed_tools acts as a wildcard — restriction is lifted.
+        """
         names = self.tool_registry.list_names()
         seen = set(names)
+        # Allowed-tools accumulation
+        restriction: set[str] | None = None
+        any_unrestricted = False
         for skill in self._skills:
             if skill.name not in self._active_skills:
                 continue
@@ -1299,6 +1311,16 @@ class BaseAgent:
                 if tool_name not in seen:
                     names.append(tool_name)
                     seen.add(tool_name)
+            if skill.allowed_tools is None:
+                any_unrestricted = True
+            else:
+                if restriction is None:
+                    restriction = set()
+                restriction.update(skill.allowed_tools)
+        # Wildcard wins: any active skill without restriction lifts the
+        # cap entirely. Empty active set also = no restriction.
+        if restriction is not None and not any_unrestricted:
+            names = [n for n in names if n in restriction]
         return names
 
     # -- Automatic fact extraction (durable long-term memory) -----------------

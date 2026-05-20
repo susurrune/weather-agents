@@ -11,8 +11,21 @@ from weather_agents.core.skill import Skill, SkillRegistry
 def register_all_skills(registry: SkillRegistry | None = None) -> None:
     """Discover and register all built-in skills.
 
-    When *registry* is None a new SkillRegistry is created. Kept for backward
-    compatibility; factory.py always passes the per-agent registry.
+    Registration order (later sources are deduplicated against earlier
+    ones by name):
+    1. Python-coded skills bundled with wa
+    2. Markdown skills bundled with wa (wa/config/skills/)
+    3. User-level Claude Code skills at ~/.claude/skills/<name>/SKILL.md
+       — registered with their bare name
+    4. Plugin-bundled Claude Code skills at ~/.claude/plugins/marketplaces/
+       <m>/{plugins,external_plugins}/<plugin>/skills/<name>/SKILL.md —
+       registered with namespaced name "<plugin>:<name>" so they coexist
+       with user-level skills of the same bare name (matches Claude Code's
+       UI which shows both ``pptx`` and ``anthropic-skills:pptx`` when
+       both exist).
+
+    When *registry* is None a new SkillRegistry is created. Kept for
+    backward compatibility; factory.py always passes the per-agent registry.
     """
     reg = registry or SkillRegistry()
     for skill in _get_python_skills():
@@ -21,6 +34,11 @@ def register_all_skills(registry: SkillRegistry | None = None) -> None:
         if skill.name not in reg.list_names():
             reg.register(skill)
     for skill in _get_claude_skills():
+        if skill.name not in reg.list_names():
+            reg.register(skill)
+    # Plugins last: they get a namespace prefix so same-name skills don't
+    # collide with the user-level ones. Both versions remain available.
+    for skill in _get_plugin_skills():
         if skill.name not in reg.list_names():
             reg.register(skill)
 
@@ -85,11 +103,12 @@ def _get_markdown_skills(registry: SkillRegistry) -> list[Skill]:
 
 
 def _get_claude_skills() -> list[Skill]:
-    """Load skills from Claude Code's skill directory.
+    """Load skills from Claude Code's user-level skill directory.
 
-    Scans ~/.claude/skills/ for SKILL.md files and parses them using the
-    standard YAML-frontmatter format. Skills with names already registered
-    (e.g. built-in Python skills) are skipped by the caller.
+    Scans ~/.claude/skills/<name>/SKILL.md and parses each via the
+    standard YAML-frontmatter format. Names are kept as-is (no prefix).
+    Skills whose names are already registered (built-in Python skills)
+    are skipped by the caller.
     """
     base_path = Path(os.path.expanduser("~/.claude/skills"))
     if not base_path.is_dir():
@@ -109,4 +128,59 @@ def _get_claude_skills() -> list[Skill]:
                 skills.append(skill)
         except Exception:
             continue
+    return skills
+
+
+def _get_plugin_skills() -> list[Skill]:
+    """Load skills bundled inside Claude Code plugins.
+
+    Layout (mirroring Claude Code's marketplace structure):
+      ~/.claude/plugins/marketplaces/<marketplace>/plugins/<plugin>/skills/<skill>/SKILL.md
+      ~/.claude/plugins/marketplaces/<marketplace>/external_plugins/<plugin>/skills/<skill>/SKILL.md
+
+    Each loaded skill is namespaced as ``<plugin>:<skill_name>`` so it
+    coexists with any user-level skill of the same bare name. This
+    matches Claude Code's display where ``anthropic-skills:pptx`` and
+    a separate user-installed ``pptx`` can both be available.
+    """
+    base = Path(os.path.expanduser("~/.claude/plugins/marketplaces"))
+    if not base.is_dir():
+        return []
+
+    skills: list[Skill] = []
+    for marketplace in sorted(base.iterdir()):
+        if not marketplace.is_dir() or marketplace.name.startswith("."):
+            continue
+        for plugins_root_name in ("plugins", "external_plugins"):
+            plugins_root = marketplace / plugins_root_name
+            if not plugins_root.is_dir():
+                continue
+            for plugin_dir in sorted(plugins_root.iterdir()):
+                if not plugin_dir.is_dir() or plugin_dir.name.startswith("."):
+                    continue
+                skills_dir = plugin_dir / "skills"
+                if not skills_dir.is_dir():
+                    continue
+                for skill_entry in sorted(skills_dir.iterdir()):
+                    if (
+                        not skill_entry.is_dir()
+                        or skill_entry.name.startswith("_")
+                        or skill_entry.name.startswith(".")
+                    ):
+                        continue
+                    skill_file = skill_entry / "SKILL.md"
+                    if not skill_file.is_file():
+                        continue
+                    try:
+                        skill = Skill.from_markdown(skill_file)
+                    except Exception:
+                        continue
+                    if not skill:
+                        continue
+                    # Namespace by plugin name. e.g. plugin="anthropic-skills"
+                    # + skill name="pptx" -> "anthropic-skills:pptx"
+                    bare_name = skill.name
+                    skill.name = f"{plugin_dir.name}:{bare_name}"
+                    skill.resource_dir = str(skill_entry)
+                    skills.append(skill)
     return skills
