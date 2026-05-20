@@ -1,7 +1,6 @@
 """Tests for skill system including config overrides."""
 
 
-
 class TestSkillSmoke:
     """Verify every bundled built-in SKILL.md loads cleanly.
 
