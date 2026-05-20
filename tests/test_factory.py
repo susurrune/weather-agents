@@ -1125,3 +1125,165 @@ class TestChatOneshotLightweightRouting:
         # snow.chat (heavy model) must not have been called.
         assert snow.chat_oneshot.await_count == 2
         assert snow.chat.await_count == 0
+
+
+class TestToolRouterPerTurnCache:
+    """Regression: select_relevant_tools must run AT MOST once per
+    chat_stream turn when nothing invalidates the cache key (suppressed
+    tools, active skill set). Previously the router ran every loop
+    iteration — for a 20-round turn that was 19 wasted O(n_tools)
+    keyword-scoring passes."""
+
+    @pytest.mark.asyncio
+    async def test_router_called_once_across_multiple_rounds(self, app_config, bus, mock_llm):
+        from unittest.mock import patch
+
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.llm import StreamEvent
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.core.tool import Tool, ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="echo",
+                description="echo back",
+                parameters=[],
+                handler=AsyncMock(return_value="ok"),
+            )
+        )
+
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=registry,
+            skill_registry=SkillRegistry(),
+        )
+
+        # Build a stream that yields a tool_call on round 1 and a
+        # plain content+done on round 2 — exercises the multi-round
+        # path so we can verify the router cache.
+        round_counter = {"n": 0}
+
+        async def _stream_with_tools(*_a, **_kw):
+            round_counter["n"] += 1
+            if round_counter["n"] == 1:
+                yield StreamEvent(
+                    type="tool_call",
+                    tool_call={
+                        "id": "tc1",
+                        "type": "function",
+                        "function": {"name": "echo", "arguments": "{}"},
+                    },
+                )
+                yield StreamEvent(
+                    type="done",
+                    usage={"prompt_tokens": 1, "completion_tokens": 1},
+                )
+            else:
+                yield StreamEvent(type="content", text="done")
+                yield StreamEvent(
+                    type="done",
+                    usage={"prompt_tokens": 1, "completion_tokens": 1},
+                )
+
+        mock_llm.stream_with_tools = _stream_with_tools
+
+        # Patch the router so we can count calls. Patching the module
+        # symbol is sufficient because the agent imports it locally
+        # inside the helper (so each helper call resolves through this
+        # module-level binding).
+        with patch(
+            "weather_agents.core.tool_router.select_relevant_tools",
+            wraps=__import__(
+                "weather_agents.core.tool_router",
+                fromlist=["select_relevant_tools"],
+            ).select_relevant_tools,
+        ) as spy:
+            events: list[dict] = []
+            async for ev in agent.chat_stream("call echo"):
+                events.append(ev)
+
+            # 2 LLM rounds executed (tool_call → tool result → final),
+            # but the router should only fire on round 1 (cache hit on
+            # round 2 because skill set + suppressed_tools didn't
+            # change). Tolerate the helper being entered twice with one
+            # cache miss — the assertion is that it didn't run N times.
+            assert spy.call_count <= 1, (
+                f"router ran {spy.call_count}x across 2 rounds — per-turn cache regressed"
+            )
+
+    @pytest.mark.asyncio
+    async def test_router_recomputes_when_suppressed_tools_change(self, app_config, bus, mock_llm):
+        from unittest.mock import patch
+
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.llm import StreamEvent
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.core.tool import Tool, ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="echo",
+                description="echo",
+                parameters=[],
+                handler=AsyncMock(return_value="ok"),
+            )
+        )
+        # Tool that ALWAYS returns [CircuitBreakerOpen] — adding the
+        # tool name to suppressed_tools is what invalidates the router
+        # cache key, forcing a recompute on the next round.
+        registry.register(
+            Tool(
+                name="flaky",
+                description="x",
+                parameters=[],
+                handler=AsyncMock(return_value="Error: [CircuitBreakerOpen] flaky down"),
+            )
+        )
+
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=registry,
+            skill_registry=SkillRegistry(),
+        )
+
+        round_counter = {"n": 0}
+
+        async def _stream(*_a, **_kw):
+            round_counter["n"] += 1
+            if round_counter["n"] == 1:
+                # Round 1: call the breaker-open tool to mutate
+                # suppressed_tools.
+                yield StreamEvent(
+                    type="tool_call",
+                    tool_call={
+                        "id": "tc1",
+                        "type": "function",
+                        "function": {"name": "flaky", "arguments": "{}"},
+                    },
+                )
+                yield StreamEvent(type="done", usage={"prompt_tokens": 1, "completion_tokens": 1})
+            else:
+                yield StreamEvent(type="content", text="ok")
+                yield StreamEvent(type="done", usage={"prompt_tokens": 1, "completion_tokens": 1})
+
+        mock_llm.stream_with_tools = _stream
+
+        with patch(
+            "weather_agents.core.tool_router.select_relevant_tools",
+            wraps=__import__(
+                "weather_agents.core.tool_router",
+                fromlist=["select_relevant_tools"],
+            ).select_relevant_tools,
+        ) as spy:
+            async for _ in agent.chat_stream("trigger breaker"):
+                pass
+
+            # suppressed_tools changed between round 1 and round 2 →
+            # cache key changed → router must recompute once more.
+            assert spy.call_count == 2

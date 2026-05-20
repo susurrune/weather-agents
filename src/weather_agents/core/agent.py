@@ -845,6 +845,36 @@ class BaseAgent:
         recent_tool_sigs: list[str] = []
         tool_loop_hint_injected = False
 
+        # Per-turn tool-selection cache. `select_relevant_tools` scores every
+        # candidate tool against the user message — that's O(n_tools)
+        # tokenization per round. The user message is fixed for the whole
+        # turn, so re-running it every iteration of a 20-round loop wastes
+        # ~50-200ms total + churns garbage. Cache the result and invalidate
+        # only when the inputs (suppressed_tools, active skills) actually
+        # change.
+        from weather_agents.core.tool_router import select_relevant_tools as _select
+
+        tool_names_cache: list[str] | None = None
+        cache_key: tuple[frozenset[str], frozenset[str]] | None = None
+
+        def _resolve_tool_names() -> list[str]:
+            nonlocal tool_names_cache, cache_key
+            key = (frozenset(suppressed_tools), frozenset(self._active_skills))
+            if tool_names_cache is not None and cache_key == key:
+                return tool_names_cache
+            candidates = [t for t in self._active_tool_names() if t not in suppressed_tools]
+            must = {
+                t for s in self._skills if s.name in self._active_skills for t in s.required_tools
+            }
+            tool_names_cache = _select(
+                self.tool_registry,
+                candidates,
+                message,
+                must_include=must,
+            )
+            cache_key = key
+            return tool_names_cache
+
         try:
             full_content = ""
             _round_limit = self._max_tool_rounds
@@ -865,24 +895,7 @@ class BaseAgent:
                 # extend_rounds tool may raise the limit mid-turn.
                 _round_limit = max(_round_limit, self._max_tool_rounds)
                 messages = await self._messages_with_recall()
-                tool_names = [t for t in self._active_tool_names() if t not in suppressed_tools]
-                # Narrow the active tool set to those most relevant to the
-                # user's latest message. Cuts prompt tokens ~30-60% and
-                # reduces near-miss tool selection on large catalogs.
-                from weather_agents.core.tool_router import select_relevant_tools
-
-                must = {
-                    t
-                    for s in self._skills
-                    if s.name in self._active_skills
-                    for t in s.required_tools
-                }
-                tool_names = select_relevant_tools(
-                    self.tool_registry,
-                    tool_names,
-                    message,
-                    must_include=must,
-                )
+                tool_names = _resolve_tool_names()
 
                 tool_calls_received: list[dict] = []
                 streaming_reasoning: str | None = None
