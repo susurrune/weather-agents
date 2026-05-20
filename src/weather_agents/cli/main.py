@@ -95,10 +95,10 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/retry", "resend last user message (after errors)"),
     ("/history", "event log"),
     ("/mcp", "MCP server status"),
-    ("/skills", "list skills"),
+    ("/skills", "list skills & pick one to activate"),
     ("/skills refresh", "reload skills from disk (no restart)"),
     ("/skills migrate", "copy skills from ~/.claude/ into wa's own folder"),
-    ("/use ", "activate a skill"),
+    ("/use ", "activate a skill (name or #, e.g. /use 23)"),
     ("/deactivate", "deactivate skills"),
     ("/sessions", "list sessions"),
     ("/session new ", "start new session"),
@@ -1638,7 +1638,22 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _print_mcp_status(ctx)
                 continue
             if cmd_lower == "/skills":
-                _print_skills(agent)
+                # List + interactive picker. Print the table, then ask
+                # for a row number or skill name. Pressing Enter cancels
+                # so the original "just list" behaviour is one keystroke
+                # away. The picker is skipped when stdin isn't a TTY
+                # (piped, test runs) since console.input would block on
+                # a closed stream.
+                names = _print_skills(agent)
+                if names and sys.stdin.isatty():
+                    pick = _prompt_skill_pick(names)
+                    if pick:
+                        if pick in agent._active_skills:
+                            console.print(f"  [dim]{pick} already active[/dim]")
+                        elif agent.activate_skill(pick):
+                            console.print(f"  [green]+ {pick}[/green]")
+                        else:
+                            console.print(f"  [red]failed to activate {pick}[/red]")
                 continue
             if cmd_lower == "/skills migrate":
                 # Copy user-level skills + plugins from ~/.claude/ into
@@ -1701,7 +1716,22 @@ async def _interactive(agent_name: str | None = None) -> None:
                     console.print(f"    [red]gone:[/] {', '.join(removed_skills[:8])}")
                 continue
             if cmd_lower.startswith("/use "):
-                skill_name = cmd[5:].strip()
+                arg = cmd[5:].strip()
+                # Numeric form: `/use 23` resolves to the 23rd entry of
+                # /skills (1-based). Same ordering as get_available_skills
+                # so what the user sees is what they activate.
+                skill_name = arg
+                if arg.isdigit():
+                    available = agent.get_available_skills()
+                    idx = int(arg) - 1
+                    if 0 <= idx < len(available):
+                        skill_name = available[idx]["name"]
+                    else:
+                        console.print(
+                            f"  [yellow]out of range — pick 1..{len(available)}"
+                            f"[/yellow] [dim](/skills to list)[/dim]"
+                        )
+                        continue
                 if agent.activate_skill(skill_name):
                     console.print(f"  [green]+ {skill_name}[/green]")
                 else:
@@ -2271,7 +2301,13 @@ def _print_help(ctx) -> None:
         (
             _h("技能", "Skills"),
             [
-                ("/skills", _h("列出技能", "list available skills")),
+                (
+                    "/skills",
+                    _h(
+                        "列出技能并按编号选择激活",
+                        "list skills + pick one to activate",
+                    ),
+                ),
                 ("/skills refresh", _h("从磁盘重新加载技能", "reload skills from disk")),
                 (
                     "/skills migrate",
@@ -2280,7 +2316,13 @@ def _print_help(ctx) -> None:
                         "copy ~/.claude skills into wa's own folder",
                     ),
                 ),
-                ("/use <skill>", _h("激活技能", "activate a skill")),
+                (
+                    "/use <skill|#>",
+                    _h(
+                        "按名称或编号激活技能（例如 /use 23）",
+                        "activate a skill by name or number (e.g. /use 23)",
+                    ),
+                ),
                 ("/deactivate", _h("停用所有技能", "deactivate all skills")),
             ],
         ),
@@ -2629,7 +2671,10 @@ async def _handle_session_command(cmd: str, agent) -> None:
     console.print("  [red]usage: /session [new|load|delete] ...[/red]")
 
 
-def _print_skills(agent) -> None:
+def _print_skills(agent) -> list[str]:
+    """Render the skill list. Returns the ordered list of skill names so
+    the caller can map a numeric pick (1-based) back to a name without
+    re-querying the registry."""
     skills = agent.get_available_skills()
     color = AGENT_COLORS.get(agent.name, "white")
 
@@ -2644,22 +2689,71 @@ def _print_skills(agent) -> None:
 
     if not skills:
         console.print("  [dim]no skills available[/dim]")
-        return
+        return []
 
     tbl = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    tbl.add_column(width=4, justify="right")  # 1-based index
     tbl.add_column(width=3)  # status dot
     tbl.add_column(width=22)  # name
     tbl.add_column(style="dim")  # description
 
-    for sk in skills:
+    for i, sk in enumerate(skills, start=1):
         dot = Text("●", style=f"bold {color}") if sk["active"] else Text("○", style="dim")
+        idx_text = Text(str(i), style="dim")
         tbl.add_row(
-            dot, Text(sk["name"], style="cyan" if sk["active"] else "dim"), sk["description"]
+            idx_text,
+            dot,
+            Text(sk["name"], style="cyan" if sk["active"] else "dim"),
+            sk["description"],
         )
 
     console.print(tbl)
     console.print()
-    console.print("  [dim]/use <skill>   activate  ·  /deactivate   deactivate all[/dim]")
+    console.print(
+        "  [dim]/use <skill|#>   activate by name or number  ·  /deactivate   deactivate all[/dim]"
+    )
+    return [sk["name"] for sk in skills]
+
+
+def _prompt_skill_pick(skill_names: list[str]) -> str | None:
+    """After listing skills, prompt for a number/name to activate.
+
+    Returns the resolved skill name, or None when the user cancels by
+    pressing Enter, typing 'q', or entering anything that doesn't match
+    a number-in-range or known name. Designed to fall back gracefully —
+    the user can always cancel and use `/use <name>` directly.
+    """
+    if not skill_names:
+        return None
+    try:
+        raw = console.input("  [dim]select # to activate (Enter to cancel): [/dim]").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return None
+    if not raw or raw.lower() in {"q", "quit", "cancel", "n", "no"}:
+        return None
+    # Numeric pick
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(skill_names):
+            return skill_names[idx]
+        console.print(f"  [yellow]out of range — pick 1..{len(skill_names)}[/yellow]")
+        return None
+    # Allow typing the skill name directly. Case-insensitive, with
+    # graceful prefix match so "code_rev" hits "code_reviewer".
+    raw_lower = raw.lower()
+    exact = next((n for n in skill_names if n.lower() == raw_lower), None)
+    if exact:
+        return exact
+    prefix = [n for n in skill_names if n.lower().startswith(raw_lower)]
+    if len(prefix) == 1:
+        return prefix[0]
+    if len(prefix) > 1:
+        sample = ", ".join(prefix[:6])
+        console.print(f"  [yellow]ambiguous — matches: {sample}[/yellow]")
+        return None
+    console.print(f"  [yellow]no skill matched '{raw}'[/yellow]")
+    return None
 
 
 # -- Workspace management ----------------------------------------------------

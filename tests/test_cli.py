@@ -906,10 +906,105 @@ class TestPrintSkills:
         ag = _make_display_agent()
         ag.get_available_skills = Mock(return_value=[])
         with patch("weather_agents.cli.main.console.print"):
-            _print_skills(ag)
+            result = _print_skills(ag)
+        # Returns an empty list (not None) so /skills handler can safely
+        # check `if names` to decide whether to prompt for a pick.
+        assert result == []
 
+    def test_returns_ordered_names(self):
+        from weather_agents.cli.main import _print_skills
+
+        ag = _make_display_agent()
+        ag.get_available_skills = Mock(
+            return_value=[
+                {"name": "alpha", "description": "a", "active": False},
+                {"name": "beta", "description": "b", "active": True},
+                {"name": "gamma", "description": "g", "active": False},
+            ]
+        )
         with patch("weather_agents.cli.main.console.print"):
-            _print_skills(ag)
+            names = _print_skills(ag)
+        # Order matches what /use <N> uses to map number → name.
+        assert names == ["alpha", "beta", "gamma"]
+
+
+class TestPromptSkillPick:
+    """Round 7 interactive picker: after `/skills` shows the list, ask
+    for a row number / name. Numeric in-range → that name; numeric out
+    of range → None; prefix → unique match resolved; empty / 'q' / no
+    match → None with a status hint to the user."""
+
+    def test_numeric_pick_in_range(self):
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        names = ["alpha", "beta", "gamma"]
+        with patch("weather_agents.cli.main.console.input", return_value="2"), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(names)
+        assert pick == "beta"
+
+    def test_numeric_out_of_range_returns_none(self):
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        names = ["alpha", "beta"]
+        with patch("weather_agents.cli.main.console.input", return_value="99"), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(names)
+        assert pick is None
+
+    def test_empty_input_cancels(self):
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        with patch("weather_agents.cli.main.console.input", return_value=""), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(["a", "b"])
+        assert pick is None
+
+    def test_q_cancels(self):
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        with patch("weather_agents.cli.main.console.input", return_value="q"), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(["a", "b"])
+        assert pick is None
+
+    def test_exact_name_match(self):
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        with patch("weather_agents.cli.main.console.input", return_value="beta"), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(["alpha", "beta"])
+        assert pick == "beta"
+
+    def test_unique_prefix_resolves(self):
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        with patch("weather_agents.cli.main.console.input", return_value="code_rev"), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(["code_reviewer", "code_generator"])
+        assert pick == "code_reviewer"
+
+    def test_ambiguous_prefix_returns_none(self):
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        with patch("weather_agents.cli.main.console.input", return_value="code"), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(["code_reviewer", "code_generator"])
+        # Two matches → caller refuses to guess; user retries.
+        assert pick is None
+
+    def test_eof_cancels(self):
+        """Ctrl-D in the picker mustn't blow up the REPL — it's a clean
+        cancel, same as pressing Enter."""
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        with patch("weather_agents.cli.main.console.input", side_effect=EOFError), patch("weather_agents.cli.main.console.print"):
+                pick = _prompt_skill_pick(["a"])
+        assert pick is None
+
+    def test_empty_skill_names_short_circuits(self):
+        """Defensive: if the caller passes an empty list (e.g. agent
+        with no skills), don't even prompt — return None immediately."""
+        from weather_agents.cli.main import _prompt_skill_pick
+
+        with patch("weather_agents.cli.main.console.input") as inp:
+            pick = _prompt_skill_pick([])
+        assert pick is None
+        # The picker must not call input at all in this case.
+        inp.assert_not_called()
 
 
 class TestFormatCost:
