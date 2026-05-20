@@ -224,6 +224,120 @@ class TestAutoDerivedTriggers:
         assert len(triggers) == 1
 
 
+class TestLazySkillLoad:
+    """Round 5: very large SKILL.md bodies blow up first-token latency
+    when injected as-is on every LLM call. The loader now truncates to
+    the head section (title + first H2) for bodies over the threshold,
+    sets body_truncated=True, and records source_path so the agent can
+    tell the LLM where to read_file for the full guide."""
+
+    def test_small_body_loaded_in_full(self, tmp_path):
+        from weather_agents.core.skill import Skill
+
+        md = tmp_path / "small.md"
+        md.write_text(
+            "---\nname: small\ndescription: x\n---\n\n# Small Skill\n\nThis fits inline easily.",
+            encoding="utf-8",
+        )
+        s = Skill.from_markdown(md)
+        assert s is not None
+        assert s.body_truncated is False
+        assert "This fits inline easily" in s.system_prompt
+
+    def test_large_body_truncated_to_head(self, tmp_path):
+        from weather_agents.core.skill import Skill
+
+        body = "# Big Skill\n\n## Quick Reference\nFirst section content.\n\n"
+        body += "## Detailed Guide\n"
+        body += "X" * 5000  # push well past LITE_THRESHOLD
+        md = tmp_path / "big.md"
+        md.write_text(
+            f"---\nname: big\ndescription: x\n---\n\n{body}",
+            encoding="utf-8",
+        )
+        s = Skill.from_markdown(md)
+        assert s is not None
+        assert s.body_truncated is True
+        # Head kept: title + first H2 section.
+        assert "Big Skill" in s.system_prompt
+        assert "Quick Reference" in s.system_prompt
+        # Detail section dropped (the LLM should read_file for it).
+        assert "Detailed Guide" not in s.system_prompt
+        # source_path recorded so the agent can name the file in the
+        # lazy-load hint it injects on activation.
+        assert s.source_path and "big.md" in s.source_path
+
+    def test_extract_head_stops_at_second_h2(self):
+        from weather_agents.core.skill import _extract_skill_head
+
+        body = (
+            "# Title\n\n"
+            "## First Section\n"
+            "First section body.\n\n"
+            "## Second Section\n"
+            "Should NOT be included.\n"
+        )
+        head = _extract_skill_head(body, max_chars=10000)
+        assert "First section body" in head
+        assert "Second Section" not in head
+        assert "Should NOT" not in head
+
+    def test_extract_head_respects_char_cap(self):
+        from weather_agents.core.skill import _extract_skill_head
+
+        body = "# Title\n\n## Big Section\n" + ("X" * 5000)
+        head = _extract_skill_head(body, max_chars=200)
+        # Cap is enforced even within a single section.
+        assert len(head) <= 250  # small slack for the line we accept before cap
+        assert "Title" in head
+
+    def test_extract_head_no_h2_returns_capped_body(self):
+        from weather_agents.core.skill import _extract_skill_head
+
+        # Some SKILL.md files have no H2 at all — should still produce
+        # a sensible head bounded by char cap.
+        body = "# Title only\n\nBody text without any second-level heading."
+        head = _extract_skill_head(body, max_chars=10000)
+        assert "Body text" in head
+
+    def test_rebuild_system_prompt_injects_lazy_hint(self, app_config, bus, mock_llm, tmp_path):
+        """The agent's rebuild path must mention source_path so the LLM
+        knows it can read_file the full guide. Without the hint the
+        model sees a truncated prompt with no signal that more exists."""
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import Skill, SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        # Build a skill that simulates the truncated state directly so
+        # we don't depend on the threshold internals.
+        sk = Skill(
+            name="big_skill",
+            description="x",
+            system_prompt="head only",
+            source_path=str(tmp_path / "big.md"),
+            body_truncated=True,
+        )
+        reg = SkillRegistry()
+        reg.register(sk)
+
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=reg,
+        )
+        agent._skills = reg.get_skills()
+        agent._active_skills.add("big_skill")
+        agent._rebuild_system_prompt()
+
+        sys_msgs = [m.content for m in agent.memory.short_term if m.role == "system"]
+        joined = "\n".join(sys_msgs)
+        # Either zh or en wording is acceptable; the marker is the path.
+        assert sk.source_path is not None and sk.source_path in joined
+        assert "read_file" in joined
+
+
 class TestListSkillsSuppression:
     """When a trigger auto-activates a skill, the LLM has zero reason
     to call list_skills — that's a redundant ~1k tokens + round-trip.

@@ -814,9 +814,31 @@ class LLMClient:
                                     acc["function"]["name"] += tc_delta.function.name
                                 if tc_delta.function.arguments:
                                     acc["function"]["arguments"] += tc_delta.function.arguments
-        except Exception as e:
+        except BaseException as e:
+            # BaseException catches both Exception AND asyncio.CancelledError
+            # — the latter is what fires when the user presses Esc and the
+            # task is cancelled mid-stream. Without explicit aclose() the
+            # underlying LiteLLM/httpx coroutine is left as an un-awaited
+            # task and surfaces as "coroutine 'acompletion_stream_function'
+            # was never awaited" RuntimeWarning. We swallow cancellation
+            # cleanup errors because the cancellation is already what we
+            # want to surface upwards.
+            aclose = getattr(response, "aclose", None)
+            if callable(aclose):
+                with contextlib.suppress(Exception):
+                    await aclose()
+            if isinstance(e, asyncio.CancelledError):
+                raise
             yield StreamEvent(type="error", text=_format_user_facing_error(model, e))
             return
+        finally:
+            # Belt + suspenders: even on normal completion call aclose if
+            # available. For exhausted generators this is a no-op; for
+            # generators that hold open HTTP sockets it releases them.
+            aclose = getattr(response, "aclose", None)
+            if callable(aclose):
+                with contextlib.suppress(Exception):
+                    await aclose()
 
         # Emit fully accumulated tool calls after all streaming chunks are processed.
         # Must NOT emit mid-stream: tool call arguments arrive across multiple chunks

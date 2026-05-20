@@ -65,6 +65,18 @@ class Skill:
     # (skill works alongside all other tools). Used by the tool router
     # to honor Claude Code skill-spec security boundaries.
     allowed_tools: list[str] | None = None
+    # Absolute path to the source SKILL.md (set by the loader). The agent
+    # tells the LLM about this path when the body was truncated, so the
+    # model knows where to `read_file` for the full guide.
+    source_path: str | None = None
+    # True when the loaded body exceeded the inline budget and only a
+    # head-only summary was placed in system_prompt. _rebuild_system_prompt
+    # injects a "read this file for the full guide" hint on activation.
+    # 17-30KB skills like beautiful-webpage / canvas-design used to
+    # blow up first-token latency by 30-60s; the lazy mode keeps the
+    # active prompt under ~2KB per skill while preserving the full
+    # guide on disk where the LLM can fetch it on demand.
+    body_truncated: bool = False
 
     @classmethod
     def from_markdown(cls, path: Path) -> Skill | None:
@@ -134,10 +146,25 @@ class Skill:
             # Some YAMLs use comma-separated strings; tolerate both.
             allowed_tools = [t.strip() for t in allowed_raw.split(",") if t.strip()] or None
 
+        # Lazy-load very large skill bodies. Anthropic's skill spec puts
+        # detailed instructions IN SKILL.md (beautiful-webpage at 17KB,
+        # canvas-design at 12KB, xlsx at 11KB). Injecting the full body
+        # into the system prompt costs 4-5K tokens per skill per LLM call
+        # — first-token latency on a cold prefix cache can hit 30-90s on
+        # DeepSeek for the larger ones. The lite mode injects only the
+        # head (title + first H2 section, capped at LITE_MAX_CHARS) and
+        # tells the agent where to read the full file when it needs the
+        # rest. Small skills (≤ LITE_THRESHOLD) keep the legacy behavior.
+        body_stripped = body.strip()
+        body_truncated = False
+        if len(body_stripped) > _SKILL_BODY_LITE_THRESHOLD:
+            body_stripped = _extract_skill_head(body_stripped, _SKILL_BODY_LITE_MAX_CHARS)
+            body_truncated = True
+
         return cls(
             name=name,
             description=description,
-            system_prompt=body.strip(),
+            system_prompt=body_stripped,
             required_tools=required_tools,
             model=model if isinstance(model, str) else None,
             temperature=temperature if isinstance(temperature, (int, float)) else None,
@@ -145,7 +172,49 @@ class Skill:
             triggers=triggers,
             license=license,
             allowed_tools=allowed_tools,
+            source_path=str(path),
+            body_truncated=body_truncated,
         )
+
+
+# Tuning for lazy skill loading. Bodies up to LITE_THRESHOLD chars get
+# inlined as-is (small skills lose nothing). Larger bodies are
+# summarized down to LITE_MAX_CHARS — empirically 1500 chars covers the
+# title + first H2 section, which is where SKILL.md authors put the
+# "quick reference" / "core principles" content.
+_SKILL_BODY_LITE_THRESHOLD = 2000
+_SKILL_BODY_LITE_MAX_CHARS = 1500
+
+
+def _extract_skill_head(body: str, max_chars: int) -> str:
+    """Return the head of a SKILL.md body — title plus its first major
+    section, truncated at ``max_chars``. The rule:
+
+      1. Keep all lines until the SECOND H2 (``## ``) heading.
+      2. Stop early if the accumulated char count crosses ``max_chars``.
+      3. Always preserve the very first heading even if max_chars is small.
+
+    The shape of Anthropic / community SKILL.md files is consistent: H1
+    title → H2 'Quick Reference' / 'Core' / 'Overview' → further H2
+    sections with details. Keeping just through the first H2 section
+    captures the highest-signal summary while dropping the long-form
+    examples that an LLM can fetch on demand via read_file.
+    """
+    out: list[str] = []
+    char_count = 0
+    h2_count = 0
+    for line in body.splitlines():
+        is_h2 = line.startswith("## ") and not line.startswith("### ")
+        if is_h2:
+            h2_count += 1
+            if h2_count > 1:
+                break
+        # Always keep the first heading; otherwise enforce the char cap.
+        if out and char_count + len(line) + 1 > max_chars:
+            break
+        out.append(line)
+        char_count += len(line) + 1
+    return "\n".join(out).rstrip()
 
 
 # Patterns for auto-deriving triggers from skill descriptions. Each

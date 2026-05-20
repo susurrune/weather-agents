@@ -802,3 +802,105 @@ class TestAnthropicPromptCache:
         _apply_anthropic_cache_control("claude-3-5-sonnet", msgs, tools)
         assert msgs == msgs_before
         assert tools == tools_before
+
+
+class TestStreamCleanupOnCancel:
+    """Round 5: when the user presses Esc mid-stream, asyncio cancels
+    the consumer task. The underlying LiteLLM stream coroutine MUST be
+    closed; otherwise it surfaces as a `coroutine
+    'acompletion_stream_function' was never awaited` RuntimeWarning and
+    leaks the HTTP connection."""
+
+    @pytest.mark.asyncio
+    async def test_aclose_called_on_cancellation(self, app_config, tool_registry):
+        import asyncio
+
+        from weather_agents.core.llm import LLMClient
+
+        client = LLMClient(app_config, tool_registry)
+
+        aclose_called = {"n": 0}
+
+        # Fake response: an async iterator that hangs (so we can cancel
+        # mid-iteration) and tracks its own aclose() invocations.
+        class _FakeResponse:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                # Hang forever so we can cancel mid-iteration.
+                await asyncio.sleep(60)
+                raise StopAsyncIteration
+
+            async def aclose(self):
+                aclose_called["n"] += 1
+
+        async def _fake_acompletion(**_kw):
+            return _FakeResponse()
+
+        with patch.object(_get_litellm(), "acompletion", side_effect=_fake_acompletion):
+            agen = client.stream_with_tools(messages=[{"role": "user", "content": "hi"}])
+
+            async def _consume_one():
+                async for _ in agen:
+                    break  # exit after first iteration attempt
+
+            task = asyncio.create_task(_consume_one())
+            await asyncio.sleep(0.05)  # let task enter the async for loop
+            task.cancel()
+            with contextlib_local_suppress():
+                await task
+
+        assert aclose_called["n"] >= 1, "aclose() not called on cancellation"
+
+    @pytest.mark.asyncio
+    async def test_aclose_called_on_normal_completion(self, app_config, tool_registry):
+        from weather_agents.core.llm import LLMClient
+
+        client = LLMClient(app_config, tool_registry)
+        aclose_called = {"n": 0}
+
+        class _FakeChunk:
+            def __init__(self):
+                self.choices = [
+                    Mock(
+                        delta=Mock(content="hello", tool_calls=None, reasoning_content=None),
+                        finish_reason=None,
+                    )
+                ]
+
+        class _FakeResponse:
+            def __init__(self):
+                self._chunks = iter([_FakeChunk()])
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._chunks)
+                except StopIteration as e:
+                    raise StopAsyncIteration from e
+
+            async def aclose(self):
+                aclose_called["n"] += 1
+
+        async def _fake_acompletion(**_kw):
+            return _FakeResponse()
+
+        with patch.object(_get_litellm(), "acompletion", side_effect=_fake_acompletion):
+            async for _ in client.stream_with_tools(messages=[{"role": "user", "content": "hi"}]):
+                pass
+
+        # The finally-block in stream_with_tools must call aclose even on
+        # a clean exit; without it, generators that own HTTP sockets
+        # keep them open until GC.
+        assert aclose_called["n"] >= 1
+
+
+def contextlib_local_suppress():
+    """Local helper: suppress asyncio.CancelledError without importing
+    the symbol at module top, keeping the test file readable."""
+    import contextlib
+
+    return contextlib.suppress(BaseException)

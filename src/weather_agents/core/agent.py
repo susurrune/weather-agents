@@ -547,10 +547,30 @@ class BaseAgent:
                 parts: list[str] = []
                 if s.system_prompt:
                     parts.append(s.system_prompt)
+                lang = getattr(self.config.llm, "language", "zh")
+                # Lazy-load hint. Bodies over a few KB are truncated at
+                # parse time to keep the active prompt small (see
+                # Skill.from_markdown). Tell the LLM where to find the
+                # full content so it can read_file on demand instead of
+                # operating from a stub.
+                if s.body_truncated and s.source_path:
+                    if lang == "en":
+                        parts.append(
+                            f"[Lazy-loaded skill: only the summary is in "
+                            f"your prompt. Full guide at "
+                            f"`{s.source_path}` — call read_file on that "
+                            f"path when you need detailed instructions "
+                            f"or examples.]"
+                        )
+                    else:
+                        parts.append(
+                            f"[此技能为懒加载：当前提示中只放了摘要。"
+                            f"完整指南位于 `{s.source_path}` —— "
+                            f"需要详细步骤或示例时，用 read_file 读取该文件。]"
+                        )
                 # Append resource-dir hint so the LLM can find skill assets
                 # without searching the filesystem first.
                 if s.resource_dir:
-                    lang = getattr(self.config.llm, "language", "zh")
                     if lang == "en":
                         parts.append(f"Resource directory: {s.resource_dir}")
                     else:
