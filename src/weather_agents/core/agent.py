@@ -139,7 +139,13 @@ class BaseAgent:
         self._base_system_prompt: str = ""
         agent_cfg = getattr(config.agents, self.name, None)
         self._max_tool_rounds: int = agent_cfg.max_tool_rounds if agent_cfg else 20
-        self._max_tool_rounds_hard_cap: int = 100
+        # Hard ceiling for auto-extension. Lowered from 100 → 40 after the
+        # PPT case study: a single user turn legitimately needs <30 rounds
+        # for almost any task; hitting 100 was always a stuck loop the
+        # detector failed to catch, not real progress. 40 keeps a buffer
+        # over the soft default (20) for genuinely complex turns but caps
+        # the worst-case wall clock at ~5 minutes instead of ~10+.
+        self._max_tool_rounds_hard_cap: int = 40
         # Fire-and-forget fact-extraction state. We count completed chat turns
         # so the extractor only runs every N (default 10), keeping cost low.
         self._user_turns_since_extract: int = 0
@@ -752,6 +758,15 @@ class BaseAgent:
         # signal: this fires on success-with-repetition.
         recent_response_texts: list[str] = []
         repetition_hint_injected = False
+        # Rolling fingerprints of recent tool calls — catches "tool loop"
+        # patterns the text-similarity check misses. The PPT case study:
+        # edit_file on the same path 20+ times with micro-coordinate
+        # changes (y=5.35→5.5→5.25→5.35) succeeded every round and never
+        # tripped the failure-marker or narration-similarity detectors,
+        # but was clearly stuck. A signature counter over the last
+        # _SIG_WINDOW calls catches this directly.
+        recent_tool_sigs: list[str] = []
+        tool_loop_hint_injected = False
 
         try:
             full_content = ""
@@ -1040,6 +1055,68 @@ class BaseAgent:
                 recent_response_texts.append(normalized_round)
                 if len(recent_response_texts) > 3:
                     recent_response_texts.pop(0)
+
+                # Tool-signature loop: same (tool, primary-arg) fingerprint
+                # called repeatedly = the model is micro-tuning the same
+                # output and unable to converge. Distinct from failure /
+                # narration loops because the calls SUCCEED every round.
+                # The 4/_SIG_WINDOW threshold hints; 6/_SIG_WINDOW hard-
+                # escapes — past that point further iterations have
+                # historically NEVER produced a better result and only
+                # burn the round budget.
+                for p in tool_prep:
+                    if p["tool_name"] in ("task_done", "list_skills", "use_skill"):
+                        continue
+                    sig = _tool_call_signature(p["tool_name"], p["tool_args"])
+                    if sig:
+                        recent_tool_sigs.append(sig)
+                if len(recent_tool_sigs) > _SIG_WINDOW:
+                    del recent_tool_sigs[: len(recent_tool_sigs) - _SIG_WINDOW]
+                if recent_tool_sigs:
+                    from collections import Counter as _Counter
+
+                    top_sig, top_count = _Counter(recent_tool_sigs).most_common(1)[0]
+                    if top_count >= _SIG_LOOP_HINT and not tool_loop_hint_injected:
+                        self.memory.add_message(
+                            "system",
+                            (
+                                f"[Tool loop] You have called `{top_sig}` "
+                                f"{top_count} times in the last "
+                                f"{len(recent_tool_sigs)} tool calls — you are "
+                                "iterating on the same operation without "
+                                "converging. STOP repeating it. Either: "
+                                "(1) accept the current state and write the "
+                                "final answer, (2) try a fundamentally "
+                                "different approach (different tool / "
+                                "different target), or (3) call task_done "
+                                "if the work is good enough."
+                            ),
+                        )
+                        tool_loop_hint_injected = True
+                    if top_count >= _SIG_LOOP_HARDSTOP:
+                        self.memory.add_message(
+                            "assistant",
+                            (
+                                f"I have repeated `{top_sig}` {top_count} "
+                                "times without converging on a better "
+                                "outcome. Stopping here to avoid burning "
+                                "the rest of the round budget on the same "
+                                "micro-adjustment. Current artifacts (if "
+                                "any) are the final state."
+                            ),
+                        )
+                        yield {
+                            "type": "content",
+                            "text": (
+                                f"\n\n[stuck] tool `{top_sig}` repeated "
+                                f"{top_count}× in the last "
+                                f"{len(recent_tool_sigs)} calls — "
+                                "stopping rather than micro-tuning further.\n"
+                            ),
+                        }
+                        await self._set_state(AgentState.IDLE)
+                        yield {"type": "done"}
+                        return
 
                 # Stuck-loop detection: track outcomes of this round's tool
                 # calls and, if the recent window is mostly failures, inject a
@@ -2193,6 +2270,53 @@ def _enrich_response_with_artifacts(content: str, file_paths: list[str]) -> str:
         marker = " — already cited above" if p in body else ""
         lines.append(f"> - `{p}`{marker}")
     return body.rstrip() + "\n\n" + "\n".join(lines)
+
+
+# Tool-signature loop detector tuning. Window covers ~last 8 tool calls.
+# Hint at 4 repeats (model has space to course-correct on the next round);
+# hard-escape at 6 (model already saw the hint and ignored it).
+_SIG_WINDOW = 8
+_SIG_LOOP_HINT = 4
+_SIG_LOOP_HARDSTOP = 6
+
+
+def _tool_call_signature(tool_name: str, args: dict | None) -> str:
+    """Compact, stable fingerprint of a tool call for loop detection.
+
+    For file-mutating tools we anchor on the path: editing the same file
+    repeatedly is the classic micro-tuning loop. For shell we anchor on
+    the leading command word (subsequent flags vary but the intent
+    doesn't). For search we anchor on the lowercased query head.
+    Generic fallback is the tool name alone — coarser but safer than
+    inventing a key from arguments we don't understand.
+    """
+    a = args or {}
+
+    def _s(key: str, n: int = 0) -> str:
+        v = a.get(key)
+        if not isinstance(v, str):
+            return ""
+        return v.strip()[:n] if n > 0 else v.strip()
+
+    if tool_name in ("edit_file", "write_file", "read_file", "delete_file"):
+        return f"{tool_name}:{_s('path')}"
+    if tool_name in ("copy_file", "move_file"):
+        return f"{tool_name}:{_s('src') or _s('source')}->{_s('dst') or _s('destination')}"
+    if tool_name in ("run_bash", "bash", "shell", "run_shell"):
+        cmd = _s("command") or _s("cmd")
+        if not cmd:
+            return tool_name
+        # First whitespace-separated token captures the program; we drop
+        # arguments so "where soffice" called with cosmetic flag changes
+        # still folds to the same signature.
+        first = cmd.split(None, 1)[0] if cmd else ""
+        return f"{tool_name}:{first[:30]}"
+    if tool_name in ("web_search", "search", "search_web", "search_files", "grep"):
+        q = _s("query", 40) or _s("pattern", 40)
+        return f"{tool_name}:{q.lower()}"
+    if tool_name == "delegate_to":
+        return f"delegate_to:{_s('agent')}"
+    return tool_name
 
 
 def _text_similarity(a: str, b: str) -> float:

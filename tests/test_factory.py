@@ -724,3 +724,254 @@ class TestOrchestrationE2E:
         _, results, _ = await orchestrate_task("circular", agent_map={"rain": rain, "snow": snow})
         assert all("cycle" in r.content.lower() for r in results)
         assert rain.execute_task.await_count == 0
+
+
+class TestObviouslyCompleteFastPath:
+    """Skip the judge when every task succeeded with substantial output —
+    paying ~5-15s + tokens to be told 'yes done' was the largest avoidable
+    cost in the previous orchestration review. The fast-path must NEVER
+    fire when content is thin or when any task failed: those are the
+    exact cases the judge was designed to catch."""
+
+    def test_helper_passes_when_all_substantial_and_successful(self):
+        from weather_agents.core.factory import (
+            TaskExecutionResult,
+            _looks_obviously_complete,
+        )
+
+        results = [
+            TaskExecutionResult(
+                id="1",
+                agent="fog",
+                description="research",
+                success=True,
+                content="A" * 500,
+            ),
+            TaskExecutionResult(
+                id="2",
+                agent="rain",
+                description="write",
+                success=True,
+                content="B" * 500,
+            ),
+        ]
+        assert _looks_obviously_complete(results) is True
+
+    def test_helper_rejects_thin_content(self):
+        from weather_agents.core.factory import (
+            TaskExecutionResult,
+            _looks_obviously_complete,
+        )
+
+        results = [
+            TaskExecutionResult(
+                id="1",
+                agent="fog",
+                description="research",
+                success=True,
+                content="调研已完成。",  # 6 chars — thin status report
+            ),
+            TaskExecutionResult(
+                id="2",
+                agent="rain",
+                description="write",
+                success=True,
+                content="X" * 800,
+            ),
+        ]
+        assert _looks_obviously_complete(results) is False
+
+    def test_helper_rejects_any_failure(self):
+        from weather_agents.core.factory import (
+            TaskExecutionResult,
+            _looks_obviously_complete,
+        )
+
+        results = [
+            TaskExecutionResult(
+                id="1",
+                agent="fog",
+                description="r",
+                success=True,
+                content="A" * 500,
+            ),
+            TaskExecutionResult(
+                id="2",
+                agent="rain",
+                description="w",
+                success=False,
+                content="B" * 500,
+            ),
+        ]
+        assert _looks_obviously_complete(results) is False
+
+    def test_helper_rejects_failure_marker_in_content(self):
+        from weather_agents.core.factory import (
+            TaskExecutionResult,
+            _looks_obviously_complete,
+        )
+
+        # success=True but content carries a [truncated] envelope — the
+        # tool layer marked it successful but the work is actually
+        # incomplete. Must not fast-path past this.
+        results = [
+            TaskExecutionResult(
+                id="1",
+                agent="fog",
+                description="r",
+                success=True,
+                content="A" * 500,
+            ),
+            TaskExecutionResult(
+                id="2",
+                agent="rain",
+                description="w",
+                success=True,
+                content=("B" * 450) + " [truncated] max rounds reached",
+            ),
+        ]
+        assert _looks_obviously_complete(results) is False
+
+    @pytest.mark.asyncio
+    async def test_fast_path_skips_judge_when_substantial(self):
+        """Two substantial successful tasks must not consume a judge LLM
+        call — the queued snow.chat should go to the SUMMARY, not the
+        judge."""
+        from weather_agents.core.agent import Task
+
+        snow = _shaped_agent("snow")
+        fog = _shaped_agent("fog")
+        rain = _shaped_agent("rain")
+
+        async def _orch(_goal):
+            return [
+                Task(id="1", description="research", assigned_to="fog"),
+                Task(id="2", description="write", assigned_to="rain"),
+            ]
+
+        snow.orchestrate = _orch
+        # Substantial content — should trigger fast-path
+        fog.queue_exec(Mock(success=True, content="A" * 500))
+        rain.queue_exec(Mock(success=True, content="B" * 500))
+        # Only ONE chat call expected (summary). If the judge ran, the
+        # _next_chat side_effect would consume this and the summary
+        # call would assert-fail with "unexpected chat call on snow".
+        snow.queue_chat("final summary text")
+
+        _, results, summary = await orchestrate_task(
+            "build thing",
+            agent_map={"fog": fog, "rain": rain, "snow": snow},
+        )
+        assert len(results) == 2
+        # Judge was NOT consulted — only the summary call used the queue.
+        assert snow._chat_idx == 1
+        assert "final summary" in summary
+
+    @pytest.mark.asyncio
+    async def test_fast_path_does_not_fire_on_thin_content(self):
+        """Thin content (status report without deliverable) must still
+        flow through the judge — that's the exact regression the judge
+        guards against."""
+        from weather_agents.core.agent import Task
+
+        snow = _shaped_agent("snow")
+        fog = _shaped_agent("fog")
+
+        async def _orch(_goal):
+            return [
+                Task(id="1", description="r1", assigned_to="fog"),
+                Task(id="2", description="r2", assigned_to="fog"),
+            ]
+
+        snow.orchestrate = _orch
+        # Thin "已完成" stubs — must NOT fast-path.
+        fog.queue_exec(Mock(success=True, content="已完成"))
+        fog.queue_exec(Mock(success=True, content="已完成"))
+        # Judge says achieved (conservative) so we exit without replanning.
+        snow.queue_chat('{"achieved": true, "missing": ""}')
+        snow.queue_chat("summary")
+
+        _, results, _ = await orchestrate_task(
+            "g",
+            agent_map={"fog": fog, "snow": snow},
+        )
+        assert len(results) == 2
+        # Both judge AND summary consumed = 2 chat calls.
+        assert snow._chat_idx == 2
+
+
+class TestToolCallSignature:
+    """Tool-signature loop detector helper — covers the fingerprint shape
+    for the call patterns that matter (file edits, shell, search,
+    delegate). The signature itself must be stable so the same logical
+    call always folds to the same bucket; otherwise the loop counter
+    never accumulates and the detector is silently disabled."""
+
+    def test_file_edit_keyed_on_path(self):
+        from weather_agents.core.agent import _tool_call_signature
+
+        s1 = _tool_call_signature("edit_file", {"path": "/a/b.js", "old_text": "x"})
+        s2 = _tool_call_signature("edit_file", {"path": "/a/b.js", "old_text": "y"})
+        assert s1 == s2  # different patches on same file -> same loop bucket
+        s3 = _tool_call_signature("edit_file", {"path": "/a/c.js", "old_text": "x"})
+        assert s1 != s3
+
+    def test_bash_keyed_on_first_token(self):
+        from weather_agents.core.agent import _tool_call_signature
+
+        s1 = _tool_call_signature("run_bash", {"command": "where soffice"})
+        s2 = _tool_call_signature("run_bash", {"command": "where soffice 2>nul"})
+        s3 = _tool_call_signature("run_bash", {"command": "ls /tmp"})
+        assert s1 == s2
+        assert s1 != s3
+
+    def test_search_lowercased_and_truncated(self):
+        from weather_agents.core.agent import _tool_call_signature
+
+        s1 = _tool_call_signature("web_search", {"query": "Python AsyncIO"})
+        s2 = _tool_call_signature("web_search", {"query": "python asyncio"})
+        assert s1 == s2  # case-insensitive
+
+    def test_delegate_keyed_on_agent(self):
+        from weather_agents.core.agent import _tool_call_signature
+
+        s1 = _tool_call_signature("delegate_to", {"agent": "frost", "task": "A"})
+        s2 = _tool_call_signature("delegate_to", {"agent": "frost", "task": "B"})
+        s3 = _tool_call_signature("delegate_to", {"agent": "rain", "task": "A"})
+        assert s1 == s2
+        assert s1 != s3
+
+    def test_unknown_tool_falls_back_to_name(self):
+        from weather_agents.core.agent import _tool_call_signature
+
+        s = _tool_call_signature("some_custom_tool", {"x": 1})
+        # Coarse but safe — every call collapses to the same bucket,
+        # which is fine for "called custom_tool 8 times" detection.
+        assert s == "some_custom_tool"
+
+    def test_none_args_safe(self):
+        from weather_agents.core.agent import _tool_call_signature
+
+        # The loop runs even when arg parsing failed — signature must not
+        # crash on missing args dict.
+        assert _tool_call_signature("edit_file", None) == "edit_file:"
+
+
+class TestHardCapLowered:
+    """Regression: hard cap was lowered 100 → 40 after the PPT case
+    study. Bumping it back up without a code review usually signals
+    'patch around a stuck loop', so test pins the new value."""
+
+    def test_hard_cap_default(self, app_config, bus, mock_llm):
+        from weather_agents.agents.fog import FogAgent
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.core.tool import ToolRegistry
+
+        agent = FogAgent(
+            config=app_config,
+            llm=mock_llm,
+            bus=bus,
+            tool_registry=ToolRegistry(),
+            skill_registry=SkillRegistry(),
+        )
+        assert agent._max_tool_rounds_hard_cap == 40

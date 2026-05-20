@@ -521,6 +521,45 @@ async def _execute_pending(
             pending.remove(t)
 
 
+# Substrings that, when present in a task result, indicate the task didn't
+# really succeed even if `r.success` is True (some tool paths return text
+# error envelopes with success=True for legacy reasons). Used by the
+# obviously-complete fast-path to stay conservative.
+_RESULT_FAILURE_MARKERS = (
+    "[truncated]",
+    "[stuck]",
+    "[Error",
+    "Error:",
+    "未能完成",
+    "无法完成",
+    "[cycle detected]",
+    "[CircuitBreakerOpen]",
+)
+
+
+def _looks_obviously_complete(results: list[TaskExecutionResult]) -> bool:
+    """Cheap heuristic: are these multi-task results clearly done?
+
+    Returns True only when EVERY result succeeded, every result has at
+    least 400 chars of content, and no result contains a known failure
+    marker. The 400-char threshold lines up with what the judge itself
+    treats as "substantive" — anything shorter is exactly the kind of
+    "调研已完成" status report the judge was built to catch, so we keep
+    sending those through the full judge path.
+    """
+    if not results:
+        return False
+    for r in results:
+        if not r.success:
+            return False
+        body = (r.content or "").strip()
+        if len(body) < 400:
+            return False
+        if any(marker in body for marker in _RESULT_FAILURE_MARKERS):
+            return False
+    return True
+
+
 async def _judge_goal_achievement(
     snow: BaseAgent, goal: str, results: list[TaskExecutionResult]
 ) -> tuple[bool, str]:
@@ -697,6 +736,17 @@ async def _run_orchestration(
         # judge round costs a full LLM call. Multi-task plans are where
         # gaps actually appear, so spend the judge tokens there.
         if len(results) == 1 and results[0].success:
+            break
+
+        # Fast-path: when every task succeeded AND every result is
+        # substantial (>= 400 chars of real content, no failure markers),
+        # the judge almost always rubber-stamps it — paying 5-15s + tokens
+        # to be told "yes done" was the single biggest avoidable cost in
+        # the previous review. Conservative threshold + marker check keeps
+        # the regression risk near zero. Real gap detection still kicks in
+        # on round 2+ via the normal judge path because thin / failed
+        # results never satisfy this gate.
+        if _looks_obviously_complete(results):
             break
 
         achieved, missing = await _judge_goal_achievement(snow, goal, results)
