@@ -45,84 +45,53 @@ LEGACY_CLAUDE_PLUGINS_DIR: Path = Path(os.path.expanduser("~/.claude/plugins/mar
 def register_all_skills(registry: SkillRegistry | None = None) -> None:
     """Discover and register all skills wa knows about.
 
-    When *registry* is None a new SkillRegistry is created. Kept for
-    backward compatibility; factory.py always passes the per-agent
-    registry.
+    Registration order (earlier sources win on name conflicts):
+
+      1. Built-in SKILL.md files shipped inside the wa package
+         (weather_agents/assets/builtin_skills/<name>/SKILL.md). These
+         were Python-coded skill modules before the unification
+         refactor; converting to SKILL.md means every skill in wa now
+         uses the same on-disk format as Claude Code.
+      2. User-installed Anthropic-format skills under
+         ``~/.weather-agents/skills/<name>/SKILL.md``. A user file with
+         the same name as a built-in shadows it — that's the official
+         override path for customising a default.
+      3. Plugin-bundled skills under
+         ``~/.weather-agents/plugins/marketplaces/<m>/...``. Namespaced
+         as ``<plugin>:<skill_name>`` so they coexist with user-level
+         and built-in skills of the same bare name.
     """
     reg = registry or SkillRegistry()
-    for skill in _get_python_skills():
+    for skill in _get_builtin_md_skills():
         reg.register(skill)
-    for skill in _get_markdown_skills(reg):
-        if skill.name not in reg.list_names():
-            reg.register(skill)
     for skill in _get_wa_user_skills():
-        if skill.name not in reg.list_names():
-            reg.register(skill)
-    # Plugins last: they get a namespace prefix so same-name skills
-    # don't collide with the user-level ones. Both versions remain
-    # available, matching Claude Code's display convention.
+        # User SKILL.md files override built-ins by name. The override
+        # path is intentional: a user dropping a customised
+        # ``code_reviewer/SKILL.md`` into ~/.weather-agents/skills/
+        # wins over the bundled default.
+        reg.register(skill)
     for skill in _get_wa_plugin_skills():
         if skill.name not in reg.list_names():
             reg.register(skill)
 
 
-def _get_python_skills() -> list[Skill]:
-    """Import each Python skill module and collect Skill instances."""
-    from weather_agents.skills.api_integrator import create_skill as _api_integrator
-    from weather_agents.skills.arch_designer import create_skill as _arch_designer
-    from weather_agents.skills.ci_cd_manager import create_skill as _ci_cd_manager
-    from weather_agents.skills.code_analysis import create_skill as _code_analysis
-    from weather_agents.skills.code_generator import create_skill as _code_generator
-    from weather_agents.skills.code_reviewer import create_skill as _code_reviewer
-    from weather_agents.skills.content_writer import create_skill as _content_writer
-    from weather_agents.skills.data_transformer import create_skill as _data_transformer
-    from weather_agents.skills.document_analysis import create_skill as _document_analysis
-    from weather_agents.skills.emotional_companion import create_skill as _emotional_companion
-    from weather_agents.skills.performance_checker import create_skill as _performance_checker
-    from weather_agents.skills.security_auditor import create_skill as _security_auditor
-    from weather_agents.skills.self_evolve import create_skill as _self_evolve
-    from weather_agents.skills.sys_operator import create_skill as _sys_operator
-    from weather_agents.skills.task_planner import create_skill as _task_planner
-    from weather_agents.skills.web_research import create_skill as _web_research
-    from weather_agents.skills.workflow_designer import create_skill as _workflow_designer
+def _get_builtin_md_skills() -> list[Skill]:
+    """Load the SKILL.md files shipped inside the wa package.
 
-    return [
-        _web_research(),
-        _code_analysis(),
-        _document_analysis(),
-        _code_generator(),
-        _content_writer(),
-        _data_transformer(),
-        _code_reviewer(),
-        _security_auditor(),
-        _performance_checker(),
-        _task_planner(),
-        _arch_designer(),
-        _workflow_designer(),
-        _self_evolve(),
-        _sys_operator(),
-        _ci_cd_manager(),
-        _api_integrator(),
-        _emotional_companion(),
-    ]
-
-
-def _get_markdown_skills(registry: SkillRegistry) -> list[Skill]:
-    """Load skills from .md files bundled INSIDE the wa package.
-
-    Complementary to the Python-defined skills above; ships with the
-    installed package so a fresh install has working defaults.
+    These cover the agents' default specialties (code_reviewer,
+    web_research, task_planner, etc.) that used to be Python-coded
+    skill modules. Storing them as SKILL.md makes the format consistent
+    with Claude Code skills and lets users edit them with a text
+    editor without touching Python source.
     """
-    import importlib.resources
-
     try:
-        ref = importlib.resources.files("weather_agents") / "config" / "skills"
+        import importlib.resources
+
+        ref = importlib.resources.files("weather_agents") / "assets" / "builtin_skills"
         path = Path(str(ref))
-        if path.is_dir():
-            return registry.load_skills_from_directory(path)
     except Exception:
-        pass
-    return []
+        return []
+    return _load_skills_from_skills_root(path)
 
 
 def _load_skills_from_skills_root(base_path: Path) -> list[Skill]:

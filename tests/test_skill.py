@@ -1,12 +1,21 @@
 """Tests for skill system including config overrides."""
 
-import pytest
 
 
 class TestSkillSmoke:
-    """Verify every registered skill can be created and has valid metadata."""
+    """Verify every bundled built-in SKILL.md loads cleanly.
 
-    SKILL_NAMES = [
+    The 17 default skills used to be Python modules with ``create_skill()``
+    factories; the unification refactor converted them to SKILL.md files
+    shipped under ``weather_agents/assets/builtin_skills/<name>/SKILL.md``.
+    This test walks the on-disk directory so the test never goes stale
+    against the actual ship list.
+    """
+
+    # The names every release should ship — pinned here so a bundled
+    # skill being silently dropped from the package gets caught even if
+    # the directory exists but has fewer than expected entries.
+    EXPECTED_SKILLS = {
         "api_integrator",
         "arch_designer",
         "ci_cd_manager",
@@ -24,39 +33,51 @@ class TestSkillSmoke:
         "task_planner",
         "web_research",
         "workflow_designer",
-    ]
+    }
 
-    @pytest.mark.parametrize("skill_name", SKILL_NAMES)
-    def test_skill_creates(self, skill_name):
-        """Each skill module must export a valid create_skill() function."""
-        mod = __import__(f"weather_agents.skills.{skill_name}", fromlist=["create_skill"])
-        skill = mod.create_skill()
+    @staticmethod
+    def _builtin_skill_paths():
+        import importlib.resources
+        from pathlib import Path
 
+        ref = importlib.resources.files("weather_agents") / "assets" / "builtin_skills"
+        base = Path(str(ref))
+        assert base.is_dir(), f"bundled skills dir missing: {base}"
+        return sorted(d for d in base.iterdir() if d.is_dir() and not d.name.startswith(("_", ".")))
+
+    def test_all_expected_skills_shipped(self):
+        names = {d.name for d in self._builtin_skill_paths()}
+        missing = self.EXPECTED_SKILLS - names
+        assert not missing, f"bundled skill(s) missing: {sorted(missing)}"
+
+    def test_each_skill_md_loads(self):
+        """Every bundled skill must parse without errors and produce
+        a Skill with all required fields populated."""
         from weather_agents.core.skill import Skill
 
-        assert isinstance(skill, Skill), f"{skill_name} should return Skill"
-        assert skill.name, f"{skill_name} should have a name"
-        assert skill.description, f"{skill_name} should have a description"
-        assert isinstance(skill.required_tools, list), f"{skill_name} required_tools must be list"
-        assert skill.system_prompt, f"{skill_name} should have system_prompt"
+        for skill_dir in self._builtin_skill_paths():
+            skill_md = skill_dir / "SKILL.md"
+            assert skill_md.is_file(), f"{skill_dir.name} missing SKILL.md"
+            skill = Skill.from_markdown(skill_md)
+            assert skill is not None, f"{skill_dir.name} failed to parse"
+            assert skill.name, f"{skill_dir.name} has empty name"
+            assert skill.description, f"{skill_dir.name} has empty description"
+            assert skill.system_prompt, f"{skill_dir.name} has empty body"
+            assert isinstance(skill.required_tools, list)
 
-    @pytest.mark.parametrize("skill_name", SKILL_NAMES)
-    def test_skill_handler_injects_tools(self, skill_name):
-        """Each skill handler (if present) must return a list of Tool."""
-        from unittest.mock import MagicMock
+    def test_register_all_skills_loads_bundled_set(self):
+        """The loader plumbing must surface the bundled skills via
+        register_all_skills — without this, an installed package would
+        ship with the directory present but the loader unable to find
+        it (would point at a stale config layout)."""
+        from weather_agents.core.skill import SkillRegistry
+        from weather_agents.skills.loader import register_all_skills
 
-        from weather_agents.core.tool import ToolRegistry
-
-        mod = __import__(f"weather_agents.skills.{skill_name}", fromlist=["create_skill"])
-        skill = mod.create_skill()
-
-        if skill.handler is None:
-            pytest.skip(f"{skill_name} has no handler")
-
-        registry = ToolRegistry()
-        result = skill.handler(MagicMock(), registry)
-        if result is not None:
-            assert isinstance(result, list), f"{skill_name} handler should return list or None"
+        reg = SkillRegistry()
+        register_all_skills(reg)
+        names = set(reg.list_names())
+        missing = self.EXPECTED_SKILLS - names
+        assert not missing, f"loader didn't surface: {sorted(missing)}"
 
 
 class TestSkillConfigOverrides:

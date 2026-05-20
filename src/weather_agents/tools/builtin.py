@@ -1152,6 +1152,173 @@ async def _bing_search(query: str, num_results: int, api_key: str) -> list[dict]
     return results
 
 
+# ── Skill-promoted tools ──────────────────────────────────────────────
+# These three helpers used to be injected at skill-activation time by
+# code_reviewer / security_auditor / web_research (the Python skill
+# modules that were dropped in the SKILL.md-unification refactor). They
+# stay useful on their own — there's no reason a non-active skill can't
+# call lint_file — so they're now permanently registered alongside the
+# other builtins. The SKILL.md files that replaced those modules just
+# reference these tools by name.
+
+
+async def _lint_python_file(path: str) -> str:
+    """AST-walk a Python file for common review smells.
+
+    Cheap heuristic linter — flags bare ``except``, residual ``print()``
+    debug calls, and ``eval`` / ``exec`` usage. Not a replacement for a
+    full linter; intended for inline review inside an agent loop where
+    spinning up ruff/mypy would be overkill.
+    """
+    import ast
+
+    expanded = os.path.expanduser(path)
+    if not os.path.isfile(expanded):
+        return f"File not found: {path}"
+
+    try:
+        with open(expanded, encoding="utf-8") as f:
+            source = f.read()
+        tree = ast.parse(source, filename=expanded)
+    except SyntaxError as e:
+        return f"Syntax error at line {e.lineno}: {e.msg}"
+
+    issues: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler) and node.type is None:
+            issues.append(f"[WARN] line {node.lineno}: bare except clause")
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+        ):
+            issues.append(f"[INFO] line {node.lineno}: print() call — verify if intentional")
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("eval", "exec")
+        ):
+            issues.append(
+                f"[CRITICAL] line {node.lineno}: {node.func.id}() — potential code injection"
+            )
+
+    if not issues:
+        return f"Lint passed for {path}. No issues detected."
+    return "\n".join(issues)
+
+
+async def _scan_python_deps(directory: str = ".") -> str:
+    """Surface Python dependency files and run pip-audit if available.
+
+    Best-effort — returns a textual summary the LLM can read. No
+    structured output, since the agent layer cleans this up anyway.
+    """
+    import asyncio
+    import subprocess
+
+    expanded = os.path.expanduser(directory)
+    if not os.path.isdir(expanded):
+        return f"Directory not found: {directory}"
+
+    results: list[str] = []
+    req_path = os.path.join(expanded, "requirements.txt")
+    if os.path.isfile(req_path):
+        results.append("[requirements.txt] Dependency audit:")
+        try:
+            with open(req_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        results.append(f"  - {line}")
+        except OSError:
+            results.append("  (could not read)")
+
+    pyproj = os.path.join(expanded, "pyproject.toml")
+    if os.path.isfile(pyproj):
+        results.append("[pyproject.toml] Found — run `pip-audit` for full scan")
+
+    # pip-audit pass: optional, skipped if not installed.
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pip-audit",
+            "--path",
+            expanded,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            results.append("[pip-audit] timed out after 30s")
+        else:
+            stdout = stdout_bytes.decode(errors="replace")
+            rc = proc.returncode or 0
+            if rc == 0:
+                results.append("[pip-audit] No known vulnerabilities found.")
+            else:
+                # Tail to keep the snippet bounded — full output is rarely useful.
+                results.append(f"[pip-audit]\n{stdout[-500:]}")
+        _ = subprocess  # silence unused-import lint when subprocess fallback unused
+    except FileNotFoundError:
+        results.append("[pip-audit] Not installed. Install with: pip install pip-audit")
+    except Exception:
+        pass
+
+    if not results:
+        return f"No Python dependency files found in {directory}."
+    return "\n".join(results)
+
+
+async def _fetch_web_page(url: str, extract_text: bool = True) -> str:
+    """Download a web page and (optionally) strip HTML chrome.
+
+    Lives next to web_search / http_get in the builtins — same
+    permission/audit story as those, plus a cheap regex-based text
+    extraction so the LLM doesn't have to parse raw HTML.
+    """
+    import re
+
+    try:
+        import httpx
+    except ImportError:
+        return "Error: httpx not available"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "WeatherAgents/1.0 WebResearcher"},
+            )
+            if resp.status_code != 200:
+                return f"HTTP {resp.status_code}: Could not fetch {url}"
+
+            if not extract_text:
+                return resp.text[:5000]
+
+            html = resp.text
+            html = re.sub(
+                r"<(script|style|noscript|iframe|svg)[^>]*>.*?</\1>",
+                "",
+                html,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+            html = re.sub(r"<[^>]+>", " ", html)
+            html = re.sub(r"\s+", " ", html).strip()
+            html = (
+                html.replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", '"')
+                .replace("&#39;", "'")
+                .replace("&nbsp;", " ")
+            )
+            return html[:3000] if len(html) > 3000 else html
+    except Exception as e:
+        return f"Error fetching {url}: {e}"
+
+
 # -- Register all tools --
 
 _registered = False
@@ -1631,6 +1798,66 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
                 ),
             ],
             handler=_task_done,
+        ),
+        # Promoted from skill-injected to always-available. The
+        # code_reviewer / security_auditor / web_research SKILL.md files
+        # reference these by name.
+        Tool(
+            name="lint_file",
+            description=(
+                "Run static analysis on a Python file to detect common issues "
+                "(bare except, eval, print calls, etc.). Lives in code_reviewer's "
+                "toolkit but is always available."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="path",
+                    type="string",
+                    description="Path to the Python file to lint",
+                    required=True,
+                ),
+            ],
+            handler=_lint_python_file,
+        ),
+        Tool(
+            name="scan_deps",
+            description=(
+                "Scan Python dependencies for known vulnerabilities. Checks "
+                "requirements.txt and runs pip-audit if available. Used by the "
+                "security_auditor skill."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="directory",
+                    type="string",
+                    description="Project directory to scan (default: current directory)",
+                    required=False,
+                ),
+            ],
+            handler=_scan_python_deps,
+        ),
+        Tool(
+            name="fetch_page",
+            description=(
+                "Fetch a web page and (optionally) extract its visible text. "
+                "Strips HTML tags, scripts, and styles. Used by the web_research "
+                "skill to read past search-result snippets."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="url",
+                    type="string",
+                    description="URL of the page to fetch",
+                    required=True,
+                ),
+                ToolParameter(
+                    name="extract_text",
+                    type="boolean",
+                    description="Extract visible text from HTML? (default: true)",
+                    required=False,
+                ),
+            ],
+            handler=_fetch_web_page,
         ),
     ]
 

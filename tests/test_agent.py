@@ -447,16 +447,21 @@ Body
         loaded = reg.load_skills_from_directory("/nonexistent/path/12345")
         assert loaded == []
 
-    def test_priority_skills_have_handlers(self):
-        """Verify the 3 priority skills have handler functions."""
-        from weather_agents.skills.code_reviewer import create_skill as _cr
-        from weather_agents.skills.security_auditor import create_skill as _sa
-        from weather_agents.skills.web_research import create_skill as _wr
+    def test_priority_skills_promoted_tools_registered(self):
+        """The 3 specialist skills (code_reviewer / security_auditor /
+        web_research) used to register their custom tools at activation
+        time via a Python handler. After the SKILL.md-unification
+        refactor those tools (lint_file / scan_deps / fetch_page) are
+        permanently registered as builtin tools instead. Verify they're
+        always available so the corresponding SKILL.md prompts that
+        reference them by name don't dangle."""
+        from weather_agents.core.tool import ToolRegistry
+        from weather_agents.tools.builtin import register_builtin_tools
 
-        for factory in (_cr, _sa, _wr):
-            skill = factory()
-            assert skill.handler is not None, f"{skill.name} missing handler"
-            assert callable(skill.handler)
+        reg = ToolRegistry()
+        register_builtin_tools(reg)
+        for name in ("lint_file", "scan_deps", "fetch_page"):
+            assert reg.get(name) is not None, f"builtin tool '{name}' missing"
 
 
 class TestParseToolArgs:

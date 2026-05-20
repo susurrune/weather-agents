@@ -1,23 +1,18 @@
-"""Skill: Self-Evolve — read, analyze, and improve the Weather Agents codebase."""
+---
+name: self_evolve
+description: Read, analyze, and improve the Weather Agents codebase — architecture, features, bug fixes, tests
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - file_search
+  - code_search
+  - shell_exec
+  - list_directory
+  - tree
+---
 
-from weather_agents.core.skill import Skill
-
-
-def create_skill() -> Skill:
-    return Skill(
-        name="self_evolve",
-        description="Read, analyze, and improve the Weather Agents codebase — architecture, features, bug fixes, tests",
-        required_tools=[
-            "read_file",
-            "write_file",
-            "edit_file",
-            "file_search",
-            "code_search",
-            "shell_exec",
-            "list_directory",
-            "tree",
-        ],
-        system_prompt="""## 技能：自我进化 (Self-Evolve)
+## 技能：自我进化 (Self-Evolve)
 你激活了「自我进化」技能，可以改进 Weather Agents 自身的代码。
 
 ### 代码库结构
@@ -43,5 +38,4 @@ tests/               # pytest 测试 (全部 358+ 测试必须通过)
 - 改动前先阅读现有代码，不猜测接口
 - 保持向后兼容
 - 不改 package.json / pyproject.toml 除非必要
-- 不改 README 或文档除非用户要求""",
-    )
+- 不改 README 或文档除非用户要求
