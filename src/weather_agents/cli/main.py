@@ -95,7 +95,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/retry", "resend last user message (after errors)"),
     ("/history", "event log"),
     ("/mcp", "MCP server status"),
-    ("/skills", "list skills & pick one to activate"),
+    ("/skills", "list & pick (↑↓ enter, type to filter)"),
     ("/skills refresh", "reload skills from disk (no restart)"),
     ("/skills migrate", "copy skills from ~/.claude/ into wa's own folder"),
     ("/use ", "activate a skill (name or #, e.g. /use 23)"),
@@ -1638,15 +1638,26 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _print_mcp_status(ctx)
                 continue
             if cmd_lower == "/skills":
-                # List + interactive picker. Print the table, then ask
-                # for a row number or skill name. Pressing Enter cancels
-                # so the original "just list" behaviour is one keystroke
-                # away. The picker is skipped when stdin isn't a TTY
-                # (piped, test runs) since console.input would block on
-                # a closed stream.
-                names = _print_skills(agent)
-                if names and sys.stdin.isatty():
-                    pick = _prompt_skill_pick(names)
+                # TTY-only interactive picker:
+                #   TTY  → arrow-key picker (↑↓ to move, type to filter,
+                #          Enter to confirm, Esc to cancel). The right
+                #          UX for 68+ entry lists.
+                #   non-TTY → just print the table and stop. A piped
+                #          caller has no way to interact, and prompting
+                #          would consume the next queued input as a
+                #          spurious "skill pick" — bad behaviour in
+                #          tests and scripts alike.
+                if sys.stdin.isatty():
+                    available = agent.get_available_skills()
+                    items = [
+                        (s["name"], f"{s['name']:<22} {s['description'][:70]}") for s in available
+                    ]
+                    active_keys = set(agent._active_skills)
+                    pick = _arrow_pick_from_list(
+                        items,
+                        title=f"  {icon_text(agent.name)} {agent.display_name} Skills",
+                        active_keys=active_keys,
+                    )
                     if pick:
                         if pick in agent._active_skills:
                             console.print(f"  [dim]{pick} already active[/dim]")
@@ -1654,6 +1665,8 @@ async def _interactive(agent_name: str | None = None) -> None:
                             console.print(f"  [green]+ {pick}[/green]")
                         else:
                             console.print(f"  [red]failed to activate {pick}[/red]")
+                else:
+                    _print_skills(agent)
                 continue
             if cmd_lower == "/skills migrate":
                 # Copy user-level skills + plugins from ~/.claude/ into
@@ -2304,8 +2317,8 @@ def _print_help(ctx) -> None:
                 (
                     "/skills",
                     _h(
-                        "列出技能并按编号选择激活",
-                        "list skills + pick one to activate",
+                        "列出技能：↑↓ 选择，输入字符过滤，Enter 激活，Esc 取消",
+                        "list & pick: ↑↓ to move, type to filter, Enter to activate, Esc to cancel",
                     ),
                 ),
                 ("/skills refresh", _h("从磁盘重新加载技能", "reload skills from disk")),
@@ -2713,6 +2726,139 @@ def _print_skills(agent) -> list[str]:
         "  [dim]/use <skill|#>   activate by name or number  ·  /deactivate   deactivate all[/dim]"
     )
     return [sk["name"] for sk in skills]
+
+
+def _arrow_pick_from_list(
+    items: list[tuple[str, str]],
+    title: str = "Select",
+    *,
+    active_keys: set[str] | None = None,
+    viewport: int = 15,
+) -> str | None:
+    """Arrow-key driven picker over a flat ``(key, label)`` list.
+
+    Up/Down move the cursor (with viewport scrolling when the list is
+    longer than ``viewport`` rows). Typing letters / digits builds an
+    incremental case-insensitive substring filter; Backspace pops the
+    filter. Enter confirms, Esc cancels. Returns the selected ``key``
+    or ``None`` on cancel.
+
+    ``active_keys`` is an optional set of keys that should render with
+    an active dot marker — used by /skills so the user sees which
+    skills are already loaded while browsing.
+
+    The picker is the standard interactive widget for any "pick one
+    from a known list" command. _interactive_model_select was the
+    first instance of this pattern in wa; this generalises it so
+    /skills (and future commands like /agent / /session pick) can
+    share the implementation.
+    """
+    if not items:
+        return None
+    if not sys.stdin.isatty():
+        # Non-TTY (piped / test): no Live cursor possible — caller should
+        # fall back to a numeric prompt path.
+        return None
+
+    active_keys = active_keys or set()
+    filter_buf: list[str] = []
+    cursor_idx = 0  # index into the filtered view
+    scroll_top = 0
+
+    with Live(
+        Table(show_header=False, box=None, padding=0),
+        console=console,
+        refresh_per_second=20,
+        transient=True,
+    ) as live:
+        while True:
+            filt = "".join(filter_buf).lower()
+            view = (
+                [(k, lbl) for (k, lbl) in items if filt in k.lower() or filt in lbl.lower()]
+                if filt
+                else list(items)
+            )
+            if not view:
+                cursor_idx = 0
+            else:
+                cursor_idx = max(0, min(cursor_idx, len(view) - 1))
+                # Keep the cursor inside the visible viewport.
+                if cursor_idx < scroll_top:
+                    scroll_top = cursor_idx
+                elif cursor_idx >= scroll_top + viewport:
+                    scroll_top = cursor_idx - viewport + 1
+            scroll_top = max(0, scroll_top)
+
+            tbl = Table(show_header=False, box=None, padding=0, expand=True)
+            tbl.add_column(ratio=1)
+
+            header = Text()
+            header.append(f"\n  {title}", style="bold")
+            header.append("  (↑↓ select  enter confirm  esc cancel", style="dim")
+            if filt:
+                header.append(f"  filter: {''.join(filter_buf)}", style="cyan dim")
+            else:
+                header.append("  type to filter", style="dim")
+            header.append(")", style="dim")
+            tbl.add_row(header)
+            tbl.add_row(Text())
+
+            if not view:
+                tbl.add_row(Text("  no matches", style="yellow"))
+            else:
+                visible = view[scroll_top : scroll_top + viewport]
+                if scroll_top > 0:
+                    tbl.add_row(Text(f"  ↑ {scroll_top} more above", style="dim"))
+                for off, (k, lbl) in enumerate(visible):
+                    abs_idx = scroll_top + off
+                    is_cursor = abs_idx == cursor_idx
+                    is_active = k in active_keys
+                    marker = "❯" if is_cursor else " "
+                    dot = "●" if is_active else "○"
+                    line = Text()
+                    line.append(f" {marker} ", style="bold cyan" if is_cursor else "")
+                    line.append(
+                        f"{dot} ",
+                        style="green" if is_active else ("bold cyan" if is_cursor else "dim"),
+                    )
+                    line.append(lbl, style="bold cyan" if is_cursor else "")
+                    tbl.add_row(line)
+                tail = len(view) - (scroll_top + len(visible))
+                if tail > 0:
+                    tbl.add_row(Text(f"  ↓ {tail} more below", style="dim"))
+
+            live.update(tbl)
+
+            try:
+                key = _get_key()
+            except KeyboardInterrupt:
+                return None
+
+            if key == "enter":
+                if view:
+                    return view[cursor_idx][0]
+                continue
+            if key == "esc":
+                return None
+            if key == "up":
+                cursor_idx = max(0, cursor_idx - 1)
+                continue
+            if key == "down":
+                if view:
+                    cursor_idx = min(len(view) - 1, cursor_idx + 1)
+                continue
+            if key == "backspace":
+                if filter_buf:
+                    filter_buf.pop()
+                    cursor_idx = 0
+                    scroll_top = 0
+                continue
+            # Treat printable single chars as filter input. Skip control
+            # codes and named tokens (handled above).
+            if isinstance(key, str) and len(key) == 1 and key.isprintable():
+                filter_buf.append(key)
+                cursor_idx = 0
+                scroll_top = 0
 
 
 def _prompt_skill_pick(skill_names: list[str]) -> str | None:
