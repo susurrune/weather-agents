@@ -77,6 +77,14 @@ class Skill:
     # active prompt under ~2KB per skill while preserving the full
     # guide on disk where the LLM can fetch it on demand.
     body_truncated: bool = False
+    # Frontmatter keys that aren't part of wa's first-class schema but
+    # appear in real-world Claude Code / community skill files (``version``,
+    # ``homepage``, ``slug``, ``changelog``, ``metadata``, ``compatibility``,
+    # ``argument-hint``, ``user-invocable``, etc.). Preserved verbatim so
+    # the data survives a round-trip through the loader; nothing in wa
+    # depends on the contents, but ``/skill info`` and future tools can
+    # surface them.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_markdown(cls, path: Path) -> Skill | None:
@@ -145,6 +153,52 @@ class Skill:
         elif isinstance(allowed_raw, str) and allowed_raw.strip():
             # Some YAMLs use comma-separated strings; tolerate both.
             allowed_tools = [t.strip() for t in allowed_raw.split(",") if t.strip()] or None
+        # Normalize Claude Code tool names (PascalCase + optional
+        # ``Tool(scope pattern)``) into wa's snake_case equivalents.
+        # Real-world Anthropic skills look like:
+        #   allowed-tools:
+        #     - Bash(ls *)
+        #     - Read
+        #     - Write
+        # Without this mapping wa would restrict the agent to literal
+        # ``Read`` / ``Write`` which don't exist in our registry, leaving
+        # the agent with zero usable tools. Unknown names pass through
+        # so non-Claude skills with custom tool names still work.
+        if allowed_tools:
+            allowed_tools = [_normalize_claude_tool_name(t) for t in allowed_tools]
+            # Dedupe preserving order — Bash(ls *) + Bash(rm *) both
+            # map to run_bash; keeping one is correct since wa has no
+            # per-command Bash scoping.
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for t in allowed_tools:
+                if t not in seen:
+                    seen.add(t)
+                    deduped.append(t)
+            allowed_tools = deduped
+
+        # Preserve metadata fields the loader doesn't natively support
+        # (``version``, ``homepage``, ``slug``, ``changelog``, ``metadata``,
+        # ``compatibility``, ``argument-hint``, ``user-invocable``, etc.)
+        # so they're inspectable later without dropping authored data on
+        # the floor. Claude Code skills + community plugins use these
+        # routinely and wa silently ignoring them used to make /skill
+        # info return a stub.
+        known_keys = {
+            "name",
+            "description",
+            "tools",
+            "model",
+            "temperature",
+            "max_tokens",
+            "triggers",
+            "license",
+            "allowed-tools",
+            "allowed_tools",
+        }
+        extra_metadata = {
+            k: v for k, v in fm.items() if k not in known_keys and not k.startswith("_")
+        }
 
         # Lazy-load very large skill bodies. Anthropic's skill spec puts
         # detailed instructions IN SKILL.md (beautiful-webpage at 17KB,
@@ -174,6 +228,7 @@ class Skill:
             allowed_tools=allowed_tools,
             source_path=str(path),
             body_truncated=body_truncated,
+            metadata=extra_metadata,
         )
 
 
@@ -184,6 +239,64 @@ class Skill:
 # "quick reference" / "core principles" content.
 _SKILL_BODY_LITE_THRESHOLD = 2000
 _SKILL_BODY_LITE_MAX_CHARS = 1500
+
+
+# Claude Code → wa tool-name aliases. Real Anthropic skill files write
+# ``allowed-tools`` with their built-in PascalCase tool names (``Read``,
+# ``Write``, ``Bash``, etc.), often with a permission-scoping suffix
+# like ``Bash(ls *)``. wa's registry uses snake_case names. The aliases
+# below map every Claude name we've seen in the wild to its wa
+# equivalent; names not in the map pass through untouched so custom /
+# plugin-defined tools keep working. Lowercase aliases are also accepted
+# (some authors write ``read`` instead of ``Read``).
+_CLAUDE_TOOL_ALIASES: dict[str, str] = {
+    # File I/O
+    "read": "read_file",
+    "write": "write_file",
+    "edit": "edit_file",
+    "multiedit": "edit_file",
+    "delete": "delete_file",
+    # Shell / execution
+    "bash": "run_bash",
+    "shell": "run_bash",
+    # Search
+    "grep": "grep",
+    "glob": "file_search",
+    "search": "code_search",
+    "websearch": "web_search",
+    "webfetch": "fetch_page",
+    # Filesystem listing
+    "ls": "list_directory",
+    "tree": "tree",
+    # HTTP
+    "fetch": "http_get",
+    # Misc
+    "taskdone": "task_done",
+}
+
+
+def _normalize_claude_tool_name(raw: str) -> str:
+    """Translate a Claude Code tool name into wa's registry name.
+
+    Handles:
+      - PascalCase identifiers (``Read`` → ``read_file``)
+      - Permission scoping (``Bash(ls *)`` → ``Bash`` → ``run_bash``)
+      - Snake_case already-wa names (``read_file`` → ``read_file``)
+      - Unknown names (pass through untouched so custom plugins work)
+    """
+    s = raw.strip()
+    if not s:
+        return s
+    # Strip permission scoping: ``Bash(ls *)`` → ``Bash``. wa has no
+    # per-command shell scoping so the inside is informational only.
+    paren = s.find("(")
+    if paren > 0:
+        s = s[:paren].strip()
+    # Try exact match first (preserves snake_case names users / plugins
+    # may already have written), then case-insensitive alias lookup.
+    if s in _CLAUDE_TOOL_ALIASES.values():
+        return s
+    return _CLAUDE_TOOL_ALIASES.get(s.lower(), s)
 
 
 def _extract_skill_head(body: str, max_chars: int) -> str:
