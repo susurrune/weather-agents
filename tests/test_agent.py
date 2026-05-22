@@ -278,6 +278,65 @@ class TestSystemPromptLanguage:
             assert len(cls.system_prompt_en) > 50, f"{cls.__name__} system_prompt_en too short"
 
 
+class TestRuntimeIdentityBlock:
+    """Regression: the LLM should know what model it's running on so
+    "what model are you?" gets an honest answer instead of a hallucinated
+    "I'm Claude" when the actual provider is DeepSeek. The fix injects
+    a runtime block listing the current model id into the system prompt
+    on every rebuild."""
+
+    def test_identity_block_includes_model_id_zh(self, app_config, mock_llm, bus, tool_registry):
+        from weather_agents.agents.fog import FogAgent
+
+        app_config.llm.default_model = "deepseek/deepseek-v4-pro"
+        app_config.llm.language = "zh"
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        block = agent._runtime_identity_block()
+        assert "deepseek/deepseek-v4-pro" in block
+        # Strong wording so the LLM doesn't second-guess.
+        assert "不要猜测" in block or "不要冒充" in block
+
+    def test_identity_block_includes_model_id_en(self, app_config, mock_llm, bus, tool_registry):
+        from weather_agents.agents.fog import FogAgent
+
+        app_config.llm.default_model = "claude-haiku-4-5"
+        app_config.llm.language = "en"
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        block = agent._runtime_identity_block()
+        assert "claude-haiku-4-5" in block
+        assert "do NOT guess" in block or "do not guess" in block.lower()
+
+    def test_rebuild_writes_identity_into_short_term(
+        self, app_config, mock_llm, bus, tool_registry
+    ):
+        """``_rebuild_system_prompt`` must place the identity block into
+        the system message that goes to the LLM — not just compute it
+        and throw it away. Without this the LLM never sees the model id."""
+        from weather_agents.agents.fog import FogAgent
+
+        app_config.llm.default_model = "gpt-4.1-mini"
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        # Simulate a base prompt + empty active skills
+        agent._base_system_prompt = "BASE"
+        agent.memory.add_message("system", "old")
+        agent._rebuild_system_prompt()
+        sys_msgs = [m.content for m in agent.memory.short_term if m.role == "system"]
+        joined = "\n".join(sys_msgs)
+        assert "gpt-4.1-mini" in joined
+
+    def test_per_agent_model_override_reflected(self, app_config, mock_llm, bus, tool_registry):
+        """When the agent has a per-agent model override, the identity
+        block should show THAT model, not the default."""
+        from weather_agents.agents.fog import FogAgent
+
+        app_config.llm.default_model = "deepseek/deepseek-v4-flash"
+        app_config.agents.fog.model = "claude-sonnet-4-6"
+        agent = FogAgent(config=app_config, llm=mock_llm, bus=bus, tool_registry=tool_registry)
+        block = agent._runtime_identity_block()
+        assert "claude-sonnet-4-6" in block
+        assert "deepseek" not in block.lower()
+
+
 class TestSkillHandlerInjection:
     @pytest.mark.asyncio
     async def test_skill_handler_registers_tools(self, app_config, mock_llm, bus, tool_registry):

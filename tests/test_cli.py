@@ -1265,6 +1265,62 @@ class TestArrowPickFromList:
         assert pick == "a"
 
 
+class TestRefreshAgentIdentity:
+    """Regression: ``/model`` switches must call
+    ``_refresh_agent_identity`` so every agent's system prompt picks up
+    the new model id immediately. Without this the LLM kept claiming the
+    old model after the user changed it (the case study that prompted
+    this fix had the user on DeepSeek but the agent saying "I'm Claude")."""
+
+    def test_refresh_calls_rebuild_on_every_agent(self):
+        from weather_agents.cli.main import _refresh_agent_identity
+
+        ctx = MagicMock()
+        agents = {}
+        for name in ("fog", "rain", "frost"):
+            ag = MagicMock()
+            ag._rebuild_system_prompt = MagicMock()
+            agents[name] = ag
+        ctx.agent_map = agents
+
+        _refresh_agent_identity(ctx)
+
+        for ag in agents.values():
+            ag._rebuild_system_prompt.assert_called_once()
+
+    def test_refresh_swallows_per_agent_errors(self):
+        """If one agent's rebuild raises, the others should still be
+        refreshed. Identity refresh is cosmetic — never let a transient
+        failure block the user's /model change."""
+        from weather_agents.cli.main import _refresh_agent_identity
+
+        ctx = MagicMock()
+        good = MagicMock()
+        good._rebuild_system_prompt = MagicMock()
+        bad = MagicMock()
+        bad._rebuild_system_prompt = MagicMock(side_effect=RuntimeError("boom"))
+        ctx.agent_map = {"good": good, "bad": bad}
+
+        _refresh_agent_identity(ctx)
+        good._rebuild_system_prompt.assert_called_once()
+
+    def test_refresh_tolerates_missing_rebuild_method(self):
+        """Mock-spec'd agents may not have _rebuild_system_prompt at
+        all (e.g. partial fakes in older tests). The refresh helper
+        should skip those silently rather than AttributeError."""
+        from weather_agents.cli.main import _refresh_agent_identity
+
+        ctx = MagicMock()
+
+        # Use a real object whose attribute lookup returns None (not Mock).
+        class _NoRebuild:
+            _rebuild_system_prompt = None  # not callable
+
+        ctx.agent_map = {"x": _NoRebuild()}
+        # Must not raise.
+        _refresh_agent_identity(ctx)
+
+
 class TestArrowPickSession:
     """Round 10: /sessions and /session delete now route through an
     arrow picker. _arrow_pick_session handles both verbs over the same

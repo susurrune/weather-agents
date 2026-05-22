@@ -3286,6 +3286,25 @@ def _interactive_model_select(prompt: str = "Select model") -> str | None:
                         break
 
 
+def _refresh_agent_identity(ctx) -> None:
+    """Re-render every agent's system prompt so the runtime-identity
+    block (current model id) matches the just-updated config. Without
+    this, switching models via ``/model`` left the agent claiming the
+    OLD model id in its system prompt — leading to "I'm Claude" replies
+    after the user already switched to DeepSeek. Cheap: only mutates
+    the existing system message in short_term, no LLM call.
+    """
+    for agent in ctx.agent_map.values():
+        rebuild = getattr(agent, "_rebuild_system_prompt", None)
+        if callable(rebuild):
+            try:
+                rebuild()
+            except Exception:
+                # Re-rendering is best-effort cosmetic; never let a
+                # transient failure block the user's /model change.
+                continue
+
+
 def _handle_model_command(cmd: str, ctx) -> None:
     parts = cmd.strip().split(maxsplit=1)
 
@@ -3310,6 +3329,7 @@ def _handle_model_command(cmd: str, ctx) -> None:
             ok, msg = set_config("default_model", model)
             if ok:
                 ctx.config.llm.default_model = model
+                _refresh_agent_identity(ctx)
                 console.print(f"\n  [green]model -> {model}[/green]")
             else:
                 console.print(f"\n  [red]{msg}[/red]")
@@ -3326,6 +3346,7 @@ def _handle_model_command(cmd: str, ctx) -> None:
                 set_config(f"model.{name}", model_name)
                 agent_cfg = getattr(ctx.config.agents, name)
                 agent_cfg.model = model_name
+            _refresh_agent_identity(ctx)
             console.print(f"  [green]all agents -> {model_name}[/green]")
         else:
             model = _interactive_model_select("Select model for all agents")
@@ -3334,6 +3355,7 @@ def _handle_model_command(cmd: str, ctx) -> None:
                     set_config(f"model.{name}", model)
                     agent_cfg = getattr(ctx.config.agents, name)
                     agent_cfg.model = model
+                _refresh_agent_identity(ctx)
                 console.print(f"\n  [green]all agents -> {model}[/green]")
         return
 
@@ -3345,6 +3367,7 @@ def _handle_model_command(cmd: str, ctx) -> None:
             set_config(f"model.{agent_name}", model)
             agent_cfg = getattr(ctx.config.agents, agent_name)
             agent_cfg.model = model
+            _refresh_agent_identity(ctx)
             console.print(f"\n  [green]{icon_text(agent_name)} {agent_name} -> {model}[/green]")
         return
 
@@ -3355,11 +3378,13 @@ def _handle_model_command(cmd: str, ctx) -> None:
             delete_config(f"model.{agent_name}")
             agent_cfg = getattr(ctx.config.agents, agent_name)
             agent_cfg.model = ""
+            _refresh_agent_identity(ctx)
             console.print(f"  [green]{icon_text(agent_name)} {agent_name} -> default[/green]")
         else:
             set_config(f"model.{agent_name}", model_name)
             agent_cfg = getattr(ctx.config.agents, agent_name)
             agent_cfg.model = model_name
+            _refresh_agent_identity(ctx)
             console.print(f"  [green]{icon_text(agent_name)} {agent_name} -> {model_name}[/green]")
         return
 
@@ -3368,6 +3393,7 @@ def _handle_model_command(cmd: str, ctx) -> None:
     ok, msg = set_config("default_model", model_name)
     if ok:
         ctx.config.llm.default_model = model_name
+        _refresh_agent_identity(ctx)
         console.print(f"  [green]model -> {model_name}[/green]")
     else:
         console.print(f"  [red]{msg}[/red]")

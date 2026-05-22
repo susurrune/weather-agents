@@ -303,11 +303,10 @@ class BaseAgent:
         self._base_system_prompt = self._inject_behavior_rules(self._base_system_prompt)
         self._base_system_prompt = self._inject_programming_wisdom(self._base_system_prompt)
         self._base_system_prompt += "\n\n" + self._current_time_tag()
-        for msg in self.memory.short_term:
-            if msg.role == "system":
-                msg.content = self._base_system_prompt
-                return
-        self.memory.add_message("system", self._base_system_prompt)
+        # Route through _rebuild_system_prompt so the runtime identity
+        # block (current model id, language-aware) is regenerated in
+        # the new language too.
+        self._rebuild_system_prompt()
 
     async def init(self) -> None:
         """Initialize agent (memory, subscriptions, skills, etc). Idempotent."""
@@ -331,8 +330,12 @@ class BaseAgent:
         self._base_system_prompt = self._inject_behavior_rules(self._base_system_prompt)
         self._base_system_prompt = self._inject_programming_wisdom(self._base_system_prompt)
         self._base_system_prompt += "\n\n" + self._current_time_tag()
-        if not any(m.role == "system" for m in self.memory.short_term):
-            self.memory.add_message("system", self._base_system_prompt)
+        # Route through _rebuild_system_prompt so the runtime identity
+        # block (current model id) is always present on first turn —
+        # otherwise the LLM has to guess what model it's running on and
+        # tends to hallucinate "I'm Claude" regardless of the actual
+        # provider.
+        self._rebuild_system_prompt()
         self._tools = self.tool_registry.get_tools()
         self._load_skills()
         self.bus.subscribe(self.name, self._handle_event)
@@ -525,6 +528,42 @@ class BaseAgent:
                     break
         return activated
 
+    def _runtime_identity_block(self) -> str:
+        """One-line "you are running on model X" block injected into the
+        system prompt so the LLM can answer "what model are you?"
+        truthfully instead of guessing (DeepSeek pretending to be Claude
+        was the bug that triggered this). Computed at rebuild time so
+        ``/model`` switches take effect immediately after the next
+        ``_rebuild_system_prompt()`` call.
+        """
+        # Mirror LLMClient._get_model's resolution but read from the
+        # agent's own config so the helper stays testable without a
+        # real LLMClient (mock LLMs would otherwise return a Mock auto-
+        # attribute for _get_model and we'd serialize that into the
+        # prompt). Per-agent override wins; falls back to default.
+        model = self.config.llm.default_model
+        try:
+            agent_cfg = getattr(self.config.agents, self.name, None)
+            if agent_cfg and getattr(agent_cfg, "model", None):
+                model = str(agent_cfg.model)
+        except Exception:
+            pass
+        lang = getattr(self.config.llm, "language", "zh")
+        if lang == "en":
+            return (
+                f"\n\n## Runtime\n"
+                f"You are the {self.display_name} agent in Weather Agents, "
+                f"powered by the **{model}** language model. If the user asks "
+                "what model you are, give them this exact model id verbatim — "
+                "do NOT guess or claim to be a different model."
+            )
+        return (
+            f"\n\n## 运行环境\n"
+            f"你是 Weather Agents 中的「{self.display_name}」智能体，"
+            f"底层语言模型为 **{model}**。如果用户问你是什么模型，"
+            "直接告诉他们这个准确的 model id —— 不要猜测、不要冒充其他模型。"
+        )
+
     def _rebuild_system_prompt(self) -> None:
         """Rebuild the system prompt with active skill prompts appended.
 
@@ -533,9 +572,14 @@ class BaseAgent:
         layers (Anthropic/DeepSeek prefix cache, our own llm cache) see the
         same byte sequence across turns where the active-skill set is
         identical, saving 100-500ms on first-token latency.
+
+        The runtime identity block (current model name) is appended LAST
+        so its byte position is stable across turns where only the model
+        changed — same cache-friendly principle as the skill ordering.
         """
+        identity = self._runtime_identity_block()
         if not self._active_skills:
-            prompt = self._base_system_prompt
+            prompt = self._base_system_prompt + identity
         else:
             # Index skills by name so we don't depend on _skills list order.
             by_name = {s.name: s for s in self._skills}
@@ -579,6 +623,7 @@ class BaseAgent:
             prompt = self._base_system_prompt
             if skill_prompts:
                 prompt += "\n\n" + "\n\n".join(skill_prompts)
+            prompt += identity
 
         for _i, msg in enumerate(self.memory.short_term):
             if msg.role == "system":
