@@ -288,15 +288,68 @@ class TestSkillActivation:
             mock_ctx.agent_map["frost"].activate_skill.assert_called_once_with("badskill")
 
     @pytest.mark.asyncio
-    async def test_deactivate_skills(self):
+    async def test_deactivate_all_drops_every_active_skill(self):
+        """Round 10 split /deactivate into two paths:
+          /deactivate       — arrow-pick which to deactivate
+          /deactivate all   — keep the legacy "kill them all" behaviour
+        Only the explicit ``all`` form should call deactivate_all_skills,
+        and it must do so exactly once."""
         with (
             patch("weather_agents.cli.main.create_system_context") as mock_create,
-            patch("weather_agents.cli.main.console.input", side_effect=["/deactivate", "/quit"]),
+            patch(
+                "weather_agents.cli.main.console.input",
+                side_effect=["/deactivate all", "/quit"],
+            ),
         ):
             mock_ctx = _make_ctx()
             mock_create.return_value = mock_ctx
             await _run_interactive("frost")
             mock_ctx.agent_map["frost"].deactivate_all_skills.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_deactivate_no_args_with_no_active_skills_is_noop(self):
+        """Bare ``/deactivate`` when nothing is active should print the
+        "no active" hint and NOT touch deactivate_all_skills. This is
+        the test fixture's default state — _make_ctx doesn't pre-load
+        anything."""
+        with (
+            patch("weather_agents.cli.main.create_system_context") as mock_create,
+            patch(
+                "weather_agents.cli.main.console.input",
+                side_effect=["/deactivate", "/quit"],
+            ),
+        ):
+            mock_ctx = _make_ctx()
+            # Explicitly set _active_skills to an empty set so the Mock
+            # default attribute (which is itself a Mock and iterates
+            # oddly) doesn't confuse `sorted(...)`.
+            for ag in mock_ctx.agent_map.values():
+                ag._active_skills = set()
+            mock_create.return_value = mock_ctx
+            await _run_interactive("frost")
+            mock_ctx.agent_map["frost"].deactivate_all_skills.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deactivate_no_args_with_one_active_drops_it_directly(self):
+        """When exactly one skill is active, there's nothing for the
+        user to pick — just drop it. Saves a round trip through the
+        arrow widget."""
+        with (
+            patch("weather_agents.cli.main.create_system_context") as mock_create,
+            patch(
+                "weather_agents.cli.main.console.input",
+                side_effect=["/deactivate", "/quit"],
+            ),
+        ):
+            mock_ctx = _make_ctx()
+            for ag in mock_ctx.agent_map.values():
+                ag._active_skills = {"only_skill"}
+            mock_create.return_value = mock_ctx
+            await _run_interactive("frost")
+            # Direct path — deactivate_skill called with the single name,
+            # NOT deactivate_all_skills.
+            mock_ctx.agent_map["frost"].deactivate_skill.assert_called_once_with("only_skill")
+            mock_ctx.agent_map["frost"].deactivate_all_skills.assert_not_called()
 
 
 class TestExitCommands:
@@ -1210,6 +1263,124 @@ class TestArrowPickFromList:
         ):
             pick = _arrow_pick_from_list(items, "Pick", active_keys={"a"})
         assert pick == "a"
+
+
+class TestArrowPickSession:
+    """Round 10: /sessions and /session delete now route through an
+    arrow picker. _arrow_pick_session handles both verbs over the same
+    list rendering — load/delete differ only in the post-pick action."""
+
+    @pytest.mark.asyncio
+    async def test_load_picks_first_session_and_loads_it(self):
+        from weather_agents.cli.main import _arrow_pick_session
+
+        agent = MagicMock()
+        agent.memory = MagicMock()
+        agent.memory.list_sessions = AsyncMock(
+            return_value=[
+                {"id": "abc123", "name": "alpha", "preview": "", "message_count": 5},
+                {"id": "def456", "name": "beta", "preview": "", "message_count": 2},
+            ]
+        )
+        agent.memory.get_active_session = MagicMock(return_value=None)
+        agent.memory.load_session = AsyncMock(return_value=True)
+
+        with (
+            patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
+            patch("weather_agents.cli.main._get_key", side_effect=["enter"]),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            await _arrow_pick_session(agent, action="load")
+        agent.memory.load_session.assert_awaited_once_with("abc123")
+
+    @pytest.mark.asyncio
+    async def test_delete_picks_second_session(self):
+        from weather_agents.cli.main import _arrow_pick_session
+
+        agent = MagicMock()
+        agent.memory = MagicMock()
+        agent.memory.list_sessions = AsyncMock(
+            return_value=[
+                {"id": "abc123", "name": "alpha", "preview": "", "message_count": 5},
+                {"id": "def456", "name": "beta", "preview": "", "message_count": 2},
+            ]
+        )
+        agent.memory.get_active_session = MagicMock(return_value=None)
+        agent.memory.delete_session = AsyncMock(return_value=True)
+
+        with (
+            patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
+            patch("weather_agents.cli.main._get_key", side_effect=["down", "enter"]),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            await _arrow_pick_session(agent, action="delete")
+        agent.memory.delete_session.assert_awaited_once_with("def456")
+
+    @pytest.mark.asyncio
+    async def test_delete_refuses_active_session(self):
+        """Refuse to delete the currently-active session — leaving the
+        agent pointed at a dropped session would be a footgun. User
+        must switch first."""
+        from weather_agents.cli.main import _arrow_pick_session
+
+        agent = MagicMock()
+        agent.memory = MagicMock()
+        agent.memory.list_sessions = AsyncMock(
+            return_value=[
+                {"id": "active", "name": "current", "preview": "", "message_count": 5},
+            ]
+        )
+        agent.memory.get_active_session = MagicMock(return_value="active")
+        agent.memory.delete_session = AsyncMock(return_value=True)
+
+        with (
+            patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
+            patch("weather_agents.cli.main._get_key", side_effect=["enter"]),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            await _arrow_pick_session(agent, action="delete")
+        agent.memory.delete_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_sessions_short_circuits(self):
+        from weather_agents.cli.main import _arrow_pick_session
+
+        agent = MagicMock()
+        agent.memory = MagicMock()
+        agent.memory.list_sessions = AsyncMock(return_value=[])
+        agent.memory.load_session = AsyncMock()
+
+        with (
+            patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
+            patch("weather_agents.cli.main._get_key") as get_key,
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            await _arrow_pick_session(agent, action="load")
+        # Empty list → no picker UI, no key reads.
+        get_key.assert_not_called()
+        agent.memory.load_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_esc_cancels_no_action(self):
+        from weather_agents.cli.main import _arrow_pick_session
+
+        agent = MagicMock()
+        agent.memory = MagicMock()
+        agent.memory.list_sessions = AsyncMock(
+            return_value=[
+                {"id": "abc", "name": "x", "preview": "", "message_count": 0},
+            ]
+        )
+        agent.memory.get_active_session = MagicMock(return_value=None)
+        agent.memory.load_session = AsyncMock()
+
+        with (
+            patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
+            patch("weather_agents.cli.main._get_key", side_effect=["esc"]),
+            patch("weather_agents.cli.main.console.print"),
+        ):
+            await _arrow_pick_session(agent, action="load")
+        agent.memory.load_session.assert_not_awaited()
 
 
 class TestFormatCost:

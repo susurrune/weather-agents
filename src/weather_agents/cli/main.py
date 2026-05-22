@@ -99,11 +99,11 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/skills refresh", "reload skills from disk (no restart)"),
     ("/skills migrate", "copy skills from ~/.claude/ into wa's own folder"),
     ("/use ", "activate a skill (name or #, e.g. /use 23)"),
-    ("/deactivate", "deactivate skills"),
-    ("/sessions", "list sessions"),
+    ("/deactivate", "pick a skill to deactivate (or /deactivate all)"),
+    ("/sessions", "pick a session to load (↑↓ enter)"),
     ("/session new ", "start new session"),
-    ("/session load ", "switch session"),
-    ("/session delete ", "delete session"),
+    ("/session load ", "switch session by id"),
+    ("/session delete", "pick a session to delete (↑↓ enter)"),
     ("/memory", "memory stats (clear: /memory clear)"),
     ("/remember ", "store a fact: /remember key=value"),
     ("/recall ", "list facts or /recall <query>"),
@@ -1753,8 +1753,40 @@ async def _interactive(agent_name: str | None = None) -> None:
                     )
                 continue
             if cmd_lower == "/deactivate":
+                # When the user wants to drop ALL skills they can run
+                # `/deactivate all`; the bare `/deactivate` now picks one
+                # to remove so the common case (turning off a single
+                # skill the trigger heuristic over-eagerly activated)
+                # doesn't require typing the full name. Edge cases:
+                #   no active   → no-op with a note
+                #   one active  → drop it directly, no picker needed
+                #   ≥2 active   → arrow picker
+                active = sorted(agent._active_skills)
+                if not active:
+                    console.print("  [dim]no active skills[/dim]")
+                elif len(active) == 1:
+                    name = active[0]
+                    agent.deactivate_skill(name)
+                    console.print(f"  [dim]- {name}[/dim]")
+                elif sys.stdin.isatty():
+                    items = [(n, n) for n in active]
+                    pick = _arrow_pick_from_list(
+                        items,
+                        title=f"  Deactivate skill  ({len(active)} active)",
+                    )
+                    if pick:
+                        agent.deactivate_skill(pick)
+                        console.print(f"  [dim]- {pick}[/dim]")
+                else:
+                    # Non-TTY (piped / test): preserve original behaviour
+                    # so existing scripts continue to work.
+                    agent.deactivate_all_skills()
+                    console.print(f"  [dim]skills deactivated ({len(active)})[/dim]")
+                continue
+            if cmd_lower == "/deactivate all":
+                count = len(agent._active_skills)
                 agent.deactivate_all_skills()
-                console.print("  [dim]skills deactivated[/dim]")
+                console.print(f"  [dim]skills deactivated ({count})[/dim]")
                 continue
             if cmd_lower == "/workspace":
                 _print_workspace(ctx)
@@ -1766,7 +1798,15 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _handle_workspace_auto(ctx)
                 continue
             if cmd_lower == "/sessions":
-                await _print_sessions(agent)
+                # TTY: arrow-pick a session to load. The previous flow
+                # printed the table and required the user to copy the
+                # session id and re-type `/session load <id>` — a long
+                # 16-char hash was easy to mistype. Non-TTY keeps the
+                # static print so scripts/tests see the legacy output.
+                if sys.stdin.isatty():
+                    await _arrow_pick_session(agent, action="load")
+                else:
+                    await _print_sessions(agent)
                 continue
             if cmd_lower.startswith("/session"):
                 await _handle_session_command(cmd, agent)
@@ -2336,7 +2376,13 @@ def _print_help(ctx) -> None:
                         "activate a skill by name or number (e.g. /use 23)",
                     ),
                 ),
-                ("/deactivate", _h("停用所有技能", "deactivate all skills")),
+                (
+                    "/deactivate",
+                    _h(
+                        "选择要停用的技能（/deactivate all 停用全部）",
+                        "pick a skill to deactivate (/deactivate all = all)",
+                    ),
+                ),
             ],
         ),
         (
@@ -2360,10 +2406,22 @@ def _print_help(ctx) -> None:
         (
             _h("会话", "Session"),
             [
-                ("/sessions", _h("列出会话", "list saved sessions")),
+                (
+                    "/sessions",
+                    _h(
+                        "选择会话加载：↑↓ 选择，Enter 加载，Esc 取消",
+                        "pick a session: ↑↓ to move, Enter to load, Esc to cancel",
+                    ),
+                ),
                 ("/session new [name]", _h("新建会话", "start new session")),
-                ("/session load <id>", _h("加载会话", "switch to session")),
-                ("/session delete <id>", _h("删除会话", "delete session")),
+                ("/session load <id>", _h("按 ID 加载会话", "load session by id")),
+                (
+                    "/session delete",
+                    _h(
+                        "选择会话删除（不填 id 时弹选择器）",
+                        "pick a session to delete (no id = arrow picker)",
+                    ),
+                ),
                 ("/quit", _h("退出", "exit")),
                 ("/exit", _h("退出", "exit")),
             ],
@@ -2643,6 +2701,72 @@ async def _print_sessions(agent) -> None:
     console.print("  [dim]/session delete <id>   delete session[/dim]")
 
 
+async def _arrow_pick_session(agent, *, action: str) -> None:
+    """Arrow-pick a session and perform ``action`` on it.
+
+    ``action`` is ``"load"`` or ``"delete"``. The function fetches the
+    session list, builds (id, label) tuples for the picker, and runs
+    the chosen memory operation when the user confirms with Enter.
+    Esc cancels with no change.
+
+    Lives next to ``_print_sessions`` because the rendering and
+    operation lookup share the same memory APIs.
+    """
+    sessions = await agent.memory.list_sessions()
+    if not sessions:
+        console.print("  [dim]no saved sessions[/dim]")
+        console.print("  [dim]/session new [name]  — start a new one[/dim]")
+        return
+
+    active_id = agent.memory.get_active_session()
+    items: list[tuple[str, str]] = []
+    for s in sessions:
+        sid = s["id"]
+        name = s["name"] or s["preview"] or "(empty)"
+        if len(name) > 48:
+            name = name[:45] + "…"
+        # Embed message count and the "active" hint in the label so the
+        # user can tell which session is which without exiting the
+        # picker. The dot marker the widget renders is its own
+        # "highlighted" indicator — we use a separate text mark here
+        # for active-session.
+        active_mark = " (active)" if sid == active_id else ""
+        items.append((sid, f"{sid[:12]:<13} {name:<48} msgs={s['message_count']}{active_mark}"))
+
+    verb_color = "red" if action == "delete" else "green"
+    verb_label = "Delete session" if action == "delete" else "Load session"
+    pick = _arrow_pick_from_list(
+        items,
+        title=f"  {verb_label}  ({len(sessions)} total)",
+        # Mark the currently-active one so the user doesn't accidentally
+        # delete the session they're in.
+        active_keys={active_id} if active_id else None,
+    )
+    if not pick:
+        return
+
+    if action == "load":
+        ok = await agent.memory.load_session(pick)
+        if ok:
+            console.print(f"  [{verb_color}]loaded session [cyan]{pick}[/cyan][/{verb_color}]")
+        else:
+            console.print(f"  [red]session not found: {pick}[/red]")
+    elif action == "delete":
+        if pick == active_id:
+            # Refuse — deleting the live session leaves the agent in
+            # an inconsistent state. Force the user to switch first.
+            console.print(
+                "  [yellow]cannot delete the active session — switch first with "
+                "[cyan]/sessions[/cyan][/yellow]"
+            )
+            return
+        ok = await agent.memory.delete_session(pick)
+        if ok:
+            console.print(f"  [{verb_color}]deleted session [cyan]{pick}[/cyan][/{verb_color}]")
+        else:
+            console.print(f"  [red]session not found: {pick}[/red]")
+
+
 async def _handle_session_command(cmd: str, agent) -> None:
     parts = cmd.strip().split(maxsplit=2)
     if len(parts) < 2:
@@ -2671,7 +2795,15 @@ async def _handle_session_command(cmd: str, agent) -> None:
 
     if action in ("delete", "del", "rm"):
         if len(parts) < 3:
-            console.print("  [red]usage: /session delete <id>[/red]")
+            # No id given → arrow-pick which session to drop. Mirrors
+            # the /deactivate UX and saves the user from copying a 16-
+            # char session id off the listing. Non-TTY paths still
+            # demand an explicit id (a deletion picker over piped
+            # stdin is a footgun).
+            if sys.stdin.isatty():
+                await _arrow_pick_session(agent, action="delete")
+            else:
+                console.print("  [red]usage: /session delete <id>[/red]")
             return
         sid = parts[2]
         ok = await agent.memory.delete_session(sid)
