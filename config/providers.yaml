@@ -1,0 +1,256 @@
+# Weather Agents — Provider Catalog
+#
+# Single source of truth for every LLM provider wa knows about. Used by:
+#   - core/llm.py to look up env-var names + know which "<provider>/<model>"
+#     prefixes to route through LiteLLM
+#   - cli/main.py /apikey command for the interactive set/del picker
+#   - core/config.py load_provider_catalog() helper
+#
+# Schema for each entry:
+#   env_var      Environment variable LiteLLM (and we) read the API key from
+#   region       US | CN | EU | Local | Aggregator — for grouping in pickers
+#   docs_url     Where the user goes to grab their key
+#   base_url     Optional. For OpenAI-compatible third-party endpoints that
+#                need LITELLM_API_BASE / OPENAI_API_BASE override.
+#   notes        One-line description shown in the picker.
+#   aliases      Alternative prefixes accepted in `<alias>/<model>` model ids
+#                (e.g. zhipu accepts "glm/" as a shortcut).
+#
+# Adding a new provider: just append a new YAML block. The CLI picker and
+# routing layer pick it up on next process start (or `/skills refresh`-
+# equivalent if we add one). Custom user providers can be added in
+# ~/.weather-agents/providers.yaml — that file is merged on top.
+
+# ─── US / Western providers ────────────────────────────────────────────
+
+openai:
+  env_var: OPENAI_API_KEY
+  region: US
+  docs_url: https://platform.openai.com/api-keys
+  notes: GPT-4.1 / o3 / o4-mini family
+
+anthropic:
+  env_var: ANTHROPIC_API_KEY
+  region: US
+  docs_url: https://console.anthropic.com/settings/keys
+  notes: Claude Sonnet / Opus / Haiku family
+
+google_gemini:
+  env_var: GEMINI_API_KEY
+  region: US
+  docs_url: https://aistudio.google.com/app/apikey
+  notes: Gemini 2.5 family via AI Studio
+  aliases: [gemini]
+
+google_vertex:
+  env_var: VERTEX_AI_API_KEY
+  region: US
+  docs_url: https://cloud.google.com/vertex-ai/docs/start/client-libraries
+  notes: Gemini / Claude / Llama via Google Cloud Vertex AI
+  aliases: [vertex_ai]
+
+aws_bedrock:
+  env_var: AWS_BEDROCK_API_KEY
+  region: US
+  docs_url: https://docs.aws.amazon.com/bedrock/
+  notes: Claude / Llama / Mistral via AWS (requires aws_access_key_id + secret too)
+  aliases: [bedrock]
+
+azure_openai:
+  env_var: AZURE_API_KEY
+  region: US
+  docs_url: https://learn.microsoft.com/azure/ai-services/openai/
+  notes: OpenAI models via Microsoft Azure
+  aliases: [azure]
+
+cohere:
+  env_var: COHERE_API_KEY
+  region: US
+  docs_url: https://dashboard.cohere.com/api-keys
+  notes: Command R / R+ embeddings + chat
+
+mistral:
+  env_var: MISTRAL_API_KEY
+  region: EU
+  docs_url: https://console.mistral.ai/api-keys/
+  notes: Mistral Large / Codestral / Pixtral
+
+groq:
+  env_var: GROQ_API_KEY
+  region: US
+  docs_url: https://console.groq.com/keys
+  notes: Llama / Mixtral / Gemma on Groq LPUs (fast inference)
+
+xai:
+  env_var: XAI_API_KEY
+  region: US
+  docs_url: https://console.x.ai/
+  notes: Grok models (xAI)
+
+perplexity:
+  env_var: PERPLEXITY_API_KEY
+  region: US
+  docs_url: https://www.perplexity.ai/settings/api
+  notes: Sonar (search-augmented) + Llama via Perplexity
+
+together_ai:
+  env_var: TOGETHER_API_KEY
+  region: US
+  docs_url: https://api.together.xyz/settings/api-keys
+  notes: 200+ open models on Together
+  aliases: [together]
+
+fireworks_ai:
+  env_var: FIREWORKS_AI_API_KEY
+  region: US
+  docs_url: https://fireworks.ai/account/api-keys
+  notes: Llama / Mixtral / Qwen fast endpoints
+  aliases: [fireworks]
+
+openrouter:
+  env_var: OPENROUTER_API_KEY
+  region: Aggregator
+  docs_url: https://openrouter.ai/keys
+  notes: Unified gateway for OpenAI / Anthropic / Google / 200+ others
+
+replicate:
+  env_var: REPLICATE_API_KEY
+  region: US
+  docs_url: https://replicate.com/account/api-tokens
+  notes: Llama / Flux / SDXL via Replicate
+
+nvidia_nim:
+  env_var: NVIDIA_NIM_API_KEY
+  region: US
+  docs_url: https://build.nvidia.com/explore/discover
+  notes: Llama / Mixtral on NVIDIA NIM
+  aliases: [nvidia]
+
+# ─── China providers ────────────────────────────────────────────────────
+
+deepseek:
+  env_var: DEEPSEEK_API_KEY
+  region: CN
+  docs_url: https://platform.deepseek.com/api_keys
+  notes: DeepSeek V4 flash / pro
+
+zhipu:
+  env_var: ZHIPUAI_API_KEY
+  region: CN
+  docs_url: https://open.bigmodel.cn/usercenter/apikeys
+  notes: 智谱 GLM-4 系列
+  aliases: [glm, zhipuai]
+
+alibaba_dashscope:
+  env_var: DASHSCOPE_API_KEY
+  region: CN
+  docs_url: https://dashscope.console.aliyun.com/apiKey
+  notes: 阿里通义千问 Qwen-Max / Plus / Turbo
+  aliases: [qwen, dashscope]
+
+moonshot:
+  env_var: MOONSHOT_API_KEY
+  region: CN
+  docs_url: https://platform.moonshot.cn/console/api-keys
+  notes: Kimi (月之暗面) 128K / 1M 长上下文
+  aliases: [kimi]
+
+doubao:
+  env_var: ARK_API_KEY
+  region: CN
+  docs_url: https://console.volcengine.com/ark
+  notes: 字节跳动豆包 (火山方舟 Ark)
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+  aliases: [ark, volcengine]
+
+baidu_ernie:
+  env_var: QIANFAN_API_KEY
+  region: CN
+  docs_url: https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application
+  notes: 百度千帆 文心一言 ERNIE 系列
+  aliases: [ernie, qianfan, wenxin]
+
+tencent_hunyuan:
+  env_var: HUNYUAN_API_KEY
+  region: CN
+  docs_url: https://console.cloud.tencent.com/hunyuan
+  notes: 腾讯混元
+  aliases: [hunyuan, tencent]
+
+minimax:
+  env_var: MINIMAX_API_KEY
+  region: CN
+  docs_url: https://platform.minimaxi.com/document/Account
+  notes: MiniMax abab / hailuo
+
+baichuan:
+  env_var: BAICHUAN_API_KEY
+  region: CN
+  docs_url: https://platform.baichuan-ai.com/console/apikey
+  notes: 百川智能 Baichuan-4
+
+stepfun:
+  env_var: STEPFUN_API_KEY
+  region: CN
+  docs_url: https://platform.stepfun.com/interface-key
+  notes: 阶跃星辰 Step-1 / Step-2
+  aliases: [step]
+
+sensechat:
+  env_var: SENSECHAT_API_KEY
+  region: CN
+  docs_url: https://console.sensecore.cn/
+  notes: 商汤 SenseChat / 日日新
+
+yi_01ai:
+  env_var: YI_API_KEY
+  region: CN
+  docs_url: https://platform.lingyiwanwu.com/apikeys
+  notes: 零一万物 01.AI Yi-Large / Lightning
+  aliases: [yi, lingyi]
+
+spark_xfyun:
+  env_var: SPARK_API_KEY
+  region: CN
+  docs_url: https://console.xfyun.cn/services/cbm
+  notes: 讯飞星火 Spark-Max / Pro
+  aliases: [spark, xfyun, iflytek]
+
+siliconflow:
+  env_var: SILICONFLOW_API_KEY
+  region: CN
+  docs_url: https://cloud.siliconflow.cn/account/ak
+  notes: 硅基流动 (聚合多家开源模型)
+  base_url: https://api.siliconflow.cn/v1
+  aliases: [silicon]
+
+# ─── Local / open-source servers ────────────────────────────────────────
+
+ollama:
+  env_var: OLLAMA_API_KEY
+  region: Local
+  docs_url: https://ollama.com/
+  notes: Local Ollama server (usually no key, override OLLAMA_API_BASE)
+  base_url: http://localhost:11434
+
+lm_studio:
+  env_var: LM_STUDIO_API_KEY
+  region: Local
+  docs_url: https://lmstudio.ai/docs/local-server
+  notes: LM Studio local server (OpenAI-compatible)
+  base_url: http://localhost:1234/v1
+  aliases: [lmstudio]
+
+vllm:
+  env_var: VLLM_API_KEY
+  region: Local
+  docs_url: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
+  notes: vLLM self-hosted server (OpenAI-compatible)
+  base_url: http://localhost:8000/v1
+
+llamacpp:
+  env_var: LLAMACPP_API_KEY
+  region: Local
+  docs_url: https://github.com/ggerganov/llama.cpp/tree/master/examples/server
+  notes: llama.cpp HTTP server (OpenAI-compatible)
+  base_url: http://localhost:8080/v1

@@ -88,6 +88,116 @@ def format_models_for_display(catalog: dict[str, list[dict]]) -> str:
 
 _CTX_CACHE: dict[str, int] = {}
 
+# ─── Provider catalog ─────────────────────────────────────────────────
+#
+# providers.yaml lives next to models.yaml. The catalog is keyed by the
+# canonical provider id (matches the LiteLLM `<provider>/<model>` prefix
+# we route on); each entry carries the env var name, region tag, docs
+# URL, and optional base_url / aliases. Cached on first read since the
+# file rarely changes within a process lifetime.
+
+
+_PROVIDER_CACHE: dict[str, dict] | None = None
+
+
+def load_provider_catalog() -> dict[str, dict]:
+    """Load providers.yaml. Returns {provider_id: {env_var, region, ...}}.
+
+    User overrides at ``~/.weather-agents/providers.yaml`` are deep-
+    merged on top of the bundled file so users can add their own
+    provider without touching the install. Falls back to a minimal
+    hard-coded set if the bundled file is missing (e.g. running
+    against an uninstalled source tree without the config dir present).
+    """
+    global _PROVIDER_CACHE
+    if _PROVIDER_CACHE is not None:
+        return _PROVIDER_CACHE
+
+    catalog: dict[str, dict] = {}
+
+    # Bundled file.
+    bundled = CONFIG_DIR / "providers.yaml"
+    if bundled.exists():
+        data = _load_yaml(bundled)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    catalog[k] = dict(v)
+
+    # User override — adds new providers or overrides specific fields.
+    user_path = USER_CONFIG_DIR / "providers.yaml"
+    if user_path.exists():
+        user_data = _load_yaml(user_path)
+        if isinstance(user_data, dict):
+            for k, v in user_data.items():
+                if isinstance(v, dict):
+                    catalog[k] = {**catalog.get(k, {}), **v}
+
+    # Last-resort fallback so we never return an empty catalog and
+    # silently break LiteLLM provider routing.
+    if not catalog:
+        catalog = {
+            "openai": {"env_var": "OPENAI_API_KEY", "region": "US"},
+            "anthropic": {"env_var": "ANTHROPIC_API_KEY", "region": "US"},
+            "deepseek": {"env_var": "DEEPSEEK_API_KEY", "region": "CN"},
+            "google_gemini": {"env_var": "GEMINI_API_KEY", "region": "US"},
+            "ollama": {"env_var": "OLLAMA_API_KEY", "region": "Local"},
+        }
+
+    _PROVIDER_CACHE = catalog
+    return catalog
+
+
+def get_provider_env_var(provider: str) -> str:
+    """Return the env-var name to read this provider's API key from.
+
+    Looks up by canonical id first, then by alias (so ``glm`` maps to
+    ``zhipu`` etc.). Falls back to ``<PROVIDER>_API_KEY`` for unknown
+    providers so user-added entries without a catalog still get a
+    sensible default.
+    """
+    cat = load_provider_catalog()
+    entry = cat.get(provider.lower())
+    if entry is None:
+        # Try aliases. ``k`` (the canonical id) isn't needed inside the
+        # loop body — we only need the matching ``v`` once. Iterate
+        # over ``.values()`` to keep ruff (B007) happy.
+        for v in cat.values():
+            aliases = v.get("aliases") or []
+            if isinstance(aliases, list) and provider.lower() in [a.lower() for a in aliases]:
+                entry = v
+                break
+    if entry and "env_var" in entry:
+        return str(entry["env_var"])
+    return f"{provider.upper().replace('-', '_')}_API_KEY"
+
+
+def resolve_provider_alias(name: str) -> str:
+    """Resolve a provider name or alias to the canonical catalog key.
+
+    Returns the original lowercased ``name`` if no alias matches. Used
+    by the LLM router so `glm/glm-4` is routed via the same machinery
+    as `zhipu/glm-4` without duplicating provider entries.
+    """
+    if not name:
+        return name
+    cat = load_provider_catalog()
+    lower = name.lower()
+    if lower in cat:
+        return lower
+    for k, v in cat.items():
+        aliases = v.get("aliases") or []
+        if isinstance(aliases, list) and lower in [a.lower() for a in aliases]:
+            return k
+    return lower
+
+
+def invalidate_provider_cache() -> None:
+    """Drop the provider catalog cache. Tests and ``/skills refresh``
+    use this when they want a fresh read of providers.yaml."""
+    global _PROVIDER_CACHE
+    _PROVIDER_CACHE = None
+
 
 def get_model_context_window(model_name: str) -> int:
     """Look up context window for a model. Returns 128K if unknown."""
@@ -489,22 +599,32 @@ def _load_config_uncached() -> AppConfig:
     return cfg
 
 
+# Legacy minimal map. Kept for callers that imported it before the
+# YAML-driven catalog landed; new code should use ``get_provider_env_var``
+# which reads from providers.yaml and falls back gracefully for unknown
+# names. Updated to include ``google`` → ``GEMINI_API_KEY`` so old
+# config files using "google" as the provider key still resolve.
 _ENV_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
-    "google": "GOOGLE_API_KEY",
+    "google": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
     "mistral": "MISTRAL_API_KEY",
 }
 
 
 def _sync_api_keys_to_env(api_keys: dict[str, str]) -> None:
-    """Push config API keys into environment so LiteLLM can find them."""
+    """Push config API keys into environment so LiteLLM can find them.
+
+    Uses ``get_provider_env_var`` (catalog-driven) as the source of
+    truth, with the legacy _ENV_KEY_MAP as a fallback for tests that
+    monkey-patched the map directly.
+    """
     for provider, key in api_keys.items():
         if not key:
             continue
-        env_var = _ENV_KEY_MAP.get(provider)
+        env_var = _ENV_KEY_MAP.get(provider) or get_provider_env_var(provider)
         if env_var:
             os.environ[env_var] = key
         else:

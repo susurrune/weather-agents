@@ -3399,62 +3399,203 @@ def _handle_model_command(cmd: str, ctx) -> None:
         console.print(f"  [red]{msg}[/red]")
 
 
+def _print_provider_status(ctx) -> None:
+    """Render every catalog provider grouped by region with key status.
+
+    The catalog is the single source of truth — every provider wa knows
+    how to route to (35+ entries as of round 11). This view answers
+    "which providers can I use right now?" at a glance: ● means a key
+    is configured (in config OR an env var), ○ means missing.
+    """
+    from weather_agents.core.config import load_provider_catalog
+
+    catalog = load_provider_catalog()
+    if not catalog:
+        console.print("  [dim]no provider catalog loaded[/dim]")
+        return
+
+    # Group by region. Display order — US first, then CN, then aggregator,
+    # then EU, then Local — chosen by historical user demand.
+    region_order = ["US", "CN", "Aggregator", "EU", "Local"]
+    groups: dict[str, list[tuple[str, dict]]] = {r: [] for r in region_order}
+    for prov_id, entry in catalog.items():
+        region = entry.get("region", "Other")
+        groups.setdefault(region, []).append((prov_id, entry))
+
+    configured = set(ctx.config.llm.api_keys.keys())
+
+    console.print()
+    for region in region_order + [r for r in groups if r not in region_order]:
+        provs = groups.get(region) or []
+        if not provs:
+            continue
+        console.print(f"  [bold dim]{region}[/bold dim]")
+        for prov_id, entry in sorted(provs):
+            env_var = entry.get("env_var", "")
+            has_config_key = prov_id in configured
+            has_env = bool(env_var and os.environ.get(env_var))
+            ready = has_config_key or has_env
+            dot = "[green]●[/green]" if ready else "[dim]○[/dim]"
+            note = (entry.get("notes") or "")[:60]
+            source = (
+                ""
+                if not ready
+                else (" [dim](config)[/dim]" if has_config_key else " [dim](env)[/dim]")
+            )
+            console.print(f"  {dot}  [cyan]{prov_id:<22}[/cyan]  [dim]{note}[/dim]{source}")
+        console.print()
+    console.print(
+        "  [dim]/apikey set                  pick a provider and enter the key\n"
+        "  /apikey del                  pick a provider to remove\n"
+        "  /apikey set <provider> <key> direct set (still works)[/dim]"
+    )
+
+
+def _provider_picker_items(catalog: dict[str, dict], configured: set[str]) -> list[tuple[str, str]]:
+    """Build (key, label) tuples for the arrow picker. Region prefix
+    sorts US/CN/EU/Local/Aggregator together; the label embeds the
+    region tag, env var name, and a configured/missing marker so the
+    user can decide in one glance."""
+    items: list[tuple[str, str]] = []
+    region_rank = {"US": 0, "CN": 1, "Aggregator": 2, "EU": 3, "Local": 4}
+    for prov_id, entry in sorted(
+        catalog.items(),
+        key=lambda kv: (region_rank.get(kv[1].get("region", ""), 99), kv[0]),
+    ):
+        region = entry.get("region", "?")
+        env_var = entry.get("env_var", "")
+        note = (entry.get("notes") or "")[:40]
+        mark = "●" if prov_id in configured or os.environ.get(env_var) else "○"
+        label = f"[{region:<10}] {mark} {prov_id:<22} {note}"
+        items.append((prov_id, label))
+    return items
+
+
+def _read_api_key_input(provider: str) -> str | None:
+    """Securely prompt for an API key. Uses getpass when stdin is a TTY
+    so the key isn't echoed. Cancels (returns None) on Ctrl-C / empty."""
+    import getpass
+
+    try:
+        if sys.stdin.isatty():
+            raw = getpass.getpass(f"  {provider} key (hidden): ").strip()
+        else:
+            raw = console.input(f"  {provider} key: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return None
+    return raw or None
+
+
 def _handle_apikey_command(cmd: str, ctx) -> None:
     parts = cmd.strip().split(maxsplit=2)
 
     if len(parts) == 1:
-        keys = ctx.config.llm.api_keys
-        if not keys:
-            console.print("  [dim]no API keys configured[/dim]")
-        else:
-            console.print()
-            for provider, key in keys.items():
-                masked = key[:8] + "****" + key[-4:] if len(key) > 16 else key[:4] + "****"
-                console.print(
-                    f"  [green]●[/green]  [cyan]{provider:<12}[/cyan]  [dim]{masked}[/dim]"
-                )
-        console.print(
-            "\n  [dim]/apikey set <provider> <key>    add or replace\n"
-            "  /apikey del <provider>             remove[/dim]"
-        )
+        _print_provider_status(ctx)
         return
 
     action = parts[1].lower()
 
-    if action in ("set", "add") and len(parts) == 3:
-        tokens = parts[2].strip().split(maxsplit=1)
-        if len(tokens) != 2:
+    # ── /apikey set ──────────────────────────────────────────────────
+    if action in ("set", "add"):
+        from weather_agents.core.config import load_provider_catalog
+
+        # Direct form: `/apikey set <provider> <key>` — unchanged.
+        if len(parts) == 3:
+            tokens = parts[2].strip().split(maxsplit=1)
+            if len(tokens) == 2:
+                provider, key = tokens
+                _apikey_save(ctx, provider.lower(), key)
+                return
+            # Fall through to picker when only the provider was given.
+            provider = parts[2].strip().lower()
+            if provider and sys.stdin.isatty():
+                entered = _read_api_key_input(provider)
+                if entered:
+                    _apikey_save(ctx, provider, entered)
+                return
             console.print("  [red]usage: /apikey set <provider> <key>[/red]")
             return
-        provider, key = tokens
-        provider = provider.lower()
-        ok, msg = set_config(f"api_key.{provider}", key)
-        if ok:
-            ctx.config.llm.api_keys[provider] = key
-            _sync_api_keys_to_env({provider: key})
-            console.print(f"  [green]+ {provider} key saved[/green]")
-        else:
-            console.print(f"  [red]{msg}[/red]")
+
+        # No args → interactive: pick provider, then prompt for key.
+        if not sys.stdin.isatty():
+            console.print("  [red]usage: /apikey set <provider> <key>[/red]")
+            return
+        catalog = load_provider_catalog()
+        configured = set(ctx.config.llm.api_keys.keys())
+        items = _provider_picker_items(catalog, configured)
+        picked = _arrow_pick_from_list(
+            items,
+            title=f"  Set API key  ({len(items)} providers)",
+            active_keys=configured,
+            viewport=18,
+        )
+        if not picked:
+            return
+        entered = _read_api_key_input(picked)
+        if entered:
+            _apikey_save(ctx, picked, entered)
         return
 
+    # ── /apikey del ──────────────────────────────────────────────────
     if action in ("del", "delete", "rm", "remove"):
-        if len(parts) < 3:
+        from weather_agents.core.config import load_provider_catalog
+
+        if len(parts) >= 3:
+            provider = parts[2].strip().lower()
+            _apikey_remove(ctx, provider)
+            return
+
+        # No args → pick from CONFIGURED providers only.
+        configured_list: list[str] = list(ctx.config.llm.api_keys.keys())
+        if not configured_list:
+            console.print("  [dim]no API keys configured[/dim]")
+            return
+        if not sys.stdin.isatty():
             console.print("  [red]usage: /apikey del <provider>[/red]")
             return
-        provider = parts[2].strip().lower()
-        ok, msg = delete_config(f"api_key.{provider}")
-        if ok:
-            ctx.config.llm.api_keys.pop(provider, None)
-            from weather_agents.core.config import _ENV_KEY_MAP
-
-            env_var = _ENV_KEY_MAP.get(provider, f"{provider.upper()}_API_KEY")
-            os.environ.pop(env_var, None)
-            console.print(f"  [green]- {provider} key removed[/green]")
-        else:
-            console.print(f"  [red]{msg}[/red]")
+        catalog = load_provider_catalog()
+        items = [
+            (
+                p,
+                f"{p:<22} {(catalog.get(p, {}).get('notes') or '')[:50]}",
+            )
+            for p in sorted(configured_list)
+        ]
+        picked = _arrow_pick_from_list(
+            items,
+            title=f"  Remove API key  ({len(items)} configured)",
+        )
+        if picked:
+            _apikey_remove(ctx, picked)
         return
 
-    console.print("  [red]usage: /apikey [set <provider> <key> | del <provider>][/red]")
+    console.print("  [red]usage: /apikey [set [<provider> [<key>]] | del [<provider>]][/red]")
+
+
+def _apikey_save(ctx, provider: str, key: str) -> None:
+    """Persist an API key + sync to env vars + give visible feedback."""
+    ok, msg = set_config(f"api_key.{provider}", key)
+    if not ok:
+        console.print(f"  [red]{msg}[/red]")
+        return
+    ctx.config.llm.api_keys[provider] = key
+    _sync_api_keys_to_env({provider: key})
+    console.print(f"  [green]+ {provider} key saved[/green]")
+
+
+def _apikey_remove(ctx, provider: str) -> None:
+    """Delete an API key from config + clear the env var."""
+    from weather_agents.core.config import get_provider_env_var
+
+    ok, msg = delete_config(f"api_key.{provider}")
+    if not ok:
+        console.print(f"  [red]{msg}[/red]")
+        return
+    ctx.config.llm.api_keys.pop(provider, None)
+    env_var = get_provider_env_var(provider)
+    os.environ.pop(env_var, None)
+    console.print(f"  [green]- {provider} key removed[/green]")
 
 
 # -- Task orchestration ----------------------------------------------------

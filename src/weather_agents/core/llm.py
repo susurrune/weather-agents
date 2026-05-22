@@ -52,20 +52,43 @@ def _get_litellm():
 # unknown deepseek/anthropic IDs (e.g. preview models) fall through to the
 # default OpenAI client and surface "OPENAI_API_KEY missing" instead of
 # routing to the right provider.
-_KNOWN_PROVIDERS = {
-    "openai",
-    "azure",
-    "anthropic",
-    "deepseek",
-    "ollama",
-    "groq",
-    "mistral",
-    "cohere",
-    "together_ai",
-    "openrouter",
-    "gemini",
-    "vertex_ai",
-}
+def _build_known_providers() -> set[str]:
+    """Set of provider id prefixes wa is allowed to route through to
+    LiteLLM via ``<provider>/<model>``. Derived from the YAML catalog
+    plus a minimal fallback so static type checks and bare-source
+    invocations still work without the bundled config dir.
+    """
+    try:
+        from weather_agents.core.config import load_provider_catalog
+
+        cat = load_provider_catalog()
+        known: set[str] = set()
+        for provider, entry in cat.items():
+            known.add(provider.lower())
+            for alias in entry.get("aliases", []) or []:
+                if isinstance(alias, str):
+                    known.add(alias.lower())
+        if known:
+            return known
+    except Exception:
+        pass
+    return {
+        "openai",
+        "azure",
+        "anthropic",
+        "deepseek",
+        "ollama",
+        "groq",
+        "mistral",
+        "cohere",
+        "together_ai",
+        "openrouter",
+        "gemini",
+        "vertex_ai",
+    }
+
+
+_KNOWN_PROVIDERS: set[str] = _build_known_providers()
 
 
 def _split_provider(model: str) -> tuple[str | None, str]:
@@ -160,16 +183,50 @@ def _apply_anthropic_cache_control(
     return new_messages, new_tools
 
 
-_PROVIDER_ENV = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "mistral": "MISTRAL_API_KEY",
-    "cohere": "COHERE_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-}
+# Provider env-var lookup. Computed lazily from
+# ``core/config.providers.yaml`` so adding a new provider (e.g. Kimi,
+# 智谱, xAI) is one YAML entry instead of hunting through llm.py for
+# every hard-coded set. The previous hard-coded version only covered 8
+# providers — see config/providers.yaml for the full catalog.
+
+
+def _build_provider_env_map() -> dict[str, str]:
+    """Read provider → env_var map from the YAML catalog. Falls back
+    to a minimal hard-coded set if the catalog can't be loaded
+    (e.g. during static analysis where importlib resources aren't
+    available)."""
+    try:
+        from weather_agents.core.config import load_provider_catalog
+
+        cat = load_provider_catalog()
+        out: dict[str, str] = {}
+        for provider, entry in cat.items():
+            env = entry.get("env_var")
+            if isinstance(env, str) and env:
+                out[provider.lower()] = env
+            # Aliases share the same env var so `glm/glm-4` resolves
+            # the same way as `zhipu/glm-4`.
+            for alias in entry.get("aliases", []) or []:
+                if isinstance(alias, str) and isinstance(env, str) and env:
+                    out[alias.lower()] = env
+        if out:
+            return out
+    except Exception:
+        pass
+    # Last-resort fallback covering the providers wa shipped with.
+    return {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }
+
+
+_PROVIDER_ENV: dict[str, str] = _build_provider_env_map()
 
 
 def _format_user_facing_error(model: str, err: BaseException | None) -> str:
