@@ -358,6 +358,31 @@ class TestLazySkillLoad:
         assert "read_file" in joined
 
 
+class TestFromMarkdownAcceptsStr:
+    """Regression for the QA sweep bug: ``Skill.from_markdown`` is typed
+    ``Path`` but callers in the wild (migrate helpers, glob walkers,
+    user scripts) routinely pass ``str``. The loader now coerces at
+    entry — every other file-loading API in Python's stdlib (open,
+    Path itself, json.load via path) takes both."""
+
+    def test_str_path_accepted(self, tmp_path):
+        from weather_agents.core.skill import Skill
+
+        md = tmp_path / "x.md"
+        md.write_text(
+            "---\nname: x\ndescription: x\n---\n\nBody.",
+            encoding="utf-8",
+        )
+        # Pass as plain string — must not raise AttributeError.
+        s = Skill.from_markdown(str(md))
+        assert s is not None
+        assert s.name == "x"
+        # source_path is recorded as a string regardless of input type
+        # so downstream consumers (read_file hint, /skill info) get a
+        # consistent shape.
+        assert isinstance(s.source_path, str)
+
+
 class TestListSkillsSuppression:
     """When a trigger auto-activates a skill, the LLM has zero reason
     to call list_skills — that's a redundant ~1k tokens + round-trip.

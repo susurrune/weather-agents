@@ -87,7 +87,7 @@ class Skill:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_markdown(cls, path: Path) -> Skill | None:
+    def from_markdown(cls, path: Path | str) -> Skill | None:
         """Load a skill from a Markdown file with YAML frontmatter.
 
         Expected format (matching Anthropic/Claude Code skill spec):
@@ -107,6 +107,13 @@ class Skill:
         ...system prompt body...
         ```
         """
+        # Accept either a Path or a string for ergonomics — every other
+        # file-loading API in Python's stdlib (open, json.load via path,
+        # importlib.resources) takes both, and forcing callers to wrap
+        # in Path() added noise without value. The migrate helper and
+        # smoke tests caught this when passing string paths returned by
+        # ``glob.glob`` directly.
+        path = Path(path) if not isinstance(path, Path) else path
         text = path.read_text(encoding="utf-8")
         fm, body = _parse_frontmatter(text)
         if not fm:
