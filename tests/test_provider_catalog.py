@@ -184,3 +184,80 @@ class TestLLMProviderEnvMapDerived:
             "siliconflow",
         ):
             assert cn in _KNOWN_PROVIDERS, f"_KNOWN_PROVIDERS missing {cn}"
+
+
+class TestModelCatalogCoverage:
+    """models.yaml must list at least one current model per provider
+    (and ideally ~4 flagship models). Round 12 expanded coverage from
+    5 to 34 providers; this test pins that breadth so a future "clean
+    up the yaml" PR can't silently remove a Chinese provider."""
+
+    def test_every_listed_provider_has_at_least_one_model(self):
+        from weather_agents.core.config import load_model_catalog
+
+        cat = load_model_catalog()
+        for provider, models in cat.items():
+            assert models, f"models.yaml has no models for {provider}"
+
+    def test_critical_providers_present(self):
+        """Spot-check that the providers users most often switch to
+        all have entries. Catches catalog regressions where someone
+        deletes an entire YAML block by accident."""
+        from weather_agents.core.config import load_model_catalog
+
+        cat = load_model_catalog()
+        for must in (
+            "openai",
+            "anthropic",
+            "deepseek",
+            "google_gemini",
+            "zhipu",
+            "alibaba_dashscope",
+            "moonshot",
+            "doubao",
+            "baidu_ernie",
+            "tencent_hunyuan",
+            "xai",
+            "ollama",
+        ):
+            assert must in cat, f"models.yaml dropped {must}"
+
+    def test_every_model_provider_resolves_to_a_catalog_entry(self):
+        """A model id pointing at a provider that isn't in
+        providers.yaml (and isn't an alias of one) means the router
+        can't route to it — silent misconfiguration. Lock the cross-
+        reference, but accept aliases as a valid resolution since some
+        ``provider:`` fields use the LiteLLM-style short prefix
+        (``gemini`` for ``google_gemini``, ``vertex_ai`` for
+        ``google_vertex``, ``bedrock`` for ``aws_bedrock``, etc.)."""
+        from weather_agents.core.config import (
+            load_model_catalog,
+            load_provider_catalog,
+            resolve_provider_alias,
+        )
+
+        provider_ids = set(load_provider_catalog().keys())
+        models = load_model_catalog()
+        missing: list[tuple[str, str]] = []
+        for top_key, entries in models.items():
+            for m in entries:
+                p = m.get("provider")
+                if not (isinstance(p, str) and p):
+                    continue
+                # Either the canonical id matches, or the alias resolves
+                # to one. Anything else is a real misconfiguration.
+                if p not in provider_ids and resolve_provider_alias(p) not in provider_ids:
+                    missing.append((top_key, p))
+        assert not missing, f"models referencing unknown providers: {missing}"
+
+    def test_each_model_has_required_metadata(self):
+        from weather_agents.core.config import load_model_catalog
+
+        cat = load_model_catalog()
+        for provider, models in cat.items():
+            for m in models:
+                assert m.get("name"), f"{provider}: model missing name"
+                ctx = m.get("context_window")
+                assert isinstance(ctx, (int, float)) and ctx > 0, (
+                    f"{provider}/{m['name']}: missing/invalid context_window"
+                )
