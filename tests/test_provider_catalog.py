@@ -261,3 +261,56 @@ class TestModelCatalogCoverage:
                 assert isinstance(ctx, (int, float)) and ctx > 0, (
                     f"{provider}/{m['name']}: missing/invalid context_window"
                 )
+
+
+class TestProviderForModel:
+    """Round 13 init-wizard refactor: ``_provider_for_model`` was
+    rewritten to consult the catalog instead of the old hand-rolled
+    if/elif chain that only knew openai/anthropic/deepseek/local.
+    Verify the new resolution handles canonical lookups, alias
+    prefixes, and fallback heuristics for ids not yet in the catalog.
+    """
+
+    def test_resolves_via_catalog_exact_match(self):
+        from weather_agents.cli.main import _provider_for_model
+
+        # These are all real entries in models.yaml — must resolve to
+        # the canonical catalog id, not the LiteLLM-style alias.
+        assert _provider_for_model("gpt-5") == "openai"
+        assert _provider_for_model("claude-opus-4-7") == "anthropic"
+        assert _provider_for_model("deepseek/deepseek-v4-pro") == "deepseek"
+        assert _provider_for_model("gemini/gemini-2.5-pro") == "google_gemini"
+        assert _provider_for_model("zhipu/glm-4.6") == "zhipu"
+        assert _provider_for_model("moonshot/kimi-k2") == "moonshot"
+
+    def test_resolves_via_provider_prefix_alias(self):
+        """For a model id not in the catalog, the ``<prefix>/<rest>``
+        form should resolve via the provider catalog's alias table —
+        ``glm/glm-4-experimental`` should still hit ``zhipu``."""
+        from weather_agents.cli.main import _provider_for_model
+
+        assert _provider_for_model("glm/glm-4-experimental") == "zhipu"
+        assert _provider_for_model("kimi/some-future-model") == "moonshot"
+        assert _provider_for_model("qwen/qwen3-future") == "alibaba_dashscope"
+
+    def test_falls_back_on_keyword_heuristics(self):
+        """When a model id matches neither the catalog nor any
+        provider prefix (typo / brand-new model), the old heuristics
+        kick in so common providers still route somewhere reasonable.
+        """
+        from weather_agents.cli.main import _provider_for_model
+
+        assert _provider_for_model("claude-future-model") == "anthropic"
+        assert _provider_for_model("gpt-99") == "openai"
+        # An id with "deepseek" in it routes to deepseek even if not
+        # in the catalog yet.
+        assert _provider_for_model("deepseek-experimental") == "deepseek"
+        assert _provider_for_model("gemini-x") == "google_gemini"
+
+    def test_unknown_id_defaults_to_openai(self):
+        """Last-resort fallback for unrecognised ids — better to point
+        the user at a working provider than return empty string."""
+        from weather_agents.cli.main import _provider_for_model
+
+        assert _provider_for_model("unknown-model-123") == "openai"
+        assert _provider_for_model("") == "openai"

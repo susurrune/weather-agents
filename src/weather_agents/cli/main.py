@@ -4513,23 +4513,77 @@ def _is_configured() -> bool:
     cfg = load_config()
     if any(v for v in cfg.llm.api_keys.values()):
         return True
-    for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"):
+    # Quick path — only check a few common env vars rather than walking
+    # the full provider catalog (which would need to be loaded). Anyone
+    # using a more exotic provider already has it set up.
+    for env_var in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GEMINI_API_KEY",
+        "ZHIPUAI_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "MOONSHOT_API_KEY",
+    ):
         if os.environ.get(env_var):
             return True
     return False
 
 
 def _provider_for_model(model: str) -> str:
-    """Infer the provider responsible for a model id."""
-    m = model.lower()
-    if m.startswith("ollama/"):
-        return "local"
-    if "deepseek" in m:
-        return "deepseek"
-    if m.startswith(("claude", "anthropic/")):
-        return "anthropic"
-    if m.startswith(("gpt", "openai/", "o1", "o3", "o4")):
+    """Resolve a model id back to its catalog provider key.
+
+    Walks ``models.yaml`` for an exact match first (so ``gpt-5`` resolves
+    to ``openai`` via the ``provider:`` field), then falls back to a
+    LiteLLM-style prefix check (``<provider>/<rest>``). Last-resort
+    keyword heuristics catch ids that aren't in the catalog yet. Using
+    the catalog instead of the old hard-coded if/elif chain means
+    adding a new provider in providers.yaml just works — no Python
+    edits needed in the wizard.
+    """
+    if not model:
         return "openai"
+    m = model.strip()
+    m_lower = m.lower()
+
+    # 1. Exact lookup in the model catalog.
+    try:
+        catalog = load_model_catalog()
+        for _provider_group, models in catalog.items():
+            for entry in models:
+                if entry.get("name") == m:
+                    p = entry.get("provider")
+                    if isinstance(p, str) and p:
+                        from weather_agents.core.config import resolve_provider_alias
+
+                        return resolve_provider_alias(p)
+    except Exception:
+        pass
+
+    # 2. <provider>/<rest> prefix — try the canonical id, then aliases.
+    if "/" in m_lower:
+        prefix = m_lower.split("/", 1)[0]
+        from weather_agents.core.config import (
+            load_provider_catalog,
+            resolve_provider_alias,
+        )
+
+        provider_ids = set(load_provider_catalog().keys())
+        if prefix in provider_ids:
+            return prefix
+        resolved = resolve_provider_alias(prefix)
+        if resolved in provider_ids:
+            return resolved
+
+    # 3. Fallback keyword heuristics for unrecognised ids.
+    if m_lower.startswith(("claude", "anthropic")):
+        return "anthropic"
+    if m_lower.startswith(("gpt", "openai", "o1", "o3", "o4")):
+        return "openai"
+    if "deepseek" in m_lower:
+        return "deepseek"
+    if "gemini" in m_lower:
+        return "google_gemini"
     return "openai"
 
 
@@ -4542,64 +4596,140 @@ def _flatten_catalog(catalog: dict) -> list[tuple[str, str]]:
     return out
 
 
-def _print_catalog(flat: list[tuple[str, str]]) -> None:
-    """Print numbered model menu grouped by provider."""
-    last_prov = None
-    for i, (prov, name) in enumerate(flat, 1):
-        if prov != last_prov:
-            console.print(f"\n    [bold dim]{prov.upper()}[/bold dim]")
-            last_prov = prov
-        console.print(f"      [dim]{i:>2}.[/dim] [cyan]{name}[/cyan]")
-
-
-def _pick_from_catalog(
-    flat: list[tuple[str, str]],
-    prompt: str,
-    default_idx: int | None = None,
-) -> tuple[str, str] | None:
-    """Loop until the user types a valid number or hits Enter for default."""
-    hint = f" [dim](Enter for {default_idx})[/dim]" if default_idx else ""
-    while True:
-        raw = console.input(f"  {prompt}{hint}: ").strip()
-        if not raw and default_idx is not None:
-            return flat[default_idx - 1]
-        if raw.isdigit() and 1 <= int(raw) <= len(flat):
-            return flat[int(raw) - 1]
-        console.print(f"    [red]pick a number 1-{len(flat)}[/red]")
-
-
 def _collect_keys(providers: set[str]) -> None:
-    """Prompt for one API key per cloud provider in the set."""
-    cloud = sorted(p for p in providers if p != "local")
+    """Prompt for one API key per cloud provider in the set.
+
+    Uses the catalog for env-var resolution + docs URL, hidden ``getpass``
+    input on TTY so pasted keys aren't echoed, and shows the user where
+    to grab the key for each provider. Skips local-only providers
+    (Ollama / vLLM / LM Studio / llama.cpp) since they don't need keys.
+    """
+    from weather_agents.core.config import get_provider_env_var, load_provider_catalog
+
+    LOCAL = {"ollama", "lm_studio", "vllm", "llamacpp", "local"}
+    cloud = sorted(p for p in providers if p not in LOCAL)
     if not cloud:
         console.print("  [dim]All chosen models run locally — no API keys needed.[/dim]")
         return
-    console.print(f"\n  [bold]API keys for:[/bold] [cyan]{', '.join(cloud)}[/cyan]")
-    console.print("  [dim](pasted keys are hidden in transit but stored in plain YAML)[/dim]\n")
+
+    catalog = load_provider_catalog()
+    console.print(f"\n  [bold]API keys needed for:[/bold] [cyan]{', '.join(cloud)}[/cyan]")
+    console.print(
+        "  [dim](key is hidden as you type; stored in plain YAML at "
+        "~/.weather-agents/config.yaml)[/dim]\n"
+    )
+
+    import getpass
+
     for provider in cloud:
+        entry = catalog.get(provider, {})
+        env_var = entry.get("env_var") or get_provider_env_var(provider)
+        docs = entry.get("docs_url") or ""
+        notes = entry.get("notes") or ""
+
         cfg = load_config()
-        current = cfg.llm.api_keys.get(provider, "")
-        suffix = " [dim](Enter to keep current)[/dim]" if current else ""
-        key = console.input(f"  {provider:<10} key{suffix}: ").strip()
+        current = cfg.llm.api_keys.get(provider) or os.environ.get(env_var) or ""
+        if current:
+            console.print(
+                f"  [green]●[/green] [cyan]{provider}[/cyan]  "
+                f"[dim]already configured ({'env' if not cfg.llm.api_keys.get(provider) else 'config'}) — "
+                f"Enter to keep[/dim]"
+            )
+        else:
+            console.print(f"  [dim]○[/dim] [cyan]{provider}[/cyan]  [dim]{notes}[/dim]")
+            if docs:
+                console.print(f"     [dim]get a key: {docs}[/dim]")
+
+        try:
+            if sys.stdin.isatty():
+                key = getpass.getpass(f"     {env_var} (hidden): ").strip()
+            else:
+                key = console.input(f"     {env_var}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n  [yellow]setup cancelled[/yellow]")
+            return
+
         if key:
             ok, msg = set_config(f"api_key.{provider}", key)
             color = "green" if ok else "red"
-            console.print(f"    [{color}]{msg}[/{color}]")
+            console.print(f"     [{color}]{msg}[/{color}]\n")
+        elif not current:
+            console.print(
+                f"     [dim]skipped — you can set it later with /apikey set {provider}[/dim]\n"
+            )
+        else:
+            console.print("     [dim](kept)[/dim]\n")
+
+
+def _wizard_pick_model(prompt_title: str, default_id: str | None = None) -> tuple[str, str] | None:
+    """Arrow-pick a model from the catalog (117 entries across 34
+    providers). Returns ``(provider_id, model_name)`` or None on cancel.
+
+    Items render as ``<provider>  <model_id>`` so the user can filter
+    by typing either side. Non-TTY callers fall back to a numeric
+    prompt the same way the legacy wizard worked.
+    """
+    catalog = load_model_catalog()
+    if not catalog:
+        console.print("\n  [red]No model catalog found. Reinstall and try again.[/red]")
+        return None
+
+    # Build picker items with a stable order — provider group, then
+    # the order yaml defined the models in (typically newest first).
+    # ``default_id`` is informational — the picker doesn't take a
+    # starting-cursor arg yet; users see the current default in the
+    # title bar and can press Esc to keep it.
+    flat = _flatten_catalog(catalog)
+    items: list[tuple[str, str]] = []
+    for prov, name in flat:
+        label = f"{prov:<22} {name}"
+        items.append((name, label))
+
+    if not sys.stdin.isatty():
+        # Numeric fallback for piped / non-interactive runs.
+        for i, (prov, name) in enumerate(flat, 1):
+            console.print(f"  {i:>3}. [cyan]{name}[/cyan]  [dim]{prov}[/dim]")
+        raw = console.input(f"\n  {prompt_title} #: ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(flat):
+            return flat[int(raw) - 1]
+        return None
+
+    title = f"  {prompt_title}"
+    if default_id:
+        title += f"  [Esc keeps: {default_id}]"
+    picked = _arrow_pick_from_list(
+        items,
+        title=title,
+        viewport=20,
+    )
+    if not picked:
+        return None
+    for prov, name in flat:
+        if name == picked:
+            return prov, name
+    # Shouldn't reach — picked came from items[][0] which is the name.
+    return None
 
 
 def _run_setup_wizard() -> None:
     """Walk the user through choosing a model strategy and storing API keys.
+
+    Modernized in round 13:
+      - Step 2 uses the arrow picker (↑↓ / type to filter / Enter) over
+        the full 117-model catalog instead of a static numbered scroll.
+      - Step 3 reads the env var name + docs URL from providers.yaml
+        and uses hidden ``getpass`` input on TTY so keys aren't echoed.
 
     Does NOT enter chat — the caller decides whether to launch _interactive().
     """
     console.print()
     console.print(
         Panel(
-            "[bold]Weather Agents Setup[/bold]\n[dim]Configure your agents in 3 steps[/dim]",
+            "[bold]Weather Agents Setup[/bold]\n[dim]3 steps · 34 providers · 117 models[/dim]",
             border_style="dim cyan",
             box=box.ROUNDED,
             padding=(1, 2),
-            width=44,
+            width=50,
         )
     )
 
@@ -4607,7 +4737,14 @@ def _run_setup_wizard() -> None:
     if not catalog:
         console.print("\n  [red]No model catalog found. Reinstall and try again.[/red]")
         return
-    flat = _flatten_catalog(catalog)
+
+    # Sensible default — DeepSeek flash is fast + cheap and a good
+    # starting point for users who don't know what to pick. Any model
+    # already configured wins, so re-running init keeps the current
+    # default at the top of the picker.
+    current_default = load_config().llm.default_model
+    fallback_default = "deepseek/deepseek-v4-flash"
+    default_id = current_default or fallback_default
 
     # Step 1: choose mode
     console.print()
@@ -4629,13 +4766,18 @@ def _run_setup_wizard() -> None:
     # Step 2: pick models
     providers_needed: set[str] = set()
     console.print()
-    console.print(Rule("  Step 2 — Model selection  ", align="left", style="dim"))
+    console.print(
+        Rule(
+            "  Step 2 — Model selection  (↑↓ to move · type to filter · Enter to pick · Esc to skip)  ",
+            align="left",
+            style="dim",
+        )
+    )
 
     if mode == "1":
-        _print_catalog(flat)
-        default_idx = next((i + 1 for i, (p, _) in enumerate(flat) if p == "deepseek"), 1)
-        picked = _pick_from_catalog(flat, "\n  Model #", default_idx=default_idx)
+        picked = _wizard_pick_model("Pick default model", default_id=default_id)
         if not picked:
+            console.print("  [yellow]setup cancelled[/yellow]")
             return
         provider, model_name = picked
         set_config("default_model", model_name)
@@ -4644,13 +4786,16 @@ def _run_setup_wizard() -> None:
         console.print(f"  [green]✓ default → {model_name}[/green]")
         providers_needed.add(provider)
     else:
-        _print_catalog(flat)
-        console.print()
-        default_idx = next((i + 1 for i, (p, _) in enumerate(flat) if p == "deepseek"), 1)
+        # Per-agent: pick for each. Esc on any one keeps the existing
+        # config for that agent (or default if none set yet).
+        console.print(
+            "  [dim]Esc on any agent keeps its current model (or the global default).[/dim]\n"
+        )
         for agent_name, cls in AGENT_CLASSES.items():
-            label = f"{icon_text(agent_name)} {cls.display_name} model #"
-            picked = _pick_from_catalog(flat, label, default_idx=default_idx)
+            label = f"{cls.display_name} ({agent_name})"
+            picked = _wizard_pick_model(f"Model for {label}", default_id=default_id)
             if not picked:
+                console.print(f"  [dim]  {icon_text(agent_name)} {agent_name} → keep current[/dim]")
                 continue
             prov, model_name = picked
             set_config(f"model.{agent_name}", model_name)
@@ -4666,6 +4811,9 @@ def _run_setup_wizard() -> None:
     console.print("  [green]✓ Setup complete[/green]")
     cfg_path = USER_CONFIG_DIR / "config.yaml"
     console.print(f"  [dim]config saved to {cfg_path}[/dim]")
+    console.print(
+        "  [dim]tip: /apikey to inspect or change keys, /model to switch models later[/dim]"
+    )
 
 
 @app.command()
