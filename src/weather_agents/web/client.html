@@ -1213,15 +1213,21 @@ function initRecognition() {
   recognition.onerror = (e) => {
     isListening = false;
     UI.micBtn.classList.remove('hearing');
+    // The mic visual (.active = red background) must be cleared on EVERY
+    // error path. Earlier versions early-returned on 'no-speech' before
+    // touching the class, so a silent click left the button red forever
+    // with no way for the user to release it.
+    UI.micBtn.classList.remove('active');
+    setMicCue('off');
     if (e.error === 'no-speech') {
-      setMicCue('off');
-      if (autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening) {
+      if (autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening
+          && ws && ws.readyState === WebSocket.OPEN) {
         setTimeout(() => startListening(), 120);
+      } else {
+        setStatus('connected');
       }
       return;
     }
-    UI.micBtn.classList.remove('active');
-    setMicCue('off');
     // Human-readable messages for the common failures.
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       addSysMsg('麦克风权限被拒 — 请在浏览器地址栏左侧解锁麦克风,或确认走的是 HTTPS');
@@ -1238,7 +1244,14 @@ function initRecognition() {
   recognition.onend = () => {
     isListening = false;
     UI.micBtn.classList.remove('hearing');
-    if (autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening) {
+    // Only enter auto-restart if explicitly enabled AND the WS is still
+    // open — otherwise we burn into a tight loop where recognition.start
+    // re-throws and the user sees the mic flicker without any way to
+    // reach the agent.
+    const canAutoRestart =
+      autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening
+      && ws && ws.readyState === WebSocket.OPEN;
+    if (canAutoRestart) {
       setMicCue('listening', '在听… 请说');
       setTimeout(() => startListening(), 120);
     } else {
@@ -1278,18 +1291,26 @@ function startListening() {
 }
 
 function stopListening(silent) {
-  if (recognition && isListening) {
+  // Defensive cleanup: always wipe visual state regardless of isListening,
+  // because state can desync (recognition.onerror sets isListening=false
+  // before the user clicks the mic to release, leaving .active stuck on).
+  if (recognition) {
     try { recognition.stop(); } catch(_) {}
-    isListening = false;
-    UI.micBtn.classList.remove('active');
-    UI.micBtn.classList.remove('hearing');
-    setMicCue('off');
-    if (!silent) setStatus('connected');
   }
+  isListening = false;
+  UI.micBtn.classList.remove('active');
+  UI.micBtn.classList.remove('hearing');
+  setMicCue('off');
+  if (!silent) setStatus('connected');
 }
 
 function toggleListening() {
-  if (isListening) {
+  // Treat the visual state as authoritative — if the mic button looks
+  // active (red) but isListening went stale, the user's intent is "turn
+  // this thing off", not "start a new session". stopListening() is now
+  // idempotent so calling it twice is safe.
+  const looksActive = isListening || UI.micBtn.classList.contains('active');
+  if (looksActive) {
     userStoppedListening = true;
     stopListening();
   } else {
