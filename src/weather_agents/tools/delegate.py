@@ -123,7 +123,7 @@ def create_delegate_tool(
             )
 
         if agent not in agent_map:
-            names = ", ".join(sorted(k for k in agent_map.keys() if k != "fair"))
+            names = ", ".join(sorted(k for k in agent_map if k != "fair"))
             return f"Unknown agent '{agent}'. Available agents: {names}"
 
         if calling_agent and agent == calling_agent.name:
