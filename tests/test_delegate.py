@@ -213,13 +213,35 @@ class TestDelegateNestingGuard:
 
 
 class TestAgentSpecialties:
-    def test_all_agents_have_specialties(self):
-        expected = {"fog", "rain", "frost", "snow", "dew", "fair"}
+    def test_all_work_agents_have_specialties(self):
+        # fair 是独立陪伴 agent,不参与 delegate 编排,故意不在此表
+        expected = {"fog", "rain", "frost", "snow", "dew"}
         assert set(AGENT_SPECIALTIES.keys()) == expected
 
     def test_specialties_are_nonempty(self):
         for name, desc in AGENT_SPECIALTIES.items():
             assert len(desc) > 0, f"Empty specialty for {name}"
+
+    def test_fair_is_not_delegatable(self):
+        assert "fair" not in AGENT_SPECIALTIES
+
+
+class TestFairIsolation:
+    """Fair 是独立 agent:既不被 delegate 调用,也不调用别人。"""
+
+    @pytest.mark.asyncio
+    async def test_delegate_to_fair_is_rejected(self, agent_map):
+        tool = create_delegate_tool(agent_map, calling_agent=agent_map["fog"])
+        result = await tool.execute(agent_name="fog", agent="fair", task="陪我聊天")
+        assert "cannot be delegated" in result.lower() or "fair" in result.lower()
+        agent_map["fair"].execute_task.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fair_cannot_delegate(self, agent_map):
+        tool = create_delegate_tool(agent_map, calling_agent=agent_map["fair"])
+        result = await tool.execute(agent_name="fair", agent="rain", task="写个函数")
+        assert "independent" in result.lower() or "does not delegate" in result.lower()
+        agent_map["rain"].execute_task.assert_not_awaited()
 
 
 class TestBuildSharedContext:

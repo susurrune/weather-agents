@@ -9,7 +9,9 @@ from weather_agents.core.agent import BaseAgent, Task
 from weather_agents.core.schemas import TaskPlanSchema
 
 # Frozen set of valid agent names — used in schema validation path.
-_VALID_AGENTS_STATIC: frozenset = frozenset({"fog", "rain", "frost", "snow", "dew", "fair"})
+# fair 是独立 agent,不参与编排,因此从可分配集合中剔除。schema/plan 解析时
+# 若 LLM 仍写出 fair,会被重定向到 rain (与未知 agent 行为一致)。
+_VALID_AGENTS_STATIC: frozenset = frozenset({"fog", "rain", "frost", "snow", "dew"})
 
 
 class SnowAgent(BaseAgent):
@@ -71,7 +73,8 @@ Like snow — silent but all-covering. Clear structure, thorough consideration.
             f'"depends_on": ["1"]}}\n'
             f"]}}\n\n"
             f"可用 Agent: fog(调研/搜索), rain(代码生成/写作), frost(审查/安全), "
-            f"dew(部署/运维), fair(陪伴/闲聊)\n"
+            f"dew(部署/运维)\n"
+            f"注意:fair 是独立的情感陪伴 agent,**不参与任何任务编排**,绝不要分配给她。\n"
             f"注意：如果任务有先后依赖关系，必须用 depends_on 字段标出。"
             f"不要使用工具，直接输出 JSON 即可。"
         )
@@ -132,7 +135,7 @@ Like snow — silent but all-covering. Clear structure, thorough consideration.
             f"\n\n## 已证明无效的 agent\n"
             f"{', '.join(sorted(failing_agents))} 已在上一轮返回占位/无交付物。\n"
             "**禁止把同类任务再交给以上 agent**。请：\n"
-            "- 用不同的 agent（fog/rain/frost/dew/fair 中没出现过的）重试该任务，或\n"
+            "- 用不同的 agent（fog/rain/frost/dew 中没出现过的)重试该任务,或\n"
             "- 把任务**拆得更小更具体**（如把「调研 5 个数据库」拆成 5 个独立的"
             "「调研单个数据库 X」），或\n"
             "- 改用更直接的工具策略（如让 dew 直接 shell_exec curl 抓数据，"
@@ -150,7 +153,7 @@ Like snow — silent but all-covering. Clear structure, thorough consideration.
             f"## 已使用的 task id（必须避开）\n{sorted(used_ids) if used_ids else '(none)'}"
             f"{failing_hint}\n\n"
             "请输出新任务的 JSON 计划：\n"
-            '{"steps": [{"id": "新id", "agent": "fog|rain|frost|dew|fair", '
+            '{"steps": [{"id": "新id", "agent": "fog|rain|frost|dew", '
             '"description": "具体任务", "depends_on": ["可选已完成任务id"]}]}\n'
             "约束：\n"
             "- 只输出新增任务，不要重复已完成的；id 必须避开上面的列表\n"
@@ -244,7 +247,7 @@ Like snow — silent but all-covering. Clear structure, thorough consideration.
     @staticmethod
     def _plan_to_tasks(plan: dict, goal: str) -> list[Task]:
         """Convert a parsed plan dict to Task objects."""
-        valid_agents = {"fog", "rain", "frost", "snow", "dew", "fair"}
+        valid_agents = {"fog", "rain", "frost", "snow", "dew"}  # fair 独立
         tasks: list[Task] = []
         for step in plan.get("steps", []):
             agent = step.get("agent", "rain")

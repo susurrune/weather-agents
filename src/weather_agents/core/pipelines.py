@@ -178,25 +178,8 @@ _PIPELINES: tuple[Pipeline, ...] = (
             ),
         ),
     ),
-    Pipeline(
-        name="research_then_fair",
-        triggers=(
-            "调研后解释",
-            "调研后总结",
-            "research and explain",
-            "调研后讲解",
-            "调研后汇报",
-        ),
-        steps=(
-            PipelineStep(id="1", agent="fog", description_template="调研: {goal}"),
-            PipelineStep(
-                id="2",
-                agent="fair",
-                description_template="用通俗语言总结第 1 步的调研结果: {goal}",
-                depends_on=("1",),
-            ),
-        ),
-    ),
+    # 原 research_then_fair pipeline 已移除: fair 是独立陪伴 agent,不参与
+    # 任务编排。需要"调研后总结"请直接让 fog 自己完成总结 (fog 全能,够用)。
     Pipeline(
         name="investigate_report",
         triggers=(

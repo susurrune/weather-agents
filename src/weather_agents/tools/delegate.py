@@ -75,13 +75,14 @@ def _build_shared_context(calling_agent: BaseAgent | None, context: str) -> str:
 
 _log = get_logger("delegate")
 
+# fair 故意从此表移除:她是独立的情感陪伴 agent,不参与 agent-to-agent 编排
+# (既不被 delegate 调用,也不被 snow.orchestrate 分配任务)。
 AGENT_SPECIALTIES: dict[str, str] = {
     "fog": "research / code analysis / knowledge retrieval / information synthesis",
     "rain": "code generation / content creation / data transformation / multi-file projects",
     "frost": "code review / security audit / performance analysis / debugging",
     "snow": "task planning / architecture design / workflow management / codebase refactoring",
     "dew": "command execution / deployment / API integration / system operations",
-    "fair": "emotional support / thoughtful conversation / bilingual companionship / creative insight",
 }
 
 # Cap delegate result size injected into the caller's context. Lowered from
@@ -107,8 +108,22 @@ def create_delegate_tool(
     _MAX_DEPTH = 2  # allow 1 level of nesting (0→1→2, blocked at 3)
 
     async def _handle(agent: str, task: str, context: str = "") -> str:
+        # fair 是独立 agent: 既不被调用,也不调用别人。守护这条边界,使得 fair
+        # 始终保留她的对话上下文,不被 orchestration prompt 污染。
+        if calling_agent and calling_agent.name == "fair":
+            return (
+                "Fair (晴) is an independent companion agent and does not "
+                "delegate work. Continue the conversation directly with the user."
+            )
+        if agent == "fair":
+            return (
+                "Fair (晴) cannot be delegated to — she is the user's personal "
+                "companion, not a work agent. Complete this task yourself, or "
+                "delegate to fog / rain / frost / snow / dew."
+            )
+
         if agent not in agent_map:
-            names = ", ".join(sorted(agent_map.keys()))
+            names = ", ".join(sorted(k for k in agent_map.keys() if k != "fair"))
             return f"Unknown agent '{agent}'. Available agents: {names}"
 
         if calling_agent and agent == calling_agent.name:
@@ -248,7 +263,7 @@ def create_delegate_tool(
             ToolParameter(
                 name="agent",
                 type="string",
-                description=("Target agent name. One of: fog, rain, frost, snow, dew, fair."),
+                description=("Target agent name. One of: fog, rain, frost, snow, dew."),
                 required=True,
             ),
             ToolParameter(
