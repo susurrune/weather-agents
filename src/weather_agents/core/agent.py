@@ -221,7 +221,7 @@ class BaseAgent:
         if lang == "en":
             rules = (
                 "\n\n## Behavior\n"
-                "- Act, don't narrate. No \"I will...\" before tool calls.\n"
+                '- Act, don\'t narrate. No "I will..." before tool calls.\n'
                 "- Stay in scope. Do what's asked, then stop.\n"
                 "- Batch independent tool calls in one response.\n"
                 "- Verify writes: read back, report verified state.\n"
