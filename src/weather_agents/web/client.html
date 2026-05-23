@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f3ead7">
 <title>Fair · 晴</title>
 
@@ -721,21 +721,66 @@
 
   /* ═════ Mobile ═════ */
   @media (max-width: 560px) {
-    header { padding: calc(18px + var(--safe-top)) 18px 14px; gap: 10px; }
-    .seal { width: 46px; height: 46px; font-size: 24px; }
-    .brand .wordmark { font-size: 30px; }
-    .brand .meta { font-size: 12px; }
-    .ctl { gap: 8px; }
-    .status { font-size: 11px; }
-    .column { padding: 22px 18px 50px; }
-    .turn { grid-template-columns: 44px 1fr; column-gap: 14px; margin-bottom: 28px; }
-    .think { grid-template-columns: 44px 1fr; column-gap: 14px; }
-    .turn .tag { font-size: 13px; }
-    .turn .body { font-size: 16px; line-height: 1.72; }
-    .turn.user .body { font-size: 15px; }
-    .compose { padding: 14px 18px calc(16px + var(--safe-bottom)); }
-    .welcome { font-size: 17px; margin: 24px auto 44px; }
-    .colophon .swap { font-size: 14px; }
+    header { padding: calc(16px + var(--safe-top)) 16px 12px; gap: 10px; }
+    .seal { width: 42px; height: 42px; font-size: 22px; }
+    .brand .wordmark { font-size: 28px; }
+    .brand .meta { font-size: 11px; }
+    .brand .meta .sep { width: 10px; margin: 0 4px; }
+    .ctl { gap: 6px; }
+    .status { font-size: 11px; gap: 5px; }
+    .icon-btn { padding: 8px; }
+    .icon-btn svg { width: 20px; height: 20px; }
+    #settings { padding: 12px 16px 16px; }
+    .field { grid-template-columns: 90px 1fr auto; gap: 10px; font-size: 12px; }
+    .column { padding: 18px 16px 40px; }
+    .turn { grid-template-columns: 40px 1fr; column-gap: 12px; margin-bottom: 24px; }
+    .think { grid-template-columns: 40px 1fr; column-gap: 12px; }
+    .turn .tag { font-size: 12px; }
+    .turn .body { font-size: 15.5px; line-height: 1.72; }
+    .turn.user .body { font-size: 14.5px; }
+    .compose { padding: 12px 16px calc(14px + var(--safe-bottom)); }
+    .compose-grid { gap: 10px; }
+    /* 44px = Apple minimum touch target */
+    .act { width: 44px; height: 44px; }
+    .act svg { width: 19px; height: 19px; }
+    /* 16px prevents iOS auto-zoom on focus */
+    #text-input { font-size: 16px; padding: 6px 0; }
+    .welcome { font-size: 16px; margin: 20px auto 36px; max-width: 320px; }
+    .colophon { gap: 8px; padding-top: 10px; margin-top: 10px; }
+    .colophon .also { gap: 10px; flex-wrap: wrap; justify-content: center; }
+    .colophon .swap { font-size: 13px; padding: 4px 2px; }
+    .colophon .lead { font-size: 11px; }
+    .notice { padding: 10px 16px; font-size: 12px; line-height: 1.5; }
+    .reconnect-bar { padding: 14px; font-size: 12px; min-height: 44px; }
+    .sys { font-size: 11px; max-width: 280px; }
+  }
+
+  /* Very small phones (iPhone SE, 320px-class) */
+  @media (max-width: 380px) {
+    .seal { width: 36px; height: 36px; font-size: 19px; }
+    .brand .wordmark { font-size: 24px; }
+    .brand .meta { font-size: 10px; }
+    .column { padding: 14px 12px 36px; }
+    .turn { grid-template-columns: 32px 1fr; column-gap: 10px; }
+    .think { grid-template-columns: 32px 1fr; column-gap: 10px; }
+    .turn .tag { font-size: 11px; }
+    .compose { padding: 10px 12px calc(12px + var(--safe-bottom)); }
+    .compose-grid { gap: 8px; }
+    .field { grid-template-columns: 78px 1fr auto; gap: 8px; }
+    .welcome { font-size: 15px; margin: 16px auto 28px; max-width: 260px; }
+  }
+
+  /* Landscape on phones — vertical space is precious */
+  @media (max-height: 500px) and (orientation: landscape) {
+    header { padding: calc(6px + var(--safe-top)) 20px 4px; }
+    .seal { width: 30px; height: 30px; font-size: 16px; }
+    .brand .wordmark { font-size: 22px; }
+    .brand .meta { display: none; }
+    .column { padding: 8px 20px 24px; }
+    .turn { margin-bottom: 14px; }
+    .welcome { margin: 8px auto 20px; font-size: 15px; }
+    .compose { padding: 6px 20px calc(6px + var(--safe-bottom)); }
+    .colophon { margin-top: 6px; padding-top: 6px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -864,8 +909,11 @@ let isSpeaking = false;
 let isWaitingResponse = false;
 let userStoppedListening = false;
 let audioCtx = null;
-let pendingAudioB64 = '';
+let pendingAudioChunks = [];
 let serverTtsPending = false;
+let pingInterval = null;
+let reconnectTimer = null;
+let reconnectDelay = 1000;
 let lastFullText = '';
 let currentAudioSource = null;
 let serverTtsTimeoutId = null;
@@ -911,13 +959,21 @@ function getWsUrl() {
 
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   ws = new WebSocket(getWsUrl());
   setStatus('connecting');
 
   ws.onopen = () => {
     setStatus('connected');
+    reconnectDelay = 1000;
     UI.reconnectBar.classList.remove('show');
     ws.send(JSON.stringify({type: 'list_agents'}));
+    if (pingInterval) clearInterval(pingInterval);
+    pingInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'ping'}));
+      }
+    }, 55000);
   };
 
   ws.onmessage = (e) => {
@@ -929,13 +985,21 @@ function connect() {
     isWaitingResponse = false;
     stopListening(true);
     setSpeakingVisual(false);
+    if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     UI.reconnectBar.classList.add('show');
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
   };
 
   ws.onerror = () => { try { ws.close(); } catch(_) {} };
 }
 
 function reconnect() {
+  reconnectDelay = 1000;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   UI.reconnectBar.classList.remove('show');
   connect();
 }
@@ -965,7 +1029,7 @@ function handleMsg(msg) {
       setStatus('waiting');
       currentAgentMsgEl = null;
       showThinking();
-      pendingAudioB64 = '';
+      pendingAudioChunks = [];
       serverTtsPending = false;
       break;
     case 'content':
@@ -1012,26 +1076,26 @@ function handleMsg(msg) {
       setSpeakingVisual(true);
       break;
     case 'audio_chunk':
-      pendingAudioB64 += msg.data;
+      pendingAudioChunks.push(msg.data);
       break;
     case 'audio_end':
       if (serverTtsTimeoutId) { clearTimeout(serverTtsTimeoutId); serverTtsTimeoutId = null; }
       if (msg.error) {
         serverTtsPending = false;
-        pendingAudioB64 = '';
+        pendingAudioChunks = [];
         isSpeaking = false;
         setSpeakingVisual(false);
         setStatus('connected');
         tryAutoListen();
-      } else if (pendingAudioB64) {
-        playBase64Audio(pendingAudioB64);
+      } else if (pendingAudioChunks.length) {
+        playBase64Audio(pendingAudioChunks);
       } else {
         isSpeaking = false;
         setSpeakingVisual(false);
         setStatus('connected');
         tryAutoListen();
       }
-      pendingAudioB64 = '';
+      pendingAudioChunks = [];
       serverTtsPending = false;
       break;
     case 'status':
@@ -1382,11 +1446,18 @@ function ensureAudio() {
   }
 }
 
-function playBase64Audio(b64data) {
+function playBase64Audio(chunks) {
   try {
-    const binaryStr = atob(b64data);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    const parts = chunks.map(c => {
+      const bin = atob(c);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return arr;
+    });
+    const totalLen = parts.reduce((s, p) => s + p.length, 0);
+    const bytes = new Uint8Array(totalLen);
+    let off = 0;
+    for (const p of parts) { bytes.set(p, off); off += p.length; }
     ensureAudio();
     if (audioCtx.state === 'suspended') throw new Error('AudioContext suspended');
     isSpeaking = true;
@@ -1513,10 +1584,6 @@ initRecognition();
 window.addEventListener('online', () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) connect();
 });
-
-setInterval(() => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) UI.reconnectBar.classList.add('show');
-}, 5000);
 
 })();
 </script>
