@@ -304,7 +304,7 @@
   }
   .field.check label { cursor: pointer; color: var(--ink-soft); font-style: normal; }
 
-  /* ═════ Reconnect ═════ */
+  /* ═════ Reconnect / notice bars ═════ */
   .reconnect-bar {
     display: none;
     text-align: center;
@@ -322,6 +322,94 @@
   }
   .reconnect-bar.show { display: block; }
   .reconnect-bar:hover { background: rgba(167,58,42,0.10); }
+
+  /* Insecure-context notice — Chrome silently disables mic on non-HTTPS LAN */
+  .notice {
+    display: none;
+    max-width: var(--column-max);
+    margin: 0 auto;
+    padding: 12px 22px;
+    background: rgba(184,116,26,0.08);
+    border-top: 1px solid rgba(184,116,26,0.30);
+    border-bottom: 1px solid rgba(184,116,26,0.30);
+    color: var(--ink);
+    font-family: var(--serif-body);
+    font-size: 13px;
+    line-height: 1.55;
+    flex-shrink: 0;
+    position: relative; z-index: 1;
+  }
+  .notice.show { display: block; }
+  .notice .title {
+    font-family: var(--serif-display);
+    font-style: italic;
+    font-weight: 400;
+    color: var(--amber);
+    font-size: 14px;
+    margin-bottom: 4px;
+    letter-spacing: 0.02em;
+  }
+  .notice a {
+    color: var(--seal);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+    font-style: normal;
+    font-family: var(--mono);
+    font-size: 12px;
+    word-break: break-all;
+  }
+  .notice a:hover { color: var(--seal-deep); }
+  .notice .dismiss {
+    position: absolute;
+    top: 8px; right: 12px;
+    background: none; border: none;
+    color: var(--ink-faint);
+    font-family: var(--serif-display);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+  }
+  .notice .dismiss:hover { color: var(--seal); }
+
+  /* Tiny inline cue under the input when listening — "say something" feedback */
+  .mic-cue {
+    display: none;
+    margin-top: 8px;
+    text-align: right;
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--seal);
+    letter-spacing: 0.04em;
+    transition: color 0.3s;
+  }
+  .mic-cue.show { display: block; }
+  .mic-cue.hearing { color: var(--seal-deep); }
+  .mic-cue .pulse-bar {
+    display: inline-block;
+    width: 3px; height: 9px;
+    background: currentColor;
+    border-radius: 1px;
+    margin: 0 1.5px;
+    vertical-align: -1px;
+    transform-origin: bottom;
+    animation: bar-idle 1.2s ease-in-out infinite;
+  }
+  .mic-cue .pulse-bar:nth-child(2) { animation-delay: 0.10s; }
+  .mic-cue .pulse-bar:nth-child(3) { animation-delay: 0.20s; }
+  .mic-cue .pulse-bar:nth-child(4) { animation-delay: 0.30s; }
+  .mic-cue .pulse-bar:nth-child(5) { animation-delay: 0.40s; }
+  @keyframes bar-idle {
+    0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+    50%      { transform: scaleY(0.7); opacity: 0.8; }
+  }
+  .mic-cue.hearing .pulse-bar { animation: bar-hearing 0.7s ease-in-out infinite; }
+  @keyframes bar-hearing {
+    0%, 100% { transform: scaleY(0.4); opacity: 0.7; }
+    50%      { transform: scaleY(1.3); opacity: 1; }
+  }
 
   /* ═════ Stage (messages column) ═════ */
   .stage {
@@ -559,6 +647,11 @@
     color: var(--paper);
     border-color: var(--seal);
   }
+  /* hearing-you: when speech actually detected — fuller ripples + brighter */
+  .act.mic.hearing {
+    background: var(--seal-deep);
+    box-shadow: 0 0 0 4px rgba(167,58,42,0.18);
+  }
   .act.mic.active::before {
     content: "";
     position: absolute; inset: -5px;
@@ -701,6 +794,16 @@
   </div>
 </div>
 
+<div class="notice" id="insecure-notice">
+  <button class="dismiss" id="notice-dismiss" title="dismiss" aria-label="dismiss">&times;</button>
+  <div class="title">Microphone needs HTTPS</div>
+  <div>
+    Chrome / Edge 在非 localhost 的 HTTP 页面会**静默禁用**麦克风 — 这是浏览器的硬限制,
+    不是程序 bug。请改用 <a id="https-url" href="#" target="_self">https 链接</a> 访问
+    (自签证书,点「高级 → 继续前往」即可),或文字输入照常可用。
+  </div>
+</div>
+
 <div class="reconnect-bar" id="reconnect-bar">
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;">
     <polyline points="23 4 23 10 17 10"/>
@@ -739,6 +842,11 @@
     </button>
   </div>
 
+  <div class="mic-cue" id="mic-cue">
+    <span id="mic-cue-text">在聽…請說</span>
+    <span class="pulse-bar"></span><span class="pulse-bar"></span><span class="pulse-bar"></span><span class="pulse-bar"></span><span class="pulse-bar"></span>
+  </div>
+
   <div class="colophon">
     <span class="lead">also try</span>
     <span class="also" id="agent-row"></span>
@@ -768,25 +876,30 @@ let autoListenEnabled = false;
 let currentAgentMsgEl = null;
 
 const UI = {
-  stage:       document.getElementById('stage'),
-  column:      document.getElementById('column'),
-  welcome:     document.getElementById('welcome'),
-  status:      document.getElementById('status'),
-  statusText:  document.getElementById('status-text'),
-  micBtn:      document.getElementById('mic-btn'),
-  sendBtn:     document.getElementById('send-btn'),
-  textInput:   document.getElementById('text-input'),
-  reconnectBar:document.getElementById('reconnect-bar'),
-  ttsRate:     document.getElementById('tts-rate'),
-  ttsRateVal:  document.getElementById('tts-rate-val'),
-  recLang:     document.getElementById('rec-lang'),
-  autoListen:  document.getElementById('auto-listen'),
-  settingsBtn: document.getElementById('settings-btn'),
-  settings:    document.getElementById('settings'),
-  seal:        document.getElementById('seal'),
-  brandTag:    document.getElementById('brand-tag'),
-  brandSpec:   document.getElementById('brand-spec'),
-  agentRow:    document.getElementById('agent-row'),
+  stage:           document.getElementById('stage'),
+  column:          document.getElementById('column'),
+  welcome:         document.getElementById('welcome'),
+  status:          document.getElementById('status'),
+  statusText:      document.getElementById('status-text'),
+  micBtn:          document.getElementById('mic-btn'),
+  sendBtn:         document.getElementById('send-btn'),
+  textInput:       document.getElementById('text-input'),
+  reconnectBar:    document.getElementById('reconnect-bar'),
+  ttsRate:         document.getElementById('tts-rate'),
+  ttsRateVal:      document.getElementById('tts-rate-val'),
+  recLang:         document.getElementById('rec-lang'),
+  autoListen:      document.getElementById('auto-listen'),
+  settingsBtn:     document.getElementById('settings-btn'),
+  settings:        document.getElementById('settings'),
+  seal:            document.getElementById('seal'),
+  brandTag:        document.getElementById('brand-tag'),
+  brandSpec:       document.getElementById('brand-spec'),
+  agentRow:        document.getElementById('agent-row'),
+  insecureNotice:  document.getElementById('insecure-notice'),
+  httpsUrl:        document.getElementById('https-url'),
+  noticeDismiss:   document.getElementById('notice-dismiss'),
+  micCue:          document.getElementById('mic-cue'),
+  micCueText:      document.getElementById('mic-cue-text'),
 };
 
 // ── WebSocket ──
@@ -1028,6 +1141,42 @@ function appendUserText(text) {
   scrollBottom();
 }
 
+// ── Secure context check ──
+// Chrome/Edge silently disable webkitSpeechRecognition (and getUserMedia)
+// on http://<LAN-IP> pages. They do NOT throw — recognition.start() resolves,
+// the mic button turns red, and nothing happens. This is by far the most
+// common "mic broken" report, so surface it loudly with a clickable
+// https:// equivalent of the current URL.
+function checkSecureContext() {
+  const loc = window.location;
+  const host = loc.hostname;
+  const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+  const isFile = loc.protocol === 'file:';
+  const secure = window.isSecureContext || isLocalhost || isFile;
+  if (secure) return true;
+
+  // Build the equivalent https URL on the same host/port. The voice server
+  // auto-generates a self-signed cert for LAN IPs, so this URL should work
+  // (after the user clicks "Advanced → Proceed" once).
+  const httpsHref = 'https://' + loc.host + loc.pathname + loc.search;
+  if (UI.httpsUrl) {
+    UI.httpsUrl.href = httpsHref;
+    UI.httpsUrl.textContent = httpsHref;
+  }
+  UI.insecureNotice.classList.add('show');
+  return false;
+}
+
+function setMicCue(state, label) {
+  if (state === 'off') {
+    UI.micCue.classList.remove('show', 'hearing');
+    return;
+  }
+  if (label !== undefined) UI.micCueText.textContent = label;
+  UI.micCue.classList.add('show');
+  UI.micCue.classList.toggle('hearing', state === 'hearing');
+}
+
 // ── Speech Recognition ──
 function initRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1052,25 +1201,49 @@ function initRecognition() {
     setStatus('waiting');
   };
 
+  // Live feedback events — without these the user sees a red button and
+  // can't tell whether the mic is actually capturing.
+  recognition.onaudiostart  = () => { setMicCue('listening', '在听… 请说'); };
+  recognition.onsoundstart  = () => { setMicCue('hearing',   '听到了 — 继续'); UI.micBtn.classList.add('hearing'); };
+  recognition.onspeechstart = () => { setMicCue('hearing',   '听到了 — 继续'); UI.micBtn.classList.add('hearing'); };
+  recognition.onspeechend   = () => { setMicCue('listening', '正在识别…'); UI.micBtn.classList.remove('hearing'); };
+  recognition.onaudioend    = () => { UI.micBtn.classList.remove('hearing'); };
+  recognition.onnomatch     = () => { addSysMsg('没听清,再说一次?'); };
+
   recognition.onerror = (e) => {
     isListening = false;
+    UI.micBtn.classList.remove('hearing');
     if (e.error === 'no-speech') {
+      setMicCue('off');
       if (autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening) {
         setTimeout(() => startListening(), 120);
       }
       return;
     }
     UI.micBtn.classList.remove('active');
-    if (e.error !== 'aborted') addSysMsg('voice error — ' + e.error);
+    setMicCue('off');
+    // Human-readable messages for the common failures.
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      addSysMsg('麦克风权限被拒 — 请在浏览器地址栏左侧解锁麦克风,或确认走的是 HTTPS');
+    } else if (e.error === 'audio-capture') {
+      addSysMsg('找不到麦克风设备');
+    } else if (e.error === 'network') {
+      addSysMsg('语音识别走的是 Google 服务,需要外网连接');
+    } else if (e.error !== 'aborted') {
+      addSysMsg('voice error — ' + e.error);
+    }
     setStatus('connected');
   };
 
   recognition.onend = () => {
     isListening = false;
+    UI.micBtn.classList.remove('hearing');
     if (autoListenEnabled && !isWaitingResponse && !isSpeaking && !userStoppedListening) {
+      setMicCue('listening', '在听… 请说');
       setTimeout(() => startListening(), 120);
     } else {
       UI.micBtn.classList.remove('active');
+      setMicCue('off');
       if (!isWaitingResponse) setStatus('connected');
     }
   };
@@ -1078,16 +1251,29 @@ function initRecognition() {
 
 function startListening() {
   if (!recognition || isListening || isWaitingResponse || isSpeaking) return;
+  // Don't even try if the context is insecure — Chrome will swallow this
+  // silently and the user wonders why nothing happens.
+  if (!window.isSecureContext) {
+    const host = window.location.hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') {
+      addSysMsg('当前页面不是 HTTPS / localhost,浏览器会禁用麦克风');
+      UI.insecureNotice.classList.add('show');
+      return;
+    }
+  }
   try {
     recognition.lang = UI.recLang.value;
     recognition.start();
     isListening = true;
     UI.micBtn.classList.add('active');
+    setMicCue('listening', '准备好了… 请说');
     setStatus('listening');
   } catch(e) {
     isListening = false;
     UI.micBtn.classList.remove('active');
+    setMicCue('off');
     setStatus('connected');
+    if (e && e.name !== 'InvalidStateError') addSysMsg('启动语音识别失败 — ' + (e.message || e.name));
   }
 }
 
@@ -1096,6 +1282,8 @@ function stopListening(silent) {
     try { recognition.stop(); } catch(_) {}
     isListening = false;
     UI.micBtn.classList.remove('active');
+    UI.micBtn.classList.remove('hearing');
+    setMicCue('off');
     if (!silent) setStatus('connected');
   }
 }
@@ -1294,9 +1482,11 @@ UI.settingsBtn.addEventListener('click', () => {
   const open = UI.settings.classList.toggle('open');
   UI.settingsBtn.classList.toggle('open', open);
 });
+UI.noticeDismiss.addEventListener('click', () => UI.insecureNotice.classList.remove('show'));
 
 // ── Init ──
 connect();
+checkSecureContext();
 initRecognition();
 
 window.addEventListener('online', () => {
