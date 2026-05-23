@@ -421,6 +421,7 @@ class Memory:
             msg.tool_calls = kwargs["tool_calls"]
         if "reasoning_content" in kwargs and kwargs["reasoning_content"]:
             msg.reasoning_content = kwargs["reasoning_content"]
+        ephemeral = bool(kwargs.get("ephemeral", False))
         with self._short_term_lock:
             self.short_term.append(msg)
 
@@ -431,7 +432,9 @@ class Memory:
                 self.short_term = system_msgs + other_msgs[-keep:] if keep else system_msgs
                 self._prune_dangling_tool_calls()
 
-        if self._db and role != "system":
+        # ephemeral=True：orchestration sub-task 用,避免 task 提示词污染 chat 会话
+        # 历史(下次 resume_latest_session 时会把它当成真实对话回放,造成答非所问)。
+        if self._db and role != "system" and not ephemeral:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:

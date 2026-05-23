@@ -185,20 +185,14 @@ class BaseAgent:
         if lang == "en":
             ws_block = (
                 f"\n\n## Workspace\n"
-                f"Your workspace directory is `{ws_str}`.\n"
-                f"- Use `{ws_str}/files/` for generated files.\n"
-                f"- Use `{ws_str}/output/` for task results and exports.\n"
-                f"- Use `{ws_str}/temp/` for temporary/scratch files.\n"
-                f"- Always prefer paths under the workspace for file operations."
+                f"`{ws_str}` — write to `files/`, `output/`, `temp/`. "
+                f"Prefer workspace paths for all file ops."
             )
         else:
             ws_block = (
                 f"\n\n## 工作空间\n"
-                f"你的工作空间目录是 `{ws_str}`。\n"
-                f"- 生成的文件放在 `{ws_str}/files/`\n"
-                f"- 任务结果和导出放在 `{ws_str}/output/`\n"
-                f"- 临时文件放在 `{ws_str}/temp/`\n"
-                f"- 所有文件操作优先使用工作空间内的路径。"
+                f"`{ws_str}` — 产物写到 `files/` / `output/` / `temp/`。"
+                f"文件操作优先用此路径。"
             )
         return prompt + ws_block
 
@@ -227,41 +221,20 @@ class BaseAgent:
         if lang == "en":
             rules = (
                 "\n\n## Behavior\n"
-                '1. Execute tools immediately — no "I will..." or "Let me..." narration before tool calls. Just call them.\n'
-                "2. After completing work: give a 1-2 sentence concise report, no log-style verbosity.\n"
-                "3. Do not use decorative separator lines (---, ***, ___, etc) — the interface handles visual separation.\n"
-                "4. No emoji in generated web pages — use SVG icons, CSS shapes, or Unicode symbols instead.\n"
-                "5. Proportional planning: for simple tasks (stop server, show status, answer a question) — just do it directly. "
-                "Only break work into numbered steps when the task genuinely needs 3+ distinct actions. "
-                "Don't survey the workspace or read files unless the task requires it.\n"
-                "6. Self-verify: after tool execution, check results. If a tool returned an error, "
-                "diagnose the cause and try a corrected approach immediately. "
-                "If a file write/edit succeeded, read it back to confirm the content is correct. "
-                "Report the final verified state, not just the attempt.\n"
-                "7. Never expand task scope. Do only what the user asked — no extra files, no bonus "
-                "features, no 'while I'm at it' additions. When the core request is done, stop.\n"
-                "8. Batch independent tool calls. When you need data from multiple unrelated sources "
-                "(several files, several URLs, several searches), emit ALL the tool calls in ONE "
-                "response — they run in parallel. Don't sequence what doesn't need sequencing. "
-                "Only chain when a later call genuinely depends on an earlier call's result."
+                "- Act, don't narrate. No \"I will...\" before tool calls.\n"
+                "- Stay in scope. Do what's asked, then stop.\n"
+                "- Batch independent tool calls in one response.\n"
+                "- Verify writes: read back, report verified state.\n"
+                "- No decorative `---` lines; no emoji in generated web pages."
             )
         else:
             rules = (
                 "\n\n## 行为守则\n"
-                "1. 执行工具前不赘述 — 不说「我将要...」「让我先...」，直接调用\n"
-                "2. 完成后用 1-2 句简洁汇报结果，不要日志式的冗长叙述\n"
-                "3. 不要使用 ---、***、___ 等装饰性分隔线 — 界面自有视觉分隔\n"
-                "4. 制作网页时不要使用 emoji 表情符 — 需要图标时使用 SVG 或 CSS 实现\n"
-                "5. 按需规划：简单任务（停止服务器、查看状态、回答问题）直接做，不要列出步骤。"
-                "只有任务确实需要 3 步以上不同操作时才拆分计划。"
-                "不要为了了解情况而遍历工作空间或读取文件，除非任务本身需要。\n"
-                "6. 执行后验证：工具执行后检查结果，如有错误立即诊断并重试修正。"
-                "写入/编辑文件后应读取确认内容正确。汇报最终验证后的状态，而非仅说已尝试。\n"
-                "7. 禁止擅自扩展任务范围。用户要求什么就做什么——不多创建文件、不添加额外功能、"
-                "不做「顺便也做个…」。核心请求完成后立即停止，不要自作主张深化或扩展。\n"
-                "8. 并行批量调用工具。当你需要多个不相关来源的数据（多个文件 / 多个 URL / "
-                "多次搜索），在**一次回复**里发出全部工具调用——它们会并行执行。不要把不需要"
-                "排序的事情串行做。只有后一个调用真的依赖前一个的结果时才链式调用。"
+                "- 直接行动,不预告。不说「我将要...」,直接调用工具\n"
+                "- 不擅自扩大范围。用户要什么做什么,核心完成即止\n"
+                "- 独立的工具调用一次发出,并行执行\n"
+                "- 写入后回读验证,汇报已验证状态而非仅尝试\n"
+                "- 不用 `---` 装饰线,网页里不用 emoji"
             )
         return prompt + rules
 
@@ -271,22 +244,14 @@ class BaseAgent:
         if lang == "en":
             wisdom = (
                 "\n\n## Engineering\n"
-                "You are a top-tier programming agent:\n"
-                "1. Code quality: type safety, error handling, readability, testability\n"
-                "2. Debugging: isolate root cause → understand → fix → verify with tests\n"
-                "3. Code review: security, performance, maintainability, design patterns\n"
-                "4. Self-discipline: study existing code before writing, match project style, run tests before reporting done\n"
-                "5. Self-evolution: you can read, analyze, and modify Weather Agents' own source to improve the system"
+                "Top-tier engineer: type-safe code, real error handling, debugging by root cause, "
+                "reviewing for security & perf. You can read and modify Weather Agents' own source."
             )
         else:
             wisdom = (
                 "\n\n## 工程能力\n"
-                "你是顶级编程智能体：\n"
-                "1. 代码质量：类型安全、错误处理、可读性、可测试性\n"
-                "2. 调试：定位根因 → 理解 → 修复 → 用测试验证\n"
-                "3. 代码审查：安全性、性能、可维护性、设计模式\n"
-                "4. 自律：先阅读既有代码再动手，风格与项目保持一致，完成前跑测试\n"
-                "5. 自我进化：你可以阅读、分析和修改 Weather Agents 自身代码来改进系统"
+                "顶级工程师:类型安全、真实的错误处理、按根因调试、按安全与性能审查。"
+                "你可以阅读和修改 Weather Agents 自身源码。"
             )
         return prompt + wisdom
 
@@ -1597,9 +1562,11 @@ class BaseAgent:
         if _os.environ.get("WA_NO_EXTRACT") == "1":
             return
         try:
-            every_n = int(_os.environ.get("WA_EXTRACT_EVERY_N", "10"))
+            # 默认从 10 提到 20: 抽取是次要的 LLM 调用,fact 命中率不高的项目
+            # 每 10 轮跑一次纯属烧 token。WA_EXTRACT_EVERY_N 仍可手动调低。
+            every_n = int(_os.environ.get("WA_EXTRACT_EVERY_N", "20"))
         except ValueError:
-            every_n = 10
+            every_n = 20
         if every_n <= 0:
             return
 
@@ -1757,8 +1724,14 @@ class BaseAgent:
         self,
         max_iterations: int | None = None,
         on_status: Callable[[str], None] | None = None,
+        *,
+        ephemeral: bool = False,
     ) -> LLMResponse:
-        """LLM reasoning loop with tool calling support."""
+        """LLM reasoning loop with tool calling support.
+
+        ephemeral=True 时所有 assistant/tool 中间消息不写 SQLite —— 供
+        orchestration sub-task 使用,避免污染 chat 会话历史。
+        """
         mi = max_iterations if max_iterations is not None else self._max_tool_rounds
         response = LLMResponse(content="")
         full_tool_names = self._active_tool_names()
@@ -1823,6 +1796,7 @@ class BaseAgent:
                     response.content or "",
                     tool_calls=response.tool_calls,
                     reasoning_content=response.reasoning_content,
+                    ephemeral=ephemeral,
                 )
 
                 for tc in response.tool_calls:
@@ -1859,6 +1833,7 @@ class BaseAgent:
                             parse_error,
                             name=tool_name,
                             tool_call_id=tc["id"],
+                            ephemeral=ephemeral,
                         )
                     elif tool:
                         if tool.dangerous:
@@ -1876,6 +1851,7 @@ class BaseAgent:
                                     f"[denied] dangerous tool '{tool_name}' blocked",
                                     name=tool_name,
                                     tool_call_id=tc["id"],
+                                    ephemeral=ephemeral,
                                 )
                                 continue
                         await self._set_state(AgentState.ACTING)
@@ -1885,6 +1861,7 @@ class BaseAgent:
                             result,
                             name=tool_name,
                             tool_call_id=tc["id"],
+                            ephemeral=ephemeral,
                         )
                     else:
                         suggestions = _suggest_tool_names(tool_name, self.tool_registry)
@@ -1894,6 +1871,7 @@ class BaseAgent:
                             f"Error: Tool '{tool_name}' does not exist.{hint}",
                             name=tool_name,
                             tool_call_id=tc["id"],
+                            ephemeral=ephemeral,
                         )
 
                 await self._set_state(AgentState.THINKING)
@@ -1942,26 +1920,23 @@ class BaseAgent:
             if ctx_data:
                 prompt += f"\nContext: {json.dumps(ctx_data, ensure_ascii=False)}"
 
-        # Orchestration-task isolation. Each sub-task is independent — the
-        # agent should not see (and be confused by) the running chat history
-        # from earlier turns, nor by sibling tasks the same agent already
-        # ran in this orchestration. Without this, fog's task 3 saw fog's
-        # task 1 + assistant + tool calls and produced output about SQLite
-        # debugging instead of vector databases. Save / restore the chat
-        # short_term around the task so direct `chat()` continuity is
-        # preserved for the user-facing path.
+        # Orchestration-task isolation. Sub-task 提示词不能污染 chat 会话:
+        # 1) 内存层: 替换 short_term, finally 中恢复;
+        # 2) 持久化层: add_message(ephemeral=True) 跳过 SQLite 写入。
+        # 否则下次 wa chat 时 resume_latest_session 会把 "Complete this task NOW…"
+        # 当成历史对话回放,导致 agent 答非所问。
         with self.memory._short_term_lock:
             saved_short_term = list(self.memory.short_term)
             self.memory.short_term = [m for m in saved_short_term if m.role == "system"]
 
-        self.memory.add_message("user", prompt)
+        self.memory.add_message("user", prompt, ephemeral=True)
 
         # Snapshot pre-task message count so we can scan ONLY this task's
         # tool calls afterwards (not unrelated history).
         pre_len = len(self.memory.short_term)
 
         try:
-            response = await self._llm_loop(on_status=on_status)
+            response = await self._llm_loop(on_status=on_status, ephemeral=True)
             # Inspect tool calls made during THIS task to find files the
             # agent wrote. Even if the model returned a placeholder reply
             # ("已完成"), the actual file paths come from the tool args we
@@ -1974,6 +1949,7 @@ class BaseAgent:
                 enriched,
                 tool_calls=response.tool_calls,
                 reasoning_content=response.reasoning_content,
+                ephemeral=True,
             )
             task.transition_to(TaskState.COMPLETED)
             task.result = enriched
