@@ -808,6 +808,29 @@
   .sidebar-head {
     padding: 18px 16px 12px;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sidebar-toggle-btn {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--hairline-soft);
+    border-radius: 3px;
+    color: var(--ink-faint);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .sidebar-toggle-btn:hover {
+    border-color: var(--seal);
+    color: var(--seal);
   }
 
   .sidebar-new-btn {
@@ -992,6 +1015,61 @@
     border-color: var(--seal);
   }
 
+  /* ── Sidebar collapsed state ── */
+  #sidebar.collapsed {
+    width: 56px;
+  }
+  #sidebar.collapsed .sidebar-toggle-btn svg {
+    transform: rotate(180deg);
+  }
+  #sidebar.collapsed .sidebar-btn-label,
+  #sidebar.collapsed .sidebar-label,
+  #sidebar.collapsed .sidebar-agent-name,
+  #sidebar.collapsed .sidebar-agent-spec,
+  #sidebar.collapsed .sidebar-history-title,
+  #sidebar.collapsed .sidebar-history-meta,
+  #sidebar.collapsed .sidebar-new-btn svg {
+    display: none;
+  }
+  #sidebar.collapsed .sidebar-head {
+    padding: 18px 10px 12px;
+    justify-content: center;
+  }
+  #sidebar.collapsed .sidebar-new-btn {
+    padding: 6px;
+    width: auto;
+    line-height: 1;
+    font-size: 16px;
+  }
+  #sidebar.collapsed .sidebar-new-btn::after {
+    content: '+';
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--ink-soft);
+  }
+  #sidebar.collapsed .sidebar-section {
+    padding: 0 8px 14px;
+  }
+  #sidebar.collapsed .sidebar-agent-item {
+    justify-content: center;
+    padding: 7px 4px;
+  }
+  #sidebar.collapsed .sidebar-agent-item.active {
+    border-left: none;
+    padding-left: 4px;
+  }
+  #sidebar.collapsed .sidebar-agent-emoji {
+    width: auto;
+    font-size: 21px;
+  }
+  #sidebar.collapsed .sidebar-history-item {
+    text-align: center;
+    padding: 7px 4px;
+  }
+  #sidebar.collapsed .sidebar-history-empty {
+    font-size: 10px;
+  }
+
   /* ── Desktop layout (≥900px) ── */
   @media (min-width: 900px) {
     body {
@@ -1044,18 +1122,23 @@
 
 <aside id="sidebar">
   <div class="sidebar-head">
+    <button id="sidebar-toggle-btn" class="sidebar-toggle-btn" title="收起侧边栏" aria-label="切换侧边栏">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="12" x2="21" y2="12"/><line x1="8" y1="6" x2="3" y2="12"/><line x1="8" y1="18" x2="3" y2="12"/>
+      </svg>
+    </button>
     <button id="new-conv-btn" class="sidebar-new-btn">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;">
         <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
       </svg>
-      新对话
+      <span class="sidebar-btn-label">新对话</span>
     </button>
   </div>
-  <div class="sidebar-section">
+  <div class="sidebar-section sidebar-agents-section">
     <h4 class="sidebar-label">agents</h4>
     <div id="sidebar-agents"></div>
   </div>
-  <div class="sidebar-section">
+  <div class="sidebar-section sidebar-history-section">
     <h4 class="sidebar-label">history</h4>
     <div id="sidebar-history">
       <div class="sidebar-history-empty">暂无对话</div>
@@ -2218,6 +2301,27 @@ UI.settingsBtn.addEventListener('click', () => {
   UI.settingsBtn.classList.toggle('open', open);
 });
 UI.noticeDismiss.addEventListener('click', () => UI.insecureNotice.classList.remove('show'));
+
+// ── Sidebar toggle ──
+const sidebarEl       = document.getElementById('sidebar');
+const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+
+function toggleSidebar() {
+  if (!sidebarEl) return;
+  const collapsed = sidebarEl.classList.toggle('collapsed');
+  try { localStorage.setItem('wa-sidebar-collapsed', collapsed ? '1' : '0'); } catch (_) {}
+}
+if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+
+// Restore sidebar state on load
+(function restoreSidebar() {
+  if (!sidebarEl) return;
+  try {
+    if (localStorage.getItem('wa-sidebar-collapsed') === '1') {
+      sidebarEl.classList.add('collapsed');
+    }
+  } catch (_) {}
+})();
 
 // ── Sidebar UI events ──
 const newConvBtn       = document.getElementById('new-conv-btn');
