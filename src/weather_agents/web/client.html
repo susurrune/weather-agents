@@ -534,6 +534,22 @@
   }
   @keyframes caret { 50% { opacity: 0; } }
 
+  /* Rendered markdown within agent body */
+  .turn.agent .body table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  .turn.agent .body th { border-bottom: 2px solid var(--seal); padding: 6px 12px; text-align: left; font-weight: 500; color: var(--ink); }
+  .turn.agent .body td { border-bottom: 1px solid var(--hairline); padding: 5px 12px; color: var(--ink-soft); }
+  .turn.agent .body pre { background: rgba(42,31,23,0.05); padding: 12px 16px; border-radius: 2px; overflow-x: auto; font-family: var(--mono); font-size: 13px; white-space: pre; }
+  .turn.agent .body code { font-family: var(--mono); font-size: 13px; background: rgba(42,31,23,0.06); padding: 1px 4px; border-radius: 2px; }
+  .turn.agent .body pre code { background: none; padding: 0; }
+  .turn.agent .body h2, .turn.agent .body h3, .turn.agent .body h4 { color: var(--ink); margin: 16px 0 8px; }
+  .turn.agent .body h2 { font-size: 19px; }
+  .turn.agent .body h3 { font-size: 17px; }
+  .turn.agent .body h4 { font-size: 15px; }
+  .turn.agent .body ul, .turn.agent .body ol { padding-left: 20px; margin: 8px 0; }
+  .turn.agent .body blockquote { border-left: 2px solid var(--amber-soft); margin: 8px 0; padding: 4px 14px; color: var(--ink-soft); font-style: italic; }
+  .turn.agent .body p { margin: 8px 0; }
+  .turn.agent .body hr { border: none; border-top: 1px solid var(--hairline); margin: 16px 0; }
+
   /* System / status notes — printer's mark style */
   .sys {
     align-self: center;
@@ -1362,6 +1378,82 @@ const UI = {
   micCueText:      document.getElementById('mic-cue-text'),
 };
 
+// ── Lightweight markdown → HTML renderer ──
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = _esc(text);
+
+  // Code blocks (``` ... ```) — capture before other rules
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+    '<pre><code class="' + _esc(lang) + '">' + code.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code></pre>');
+
+  // Inline code (`code`)
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Bold (**text**)
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Italic (*text*) — but not inside words or already-tagged content
+  html = html.replace(/(?<!\w)\*([^*]+)\*(?!\w)/g, '<em>$1</em>');
+
+  // Headings (### Title) — at line start
+  html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+
+  // Unordered lists (- item or * item)
+  html = html.replace(/^[*-] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+
+  // Ordered lists (1. item)
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Horizontal rules (--- or ***)
+  html = html.replace(/^(---|\*\*\*)$/gm, '<hr>');
+
+  // Blockquotes (> text)
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+  // Tables — match lines with | separators
+  html = html.replace(/((?:^\|.+\|\n?)+)/gm, (tableBlock) => {
+    const lines = tableBlock.trim().split('\n').filter(l => l.includes('|'));
+    if (lines.length < 2) return tableBlock;
+    // Detect header separator (|---|---|)
+    const hasHeader = /^\|[\s:-]+\|/.test(lines[1]);
+    const rows = hasHeader ? [lines[0], ...lines.slice(2)] : lines;
+    const headerRow = hasHeader ? lines[0] : null;
+
+    let table = '<table>';
+    if (headerRow) {
+      table += '<thead><tr>';
+      headerRow.split('|').filter(c => c.trim()).forEach(c => {
+        table += '<th>' + c.trim() + '</th>';
+      });
+      table += '</tr></thead>';
+    }
+    table += '<tbody>';
+    rows.forEach(row => {
+      table += '<tr>';
+      row.split('|').filter(c => c.trim()).forEach(c => {
+        table += '<td>' + c.trim() + '</td>';
+      });
+      table += '</tr>';
+    });
+    table += '</tbody></table>';
+    return table;
+  });
+
+  // Paragraphs: blank-line-separated blocks that aren't already HTML tags
+  html = html.replace(/(?:^|\n\n)((?!(?:<[a-z]|<\/))[^<][^\n]+)(?=\n\n|$)/gm, (_, p) => {
+    const trimmed = p.trim();
+    if (!trimmed) return '';
+    if (/^<(h[2-4]|ul|ol|li|table|thead|tbody|tr|th|td|pre|blockquote|hr)/.test(trimmed)) return '\n\n' + trimmed;
+    return '\n\n<p>' + trimmed + '</p>';
+  });
+
+  return html;
+}
+
 // ── Utility helpers ──
 function _esc(s) {
   const div = document.createElement('div');
@@ -1463,7 +1555,7 @@ async function loadConversation(id) {
       if (msg.role === 'agent') {
         tag.textContent = (conv.agent_display || 'agent') + ' —';
       }
-      turn.querySelector('.body').textContent = msg.text;
+      turn.querySelector('.body').innerHTML = msg.role === 'agent' ? renderMarkdown(msg.text) : _esc(msg.text);
     }
   }
   scrollBottom();
@@ -1631,7 +1723,7 @@ function handleMsg(msg) {
       hideThinking();
       if (currentAgentMsgEl && lastFullText) {
         const body = currentAgentMsgEl.querySelector('.body');
-        if (body) body.textContent = lastFullText;
+        if (body) body.innerHTML = renderMarkdown(lastFullText);
         currentAgentMsgEl.classList.remove('streaming');
         scrollBottom();
       } else if (currentAgentMsgEl) {
