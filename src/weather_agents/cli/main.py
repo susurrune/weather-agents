@@ -4119,6 +4119,20 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
             await own_ctx.close_all()
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"})
+
+
+def _should_auto_enable_https(host: str, all_ips: list[str]) -> bool:
+    # Loopback bind = local-only or behind reverse proxy / tunnel (cloudflared,
+    # nginx, ngrok). Self-signed TLS there would force the proxy to trust an
+    # untrusted cert; with plain HTTP it just works. Only enable auto-HTTPS
+    # when binding a non-loopback address AND we actually have a LAN IP for
+    # mobile clients to hit directly.
+    if host in _LOOPBACK_HOSTS:
+        return False
+    return bool(all_ips)
+
+
 async def _run_voice_server(
     host: str,
     port: int,
@@ -4164,7 +4178,7 @@ async def _run_voice_server(
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_context.load_cert_chain(cert_file, key_file)
         is_https = True
-    elif all_ips:
+    elif _should_auto_enable_https(host, all_ips):
         generated_cert, generated_key = ensure_self_signed_cert(all_ips)
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_context.load_cert_chain(generated_cert, generated_key)

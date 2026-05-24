@@ -1554,3 +1554,39 @@ class TestEscPollerCIRobustness:
 
             # Must not raise — broken poller is acceptable, chat completes.
             await _run_interactive("fog")
+
+
+class TestVoiceAutoHttps:
+    """When binding loopback the user is local-only or behind a reverse proxy
+    (cloudflared / nginx / ngrok). Auto self-signed HTTPS breaks the proxy path
+    because plain HTTP probes against a TLS socket return EOF."""
+
+    def test_loopback_v4_disables_auto_https(self):
+        from weather_agents.cli.main import _should_auto_enable_https
+
+        assert _should_auto_enable_https("127.0.0.1", ["192.168.1.10"]) is False
+
+    def test_loopback_localhost_disables_auto_https(self):
+        from weather_agents.cli.main import _should_auto_enable_https
+
+        assert _should_auto_enable_https("localhost", ["192.168.1.10"]) is False
+
+    def test_loopback_v6_disables_auto_https(self):
+        from weather_agents.cli.main import _should_auto_enable_https
+
+        assert _should_auto_enable_https("::1", ["192.168.1.10"]) is False
+
+    def test_wildcard_bind_with_lan_enables_auto_https(self):
+        from weather_agents.cli.main import _should_auto_enable_https
+
+        assert _should_auto_enable_https("0.0.0.0", ["192.168.1.10"]) is True
+
+    def test_wildcard_bind_without_lan_disables_auto_https(self):
+        from weather_agents.cli.main import _should_auto_enable_https
+
+        assert _should_auto_enable_https("0.0.0.0", []) is False
+
+    def test_specific_lan_ip_enables_auto_https(self):
+        from weather_agents.cli.main import _should_auto_enable_https
+
+        assert _should_auto_enable_https("192.168.1.10", ["192.168.1.10"]) is True

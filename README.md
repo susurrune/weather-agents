@@ -122,6 +122,24 @@ wa config set tts.api_key 你的火山引擎APIKey
 wa voice
 ```
 
+#### 同一 Wi-Fi 下用手机访问
+
+`wa voice` 默认绑 `0.0.0.0`，检测到内网 IP 会自动生成自签证书启用 HTTPS（浏览器在非 localhost 下访问麦克风强制要求 HTTPS）。启动后控制台会列出 `https://<内网 IP>:8765`，手机连同一 Wi-Fi 直接打开即可（首次会提示自签证书警告，点继续）。
+
+#### 跨网络访问（cloudflared / ngrok / nginx）
+
+需要在公司、外网或 4G/5G 下访问时，把本地服务套一层隧道：
+
+```bash
+# 终端 A：本地起 HTTP 服务（loopback 绑定会跳过自动 HTTPS，避免回源 TLS 握手失败）
+wa voice --host 127.0.0.1 --port 8765
+
+# 终端 B：起 Cloudflare Quick Tunnel，输出形如 https://xxx.trycloudflare.com
+cloudflared tunnel --url http://localhost:8765
+```
+
+任何反向代理（nginx、Caddy、ngrok）都适用同样的模式——`--host 127.0.0.1` 让 wa voice 走纯 HTTP，由代理那侧负责对外的 HTTPS 证书。
+
 ### 升级 / 卸载
 
 ```bash
