@@ -1169,6 +1169,10 @@
     <span></span>
   </div>
   <div class="field check">
+    <input type="checkbox" id="tts-enabled" checked>
+    <label for="tts-enabled">语音播报</label>
+  </div>
+  <div class="field check">
     <input type="checkbox" id="auto-listen">
     <label for="auto-listen">说完自动继续聆听</label>
   </div>
@@ -1345,6 +1349,7 @@ let currentAgent = { name: 'fair', display_name: '晴', emoji: '☼', specialty:
 let agentList = [];
 let recognition = null;
 let autoListenEnabled = false;
+let ttsEnabled = true;
 let currentAgentMsgEl = null;
 
 // Conversation history state
@@ -1364,6 +1369,7 @@ const UI = {
   ttsRate:         document.getElementById('tts-rate'),
   ttsRateVal:      document.getElementById('tts-rate-val'),
   recLang:         document.getElementById('rec-lang'),
+  ttsEnabled:      document.getElementById('tts-enabled'),
   autoListen:      document.getElementById('auto-listen'),
   settingsBtn:     document.getElementById('settings-btn'),
   settings:        document.getElementById('settings'),
@@ -1719,7 +1725,7 @@ function handleMsg(msg) {
     case 'done':
       isWaitingResponse = false;
       lastFullText = msg.full_text || '';
-      serverTtsPending = !!msg.tts;
+      serverTtsPending = !!msg.tts && ttsEnabled;
       hideThinking();
       if (currentAgentMsgEl && lastFullText) {
         const body = currentAgentMsgEl.querySelector('.body');
@@ -1751,15 +1757,26 @@ function handleMsg(msg) {
       }
       break;
     case 'audio_start':
+      if (!ttsEnabled) break;
       pendingAudioB64 = '';
       setStatus('speaking');
       setSpeakingVisual(true);
       break;
     case 'audio_chunk':
+      if (!ttsEnabled) break;
       pendingAudioChunks.push(msg.data);
       break;
     case 'audio_end':
       if (serverTtsTimeoutId) { clearTimeout(serverTtsTimeoutId); serverTtsTimeoutId = null; }
+      if (!ttsEnabled) {
+        pendingAudioChunks = [];
+        serverTtsPending = false;
+        isSpeaking = false;
+        setSpeakingVisual(false);
+        setStatus('connected');
+        tryAutoListen();
+        break;
+      }
       if (msg.error) {
         serverTtsPending = false;
         pendingAudioChunks = [];
@@ -2268,6 +2285,7 @@ UI.textInput.addEventListener('keydown', (e) => {
 UI.reconnectBar.addEventListener('click', reconnect);
 UI.ttsRate.addEventListener('input', () => { UI.ttsRateVal.textContent = UI.ttsRate.value; });
 UI.recLang.addEventListener('change', () => { if (recognition) recognition.lang = UI.recLang.value; });
+UI.ttsEnabled.addEventListener('change', () => { ttsEnabled = UI.ttsEnabled.checked; });
 UI.autoListen.addEventListener('change', () => { autoListenEnabled = UI.autoListen.checked; });
 UI.settingsBtn.addEventListener('click', () => {
   const open = UI.settings.classList.toggle('open');

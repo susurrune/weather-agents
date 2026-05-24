@@ -204,42 +204,56 @@ class VoiceServer:
                     elif msg_type == "switch_agent":
                         name = data.get("agent", "")
                         async with self._ws_lock:
-                            # Close THIS WS's old session before switching
-                            old_name = my_agent_name
-                            if old_name != name:
-                                old_agent = self._agent_map.get(old_name)
-                                if old_agent and session_id:
-                                    with contextlib.suppress(Exception):
-                                        await old_agent.memory.delete_session(session_id)
-                                    # Drop from cleanup list — already deleted.
-                                    _open_sessions = [
-                                        (a, s) for a, s in _open_sessions if s != session_id
-                                    ]
-                            if name in self._agent_map:
-                                self._current_agent_name = name
-                                my_agent_name = name
-                                await self._agent_map[name].init()
-                                await self._agent_map[name].memory.create_session()
-                                new_sid = self._agent_map[name].memory.get_active_session()
-                                if new_sid:
-                                    session_id = new_sid
-                                    _open_sessions.append((my_agent_name, new_sid))
-                                with contextlib.suppress(Exception):
-                                    await ws.send_json(
-                                        {
-                                            "type": "agent_switched",
-                                            "agent": name,
-                                            "display_name": self._agent_map[name].display_name,
-                                            "emoji": self._agent_map[name].emoji,
-                                            "specialty": self._agent_map[name].specialty,
-                                            "session_id": new_sid,
-                                        }
-                                    )
-                            else:
+                            if name not in self._agent_map:
                                 with contextlib.suppress(Exception):
                                     await ws.send_json(
                                         {"type": "error", "text": f"unknown agent: {name}"}
                                     )
+                                continue
+                            if name == my_agent_name:
+                                continue
+                            # Init the new agent FIRST — if it fails we keep
+                            # the current agent and session intact.
+                            try:
+                                await self._agent_map[name].init()
+                                await self._agent_map[name].memory.create_session()
+                            except Exception as exc:
+                                _log.warning(
+                                    "voice_ws_switch_agent_failed agent=%s err=%s", name, exc
+                                )
+                                with contextlib.suppress(Exception):
+                                    await ws.send_json(
+                                        {
+                                            "type": "error",
+                                            "text": f"failed to switch to {name}",
+                                        }
+                                    )
+                                continue
+                            # New agent ready — teardown old session and switch.
+                            old_agent = self._agent_map.get(my_agent_name)
+                            if old_agent and session_id:
+                                with contextlib.suppress(Exception):
+                                    await old_agent.memory.delete_session(session_id)
+                                _open_sessions = [
+                                    (a, s) for a, s in _open_sessions if s != session_id
+                                ]
+                            self._current_agent_name = name
+                            my_agent_name = name
+                            new_sid = self._agent_map[name].memory.get_active_session()
+                            if new_sid:
+                                session_id = new_sid
+                                _open_sessions.append((my_agent_name, new_sid))
+                            with contextlib.suppress(Exception):
+                                await ws.send_json(
+                                    {
+                                        "type": "agent_switched",
+                                        "agent": name,
+                                        "display_name": self._agent_map[name].display_name,
+                                        "emoji": self._agent_map[name].emoji,
+                                        "specialty": self._agent_map[name].specialty,
+                                        "session_id": new_sid,
+                                    }
+                                )
                 elif msg.type == web.WSMsgType.ERROR:
                     _log.warning("voice_ws_error session=%s err=%s", session_id, ws.exception())
                     break
