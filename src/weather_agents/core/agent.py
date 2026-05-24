@@ -348,7 +348,12 @@ class BaseAgent:
             skills = self.get_available_skills()
             if not skills:
                 return "No skills available."
-            lines = [f"• {s['name']}: {s['description']}" for s in skills]
+            max_name = max((len(s["name"]) for s in skills), default=0)
+            lines: list[str] = []
+            for s in skills:
+                name = s["name"].ljust(max_name)
+                active = " ★" if s.get("active") else ""
+                lines.append(f"  {name} — {s['description']}{active}")
             return "Available skills:\n" + "\n".join(lines)
 
         self.tool_registry.register(
