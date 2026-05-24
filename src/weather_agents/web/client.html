@@ -456,7 +456,6 @@
   .turn {
     display: flex;
     flex-direction: column;
-    max-width: 72%;
     margin-bottom: 32px;
     animation: turn-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -465,15 +464,17 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 
-  /* Agent: left side */
+  /* Agent: left side, wider for CJK content */
   .turn.agent {
     align-self: flex-start;
     align-items: flex-start;
+    max-width: 640px;
   }
-  /* User: right side */
+  /* User: right side, narrower for conversational brevity */
   .turn.user {
     align-self: flex-end;
     align-items: flex-end;
+    max-width: 480px;
   }
 
   .turn .tag {
@@ -752,7 +753,9 @@
     #settings { padding: 12px 16px 16px; }
     .field { grid-template-columns: 90px 1fr auto; gap: 10px; font-size: 12px; }
     .column { padding: 18px 16px 40px; }
-    .turn { max-width: 88%; margin-bottom: 24px; }
+    .turn { margin-bottom: 24px; }
+    .turn.agent { max-width: 90%; }
+    .turn.user { max-width: 82%; }
     .turn .tag { font-size: 11px; }
     .turn .body { font-size: 15.5px; line-height: 1.72; padding: 10px 14px; }
     .turn.user .body { font-size: 14.5px; }
@@ -779,7 +782,8 @@
     .brand .wordmark { font-size: 24px; }
     .brand .meta { font-size: 10px; }
     .column { padding: 14px 12px 36px; }
-    .turn { max-width: 94%; }
+    .turn.agent { max-width: 94%; }
+    .turn.user { max-width: 88%; }
     .turn .tag { font-size: 10px; }
     .compose { padding: 10px 12px calc(12px + var(--safe-bottom)); }
     .compose-grid { gap: 8px; }
@@ -1125,7 +1129,7 @@
     #main-wrap .reconnect-bar  { max-width: none; }
     #main-wrap .notice         { max-width: none; }
     #main-wrap .compose        { max-width: none; padding-left: 36px; padding-right: 36px; }
-    #main-wrap .stage .column  { max-width: 780px; padding-left: 36px; padding-right: 36px; }
+    #main-wrap .stage .column  { max-width: 880px; padding-left: 36px; padding-right: 36px; }
     #main-wrap .history-banner { padding-left: 36px; padding-right: 36px; }
 
     .colophon {
