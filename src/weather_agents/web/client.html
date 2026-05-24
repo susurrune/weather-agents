@@ -428,9 +428,12 @@
   }
 
   .column {
+    display: flex;
+    flex-direction: column;
     max-width: var(--column-max);
     margin: 0 auto;
     padding: 32px 28px 60px;
+    width: 100%;
   }
 
   /* Welcome epigraph — italic, like a printed dedication */
@@ -533,6 +536,7 @@
 
   /* System / status notes — printer's mark style */
   .sys {
+    align-self: center;
     font-family: var(--serif-body);
     font-style: italic;
     font-size: 12px;
