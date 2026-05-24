@@ -535,20 +535,23 @@
   @keyframes caret { 50% { opacity: 0; } }
 
   /* Rendered markdown within agent body */
-  .turn.agent .body table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  .turn.agent .body table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
   .turn.agent .body th { border-bottom: 2px solid var(--seal); padding: 6px 12px; text-align: left; font-weight: 500; color: var(--ink); }
   .turn.agent .body td { border-bottom: 1px solid var(--hairline); padding: 5px 12px; color: var(--ink-soft); }
-  .turn.agent .body pre { background: rgba(42,31,23,0.05); padding: 12px 16px; border-radius: 2px; overflow-x: auto; font-family: var(--mono); font-size: 13px; white-space: pre; }
+  .turn.agent .body pre { background: rgba(42,31,23,0.05); padding: 12px 16px; border-radius: 2px; overflow-x: auto; font-family: var(--mono); font-size: 13px; white-space: pre; margin: 6px 0; }
   .turn.agent .body code { font-family: var(--mono); font-size: 13px; background: rgba(42,31,23,0.06); padding: 1px 4px; border-radius: 2px; }
   .turn.agent .body pre code { background: none; padding: 0; }
-  .turn.agent .body h2, .turn.agent .body h3, .turn.agent .body h4 { color: var(--ink); margin: 16px 0 8px; }
+  .turn.agent .body h2, .turn.agent .body h3, .turn.agent .body h4 { color: var(--ink); margin: 12px 0 4px; white-space: normal; }
   .turn.agent .body h2 { font-size: 19px; }
   .turn.agent .body h3 { font-size: 17px; }
   .turn.agent .body h4 { font-size: 15px; }
-  .turn.agent .body ul, .turn.agent .body ol { padding-left: 20px; margin: 8px 0; }
-  .turn.agent .body blockquote { border-left: 2px solid var(--amber-soft); margin: 8px 0; padding: 4px 14px; color: var(--ink-soft); font-style: italic; }
-  .turn.agent .body p { margin: 8px 0; }
-  .turn.agent .body hr { border: none; border-top: 1px solid var(--hairline); margin: 16px 0; }
+  .turn.agent .body ul, .turn.agent .body ol { padding-left: 20px; margin: 4px 0; white-space: normal; }
+  .turn.agent .body blockquote { border-left: 2px solid var(--amber-soft); margin: 6px 0; padding: 4px 14px; color: var(--ink-soft); font-style: italic; white-space: normal; }
+  .turn.agent .body p { margin: 0 0 4px; white-space: normal; }
+  .turn.agent .body hr { border: none; border-top: 1px solid var(--hairline); margin: 12px 0; }
+  .turn.agent .body li { white-space: normal; }
+  .turn.agent .body > :first-child { margin-top: 0; }
+  .turn.agent .body > :last-child { margin-bottom: 0; }
 
   /* System / status notes — printer's mark style */
   .sys {
@@ -1457,6 +1460,7 @@ function renderMarkdown(text) {
     return '\n\n<p>' + trimmed + '</p>';
   });
 
+  html = html.replace(/>\n+</g, '><');
   return html;
 }
 
