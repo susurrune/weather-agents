@@ -938,12 +938,15 @@ class TestToolCallSignature:
     call always folds to the same bucket; otherwise the loop counter
     never accumulates and the detector is silently disabled."""
 
-    def test_file_edit_keyed_on_path(self):
+    def test_file_edit_keyed_on_path_and_old_text(self):
         from weather_agents.core.agent import _tool_call_signature
 
         s1 = _tool_call_signature("edit_file", {"path": "/a/b.js", "old_text": "x"})
         s2 = _tool_call_signature("edit_file", {"path": "/a/b.js", "old_text": "y"})
-        assert s1 == s2  # different patches on same file -> same loop bucket
+        assert s1 != s2  # different patches on same file -> different bucket
+        # Same old_text on same path -> same bucket
+        s1b = _tool_call_signature("edit_file", {"path": "/a/b.js", "old_text": "x"})
+        assert s1 == s1b
         s3 = _tool_call_signature("edit_file", {"path": "/a/c.js", "old_text": "x"})
         assert s1 != s3
 
