@@ -81,11 +81,24 @@ wa task "搭建微服务项目"
 
 ### 安装
 
+**前提：** 需要 Python 3.11+、pipx 和 Git。
+
 ```bash
+# 如果没有 pipx
+pip install pipx
+
+# 安装 weather-agents
 pipx install git+https://github.com/susurrune/weather-agents.git
 ```
 
 > 装完后 `wa` 会出现在 `~/.local/bin` 或 `%USERPROFILE%\.local\bin`。如果命令不可用，运行 `pipx ensurepath` 重开终端。
+
+> **国内用户：** 访问 GitHub 慢时，可先克隆到本地再安装：
+> ```bash
+> git clone --depth=1 https://github.com/susurrune/weather-agents.git
+> pipx install ./weather-agents
+> ```
+> 如果克隆也慢，给 git 设代理：`git config --global http.proxy http://127.0.0.1:你的端口`
 
 ### 配置
 
@@ -112,11 +125,21 @@ wa config set model.rain claude-sonnet-4-6
 ### 语音聊天配置
 
 ```bash
-# 方式一（最快）：环境变量，无需写配置文件
-set DOUBAO_TTS_API_KEY=你的火山引擎APIKey
+# 方式一（最快）：环境变量，无需写配置文件（PowerShell）
+$env:DOUBAO_TTS_API_KEY = "你的火山引擎APIKey"
+# 或永久保存
+[System.Environment]::SetEnvironmentVariable("DOUBAO_TTS_API_KEY", "你的密钥", "User")
 
 # 方式二：一条命令即可
 wa config set tts.api_key 你的火山引擎APIKey
+
+# 查看可用音色
+wa voice list
+
+# 切换音色
+wa voice select uranus    # 乌拉努斯 - 大气知性女声
+wa voice select cancan    # 灿灿 - 活力甜美少女音
+wa voice select xiaohe    # 小河 - 温柔自然女声
 
 # 启动语音服务器
 wa voice
