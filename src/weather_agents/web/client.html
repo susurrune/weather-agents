@@ -790,9 +790,280 @@
       transition-duration: 0.01ms !important;
     }
   }
+
+  /* ── Main wrapper ── */
+  #main-wrap {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    display: none;
+  }
+
+  .sidebar-head {
+    padding: 18px 16px 12px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-new-btn {
+    width: 100%;
+    padding: 9px 14px;
+    background: transparent;
+    border: 1px solid var(--hairline);
+    border-radius: 3px;
+    color: var(--ink-soft);
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+    text-align: center;
+  }
+  .sidebar-new-btn:hover {
+    border-color: var(--seal);
+    color: var(--seal);
+    background: rgba(167,58,42,0.04);
+  }
+
+  .sidebar-section {
+    padding: 0 16px 14px;
+  }
+
+  .sidebar-label {
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    color: var(--ink-faint);
+    text-transform: lowercase;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--hairline-soft);
+    font-weight: 300;
+  }
+
+  .sidebar-agent-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.2s;
+    margin-bottom: 1px;
+  }
+  .sidebar-agent-item:hover {
+    background: rgba(184,116,26,0.06);
+  }
+  .sidebar-agent-item.active {
+    background: rgba(184,116,26,0.09);
+    border-left: 2px solid var(--amber);
+    padding-left: 8px;
+  }
+  .sidebar-agent-emoji {
+    font-size: 19px;
+    flex-shrink: 0;
+    width: 26px;
+    text-align: center;
+    line-height: 1;
+  }
+  .sidebar-agent-name {
+    font-family: var(--serif-display);
+    font-size: 14px;
+    color: var(--ink);
+    line-height: 1.3;
+    display: block;
+  }
+  .sidebar-agent-spec {
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 11px;
+    color: var(--ink-faint);
+    line-height: 1.3;
+    display: block;
+  }
+
+  #sidebar-history {
+    max-height: 360px;
+    overflow-y: auto;
+  }
+  .sidebar-history-item {
+    padding: 7px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.2s;
+    margin-bottom: 1px;
+  }
+  .sidebar-history-item:hover {
+    background: rgba(184,116,26,0.06);
+  }
+  .sidebar-history-item.active {
+    background: rgba(90,126,138,0.08);
+  }
+  .sidebar-history-title {
+    font-family: var(--serif-body);
+    font-size: 13px;
+    color: var(--ink);
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+  }
+  .sidebar-history-meta {
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 10px;
+    color: var(--ink-faint);
+    display: flex;
+    gap: 6px;
+    margin-top: 1px;
+  }
+  .sidebar-history-empty {
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-whisper);
+    padding: 6px 0;
+    text-align: center;
+  }
+
+  /* ── History banner ── */
+  .history-banner {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 28px;
+    background: rgba(90,126,138,0.06);
+    border-top: 1px solid rgba(90,126,138,0.12);
+    border-bottom: 1px solid rgba(90,126,138,0.12);
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-soft);
+    flex-shrink: 0;
+  }
+  .history-banner.show {
+    display: flex;
+  }
+  .history-banner .back-btn {
+    background: none;
+    border: 1px solid var(--hairline);
+    color: var(--ink-soft);
+    cursor: pointer;
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 12px;
+    padding: 3px 12px;
+    border-radius: 3px;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .history-banner .back-btn:hover {
+    border-color: var(--seal);
+    color: var(--seal);
+  }
+  .history-banner .history-label {
+    flex: 1;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-faint);
+  }
+  .history-banner .danger-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--ink-faint);
+    cursor: pointer;
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 3px;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .history-banner .danger-btn:hover {
+    color: var(--seal);
+    border-color: var(--seal);
+  }
+
+  /* ── Desktop layout (≥900px) ── */
+  @media (min-width: 900px) {
+    body {
+      flex-direction: row;
+    }
+
+    #sidebar {
+      display: flex;
+      flex-direction: column;
+      width: 280px;
+      flex-shrink: 0;
+      height: 100%;
+      overflow-y: auto;
+      border-right: 1px solid var(--hairline);
+      background: rgba(235,224,199,0.50);
+      position: relative;
+      z-index: 2;
+    }
+    #sidebar::-webkit-scrollbar {
+      width: 4px;
+    }
+    #sidebar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    #sidebar::-webkit-scrollbar-thumb {
+      background: var(--ink-whisper);
+      border-radius: 2px;
+    }
+
+    #main-wrap {
+      flex: 1;
+      min-width: 0;
+    }
+
+    #main-wrap header          { max-width: none; padding-left: 36px; padding-right: 36px; }
+    #main-wrap #settings       { max-width: none; padding-left: 36px; padding-right: 36px; }
+    #main-wrap .reconnect-bar  { max-width: none; }
+    #main-wrap .notice         { max-width: none; }
+    #main-wrap .compose        { max-width: none; padding-left: 36px; padding-right: 36px; }
+    #main-wrap .stage .column  { max-width: 780px; padding-left: 36px; padding-right: 36px; }
+    #main-wrap .history-banner { padding-left: 36px; padding-right: 36px; }
+
+    .colophon {
+      display: none;
+    }
+  }
 </style>
 </head>
 <body>
+
+<aside id="sidebar">
+  <div class="sidebar-head">
+    <button id="new-conv-btn" class="sidebar-new-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      新对话
+    </button>
+  </div>
+  <div class="sidebar-section">
+    <h4 class="sidebar-label">agents</h4>
+    <div id="sidebar-agents"></div>
+  </div>
+  <div class="sidebar-section">
+    <h4 class="sidebar-label">history</h4>
+    <div id="sidebar-history">
+      <div class="sidebar-history-empty">暂无对话</div>
+    </div>
+  </div>
+</aside>
+
+<div id="main-wrap">
 
 <header>
   <div class="seal" id="seal" aria-hidden="true">晴</div>
@@ -858,6 +1129,12 @@
   &nbsp;连接已断开,点击重新连接
 </div>
 
+<div id="history-banner" class="history-banner">
+  <button class="back-btn" id="history-back-btn">&larr; 返回当前对话</button>
+  <span class="history-label"></span>
+  <button class="danger-btn" id="history-delete-btn">删除</button>
+</div>
+
 <div class="stage" id="stage">
   <div class="column" id="column">
     <div class="welcome" id="welcome">
@@ -899,9 +1176,98 @@
   </div>
 </div>
 
+</div><!-- #main-wrap -->
+
 <script>
 (function() {
 'use strict';
+
+// ── IndexedDB persistence ──
+const DB_NAME   = 'fair-agent';
+const DB_VER    = 1;
+const STORE     = 'conversations';
+const MAX_CONVS = 50;
+
+function idb_open() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('IndexedDB unavailable'));
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        const store = db.createObjectStore(STORE, { keyPath: 'id' });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+    };
+    r.onsuccess = (e) => resolve(e.target.result);
+    r.onerror   = (e) => reject(e.target.error);
+  });
+}
+
+function idb_tx(mode, fn) {
+  return idb_open().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, mode);
+    const store = tx.objectStore(STORE);
+    fn(store, resolve, reject, tx);
+  }));
+}
+
+function idb_save(conv) {
+  return idb_tx('readwrite', (store, resolve) => {
+    store.put(conv);
+    resolve();
+  });
+}
+
+function idb_get(id) {
+  return idb_tx('readonly', (store, resolve, reject) => {
+    const r = store.get(id);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror   = () => reject(r.error);
+  });
+}
+
+function idb_list() {
+  return idb_tx('readonly', (store, resolve) => {
+    const r = store.index('timestamp').getAll();
+    r.onsuccess = () => resolve(r.result || []);
+  });
+}
+
+function idb_delete(id) {
+  return idb_tx('readwrite', (store, resolve) => {
+    store.delete(id);
+    resolve();
+  });
+}
+
+async function idb_prune() {
+  try {
+    const db = await idb_open();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      const countR = store.count();
+      countR.onsuccess = () => {
+        const count = countR.result;
+        if (count <= MAX_CONVS) return resolve();
+        const excess = count - MAX_CONVS;
+        let deleted  = 0;
+        const cursorR = store.index('timestamp').openCursor(null, 'next');
+        cursorR.onsuccess = (e) => {
+          const cur = e.target.result;
+          if (cur && deleted < excess) {
+            cur.delete();
+            deleted++;
+            cur.continue();
+          } else {
+            resolve();
+          }
+        };
+      };
+    });
+  } catch (_) { /* DB unavailable, skip prune */ }
+}
 
 // ── State ──
 let ws = null;
@@ -923,6 +1289,12 @@ let agentList = [];
 let recognition = null;
 let autoListenEnabled = false;
 let currentAgentMsgEl = null;
+
+// Conversation history state
+let currentConversationId = null;
+let currentMessages       = [];
+let isViewingHistory      = false;
+let viewedConversationId  = null;
 
 const UI = {
   stage:           document.getElementById('stage'),
@@ -950,6 +1322,243 @@ const UI = {
   micCue:          document.getElementById('mic-cue'),
   micCueText:      document.getElementById('mic-cue-text'),
 };
+
+// ── Utility helpers ──
+function _esc(s) {
+  const div = document.createElement('div');
+  div.textContent = s || '';
+  return div.innerHTML;
+}
+
+function _fmtDate(ts) {
+  const d    = new Date(ts);
+  const now  = new Date();
+  const days = Math.floor((now - d) / 86400000);
+  const time = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  if (days === 0) return '今天 ' + time;
+  if (days === 1) return '昨天 ' + time;
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + time;
+}
+
+function _convTitle(conv) {
+  const um = conv.messages.find(m => m.role === 'user');
+  if (um) {
+    const t = um.text.trim();
+    return t.length > 30 ? t.slice(0, 30) + '…' : t;
+  }
+  return (conv.agent_display || '对话') + ' · ' + _fmtDate(conv.timestamp);
+}
+
+// ── Conversation persistence ──
+function trackUserMessage(text) {
+  if (isViewingHistory) return;
+  if (!currentConversationId) {
+    currentConversationId = 'conv_' + Date.now();
+  }
+  currentMessages.push({ role: 'user', text, timestamp: Date.now() });
+  persistCurrentConversation();
+}
+
+function trackAgentMessage(text) {
+  if (isViewingHistory || !currentConversationId) return;
+  currentMessages.push({ role: 'agent', text, timestamp: Date.now() });
+  persistCurrentConversation();
+}
+
+async function persistCurrentConversation() {
+  if (!currentConversationId || isViewingHistory) return;
+  if (currentMessages.length === 0) return;
+  const conv = {
+    id:            currentConversationId,
+    agent_name:    currentAgent.name,
+    agent_display: currentAgent.display_name || currentAgent.name,
+    agent_emoji:   currentAgent.emoji || '',
+    timestamp:     currentMessages[0].timestamp,
+    messages:      currentMessages.map(m => ({ role: m.role, text: m.text, timestamp: m.timestamp })),
+  };
+  try {
+    await idb_save(conv);
+    await idb_prune();
+    renderSidebarHistory();
+  } catch (_) { /* IndexedDB may be unavailable — degrade silently */ }
+}
+
+function newConversation() {
+  if (!isViewingHistory && currentConversationId && currentMessages.length > 0) {
+    persistCurrentConversation();
+  }
+  if (isViewingHistory) {
+    exitHistoryViewSilent();
+  }
+  currentConversationId = null;
+  currentMessages       = [];
+  UI.column.querySelectorAll('.turn, .think, .sys').forEach(el => el.remove());
+  if (UI.welcome) {
+    if (!UI.welcome.isConnected) UI.column.appendChild(UI.welcome);
+    UI.welcome.style.display = '';
+  }
+  setComposeEnabled(true);
+  hideHistoryBanner();
+  renderSidebarHistory();
+  scrollBottom();
+}
+
+async function loadConversation(id) {
+  if (isViewingHistory && viewedConversationId === id) return;
+  if (!isViewingHistory && id === currentConversationId) return;
+
+  const conv = await idb_get(id);
+  if (!conv) return;
+
+  if (!isViewingHistory && currentConversationId && currentMessages.length > 0) {
+    await persistCurrentConversation();
+  }
+
+  isViewingHistory     = true;
+  viewedConversationId = id;
+
+  UI.column.querySelectorAll('.turn, .think, .sys').forEach(el => el.remove());
+  UI.welcome.style.display = 'none';
+
+  for (const msg of conv.messages) {
+    if (msg.role === 'system') {
+      addSysMsg(msg.text);
+    } else {
+      const turn = createTurn(msg.role);
+      const tag  = turn.querySelector('.tag');
+      if (msg.role === 'agent') {
+        tag.textContent = (conv.agent_display || 'agent') + ' —';
+      }
+      turn.querySelector('.body').textContent = msg.text;
+    }
+  }
+  scrollBottom();
+  setComposeEnabled(false);
+  showHistoryBanner(conv);
+  renderSidebarHistory();
+}
+
+function exitHistoryView() {
+  if (!isViewingHistory) return;
+  isViewingHistory     = false;
+  viewedConversationId = null;
+
+  UI.column.querySelectorAll('.turn, .think, .sys').forEach(el => el.remove());
+  if (currentMessages.length > 0) {
+    UI.welcome.style.display = 'none';
+    for (const msg of currentMessages) {
+      if (msg.role === 'system') {
+        addSysMsg(msg.text);
+      } else {
+        const turn = createTurn(msg.role);
+        turn.querySelector('.body').textContent = msg.text;
+      }
+    }
+  } else {
+    if (!UI.welcome.isConnected) UI.column.appendChild(UI.welcome);
+    UI.welcome.style.display = '';
+  }
+  scrollBottom();
+  setComposeEnabled(true);
+  hideHistoryBanner();
+  renderSidebarHistory();
+}
+
+function exitHistoryViewSilent() {
+  isViewingHistory     = false;
+  viewedConversationId = null;
+  setComposeEnabled(true);
+  hideHistoryBanner();
+}
+
+function setComposeEnabled(enabled) {
+  UI.textInput.disabled = !enabled;
+  UI.micBtn.disabled    = !enabled;
+  UI.sendBtn.disabled   = !enabled || !UI.textInput.value.trim();
+  UI.textInput.placeholder = enabled
+    ? '写点什么,或按麦克风说话…'
+    : '查看历史对话中…';
+}
+
+function showHistoryBanner(conv) {
+  const banner = document.getElementById('history-banner');
+  if (!banner) return;
+  const label = banner.querySelector('.history-label');
+  if (label) {
+    const title = _convTitle(conv);
+    label.textContent = title + '  ·  ' + _fmtDate(conv.timestamp);
+  }
+  banner.classList.add('show');
+}
+
+function hideHistoryBanner() {
+  const banner = document.getElementById('history-banner');
+  if (banner) banner.classList.remove('show');
+}
+
+// ── Sidebar rendering ──
+function renderSidebarAgents() {
+  const container = document.getElementById('sidebar-agents');
+  if (!container) return;
+  container.innerHTML = '';
+  agentList.forEach(a => {
+    const item  = document.createElement('div');
+    item.className = 'sidebar-agent-item';
+    if (a.name === currentAgent.name) item.classList.add('active');
+    item.dataset.agent = a.name;
+    item.innerHTML =
+      '<span class="sidebar-agent-emoji">' + (a.emoji || '') + '</span>' +
+      '<span>' +
+        '<span class="sidebar-agent-name">' + _esc(a.display_name || a.name) + '</span>' +
+        '<span class="sidebar-agent-spec">' + _esc(a.specialty || '') + '</span>' +
+      '</span>';
+    item.addEventListener('click', () => {
+      if (isViewingHistory) exitHistoryViewSilent();
+      switchAgent(a.name);
+    });
+    container.appendChild(item);
+  });
+}
+
+async function renderSidebarHistory() {
+  const container = document.getElementById('sidebar-history');
+  if (!container) return;
+  if (!window.indexedDB) {
+    container.innerHTML = '<div class="sidebar-history-empty">浏览器不支持本地存储</div>';
+    return;
+  }
+  try {
+    const list = await idb_list();
+    list.sort((a, b) => b.timestamp - a.timestamp);
+
+    if (list.length === 0) {
+      container.innerHTML = '<div class="sidebar-history-empty">暂无对话</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    list.forEach(conv => {
+      const title   = _convTitle(conv);
+      const dateStr = _fmtDate(conv.timestamp);
+      const isActive = (conv.id === currentConversationId && !isViewingHistory)
+                     || (conv.id === viewedConversationId && isViewingHistory);
+
+      const item = document.createElement('div');
+      item.className = 'sidebar-history-item' + (isActive ? ' active' : '');
+      item.dataset.id = conv.id;
+      item.innerHTML =
+        '<span class="sidebar-history-title">' + _esc(title) + '</span>' +
+        '<div class="sidebar-history-meta">' +
+          '<span>' + dateStr + '</span>' +
+          '<span>' + _esc(conv.agent_display || '') + '</span>' +
+        '</div>';
+      item.addEventListener('click', () => loadConversation(conv.id));
+      container.appendChild(item);
+    });
+  } catch (_) {
+    container.innerHTML = '<div class="sidebar-history-empty">历史记录不可用</div>';
+  }
+}
 
 // ── WebSocket ──
 function getWsUrl() {
@@ -1024,6 +1633,11 @@ function setSpeakingVisual(on) {
 
 // ── Message handling ──
 function handleMsg(msg) {
+  // When viewing history, skip mutating messages from the server
+  if (isViewingHistory && msg.type !== 'pong' && msg.type !== 'error'
+      && msg.type !== 'agent_list' && msg.type !== 'agent_switched') {
+    return;
+  }
   switch (msg.type) {
     case 'start':
       isWaitingResponse = true;
@@ -1055,6 +1669,11 @@ function handleMsg(msg) {
       } else if (currentAgentMsgEl) {
         currentAgentMsgEl.classList.remove('streaming');
       }
+      // Persist agent message to conversation history
+      if (!isViewingHistory && lastFullText) {
+        trackAgentMessage(lastFullText);
+      }
+
       if (serverTtsPending) {
         setStatus('waiting');
         if (serverTtsTimeoutId) clearTimeout(serverTtsTimeoutId);
@@ -1108,6 +1727,14 @@ function handleMsg(msg) {
       setSpeakingVisual(false);
       addSysMsg('something interrupted — ' + (msg.text || ''));
       setStatus('connected');
+      if (!isViewingHistory && currentConversationId) {
+        currentMessages.push({
+          role: 'system',
+          text: 'error: ' + (msg.text || ''),
+          timestamp: Date.now()
+        });
+        persistCurrentConversation();
+      }
       break;
     case 'pong':
       break;
@@ -1116,19 +1743,31 @@ function handleMsg(msg) {
       const match = agentList.find(a => a.name === msg.current);
       if (match) currentAgent = match;
       renderAgentRow();
+      renderSidebarAgents();
       updateBrand();
+      renderSidebarHistory();
       break;
     case 'agent_switched':
+      // Persist current conversation before switching
+      if (!isViewingHistory && currentConversationId && currentMessages.length > 0) {
+        persistCurrentConversation();
+      }
+      if (isViewingHistory) exitHistoryViewSilent();
+
       currentAgent = {
         name: msg.agent,
         display_name: msg.display_name,
         emoji: msg.emoji,
         specialty: msg.specialty,
       };
+      currentConversationId = null;
+      currentMessages       = [];
+
       UI.column.querySelectorAll('.turn, .think, .sys').forEach(el => el.remove());
       if (UI.welcome && !UI.welcome.isConnected) UI.column.appendChild(UI.welcome);
       UI.welcome.style.display = '';
       renderAgentRow();
+      renderSidebarAgents();
       updateBrand();
       addSysMsg('now with ' + msg.display_name);
       break;
@@ -1204,6 +1843,8 @@ function appendUserText(text) {
   const body = wrap.querySelector('.body');
   body.appendChild(document.createTextNode(text));
   scrollBottom();
+
+  trackUserMessage(text);
 }
 
 // ── Secure context check ──
@@ -1258,6 +1899,7 @@ function initRecognition() {
   recognition.onresult = (e) => {
     const text = e.results[e.results.length - 1][0].transcript;
     if (!text.trim()) return;
+    if (isViewingHistory) { stopListening(true); return; }
     stopSpeaking();
     stopListening(true);
     appendUserText(text);
@@ -1370,6 +2012,7 @@ function stopListening(silent) {
 }
 
 function toggleListening() {
+  if (isViewingHistory) return;
   // Treat the visual state as authoritative — if the mic button looks
   // active (red) but isListening went stale, the user's intent is "turn
   // this thing off", not "start a new session". stopListening() is now
@@ -1505,6 +2148,7 @@ function sendSpeech(text) {
 
 function sendText(text) {
   if (!text.trim()) return;
+  if (isViewingHistory) return;
   if (text.startsWith('/')) { handleCommand(text); return; }
   stopSpeaking();
   stopListening(true);
@@ -1528,9 +2172,7 @@ function handleCommand(text) {
       addSysMsg('/help  /clear  /lang zh|en|ja');
       break;
     case '/clear':
-      UI.column.querySelectorAll('.turn, .think, .sys').forEach(el => el.remove());
-      if (!UI.welcome.isConnected) UI.column.appendChild(UI.welcome);
-      UI.welcome.style.display = '';
+      newConversation();
       break;
     case '/lang': {
       if (!arg) { addSysMsg('current — ' + UI.recLang.value); break; }
@@ -1576,6 +2218,25 @@ UI.settingsBtn.addEventListener('click', () => {
   UI.settingsBtn.classList.toggle('open', open);
 });
 UI.noticeDismiss.addEventListener('click', () => UI.insecureNotice.classList.remove('show'));
+
+// ── Sidebar UI events ──
+const newConvBtn       = document.getElementById('new-conv-btn');
+const historyBackBtn   = document.getElementById('history-back-btn');
+const historyDeleteBtn = document.getElementById('history-delete-btn');
+
+if (newConvBtn) newConvBtn.addEventListener('click', newConversation);
+
+if (historyBackBtn) historyBackBtn.addEventListener('click', exitHistoryView);
+
+if (historyDeleteBtn) {
+  historyDeleteBtn.addEventListener('click', async () => {
+    if (!viewedConversationId) return;
+    const id = viewedConversationId;
+    exitHistoryView();
+    try { await idb_delete(id); } catch (_) {}
+    renderSidebarHistory();
+  });
+}
 
 // ── Init ──
 connect();
