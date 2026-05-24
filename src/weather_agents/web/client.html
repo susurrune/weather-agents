@@ -980,65 +980,6 @@
     text-align: center;
   }
 
-  /* ── History banner ── */
-  .history-banner {
-    display: none;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 28px;
-    background: rgba(90,126,138,0.06);
-    border-top: 1px solid rgba(90,126,138,0.12);
-    border-bottom: 1px solid rgba(90,126,138,0.12);
-    font-family: var(--serif-body);
-    font-style: italic;
-    font-size: 12px;
-    color: var(--ink-soft);
-    flex-shrink: 0;
-  }
-  .history-banner.show {
-    display: flex;
-  }
-  .history-banner .back-btn {
-    background: none;
-    border: 1px solid var(--hairline);
-    color: var(--ink-soft);
-    cursor: pointer;
-    font-family: var(--serif-body);
-    font-style: italic;
-    font-size: 12px;
-    padding: 3px 12px;
-    border-radius: 3px;
-    transition: border-color 0.2s, color 0.2s;
-  }
-  .history-banner .back-btn:hover {
-    border-color: var(--seal);
-    color: var(--seal);
-  }
-  .history-banner .history-label {
-    flex: 1;
-    text-align: center;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--ink-faint);
-  }
-  .history-banner .danger-btn {
-    background: none;
-    border: 1px solid transparent;
-    color: var(--ink-faint);
-    cursor: pointer;
-    font-family: var(--serif-body);
-    font-style: italic;
-    font-size: 11px;
-    padding: 3px 10px;
-    border-radius: 3px;
-    transition: color 0.2s, border-color 0.2s;
-  }
-  .history-banner .danger-btn:hover {
-    color: var(--seal);
-    border-color: var(--seal);
-  }
-
   /* ── Sidebar collapsed state ── */
   #sidebar.collapsed {
     width: 56px;
@@ -1134,7 +1075,6 @@
     #main-wrap .notice         { max-width: none; }
     #main-wrap .compose        { max-width: none; padding-left: 36px; padding-right: 36px; }
     #main-wrap .stage .column  { max-width: 880px; padding-left: 36px; padding-right: 36px; }
-    #main-wrap .history-banner { padding-left: 36px; padding-right: 36px; }
 
     .colophon {
       display: none;
@@ -1234,12 +1174,6 @@
     <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
   </svg>
   &nbsp;连接已断开,点击重新连接
-</div>
-
-<div id="history-banner" class="history-banner">
-  <button class="back-btn" id="history-back-btn">&larr; 返回当前对话</button>
-  <span class="history-label"></span>
-  <button class="danger-btn" id="history-delete-btn">删除</button>
 </div>
 
 <div class="stage" id="stage">
@@ -1400,8 +1334,6 @@ let currentAgentMsgEl = null;
 // Conversation history state
 let currentConversationId = null;
 let currentMessages       = [];
-let isViewingHistory      = false;
-let viewedConversationId  = null;
 
 const UI = {
   stage:           document.getElementById('stage'),
@@ -1458,7 +1390,6 @@ function _convTitle(conv) {
 
 // ── Conversation persistence ──
 function trackUserMessage(text) {
-  if (isViewingHistory) return;
   if (!currentConversationId) {
     currentConversationId = 'conv_' + Date.now();
   }
@@ -1467,13 +1398,13 @@ function trackUserMessage(text) {
 }
 
 function trackAgentMessage(text) {
-  if (isViewingHistory || !currentConversationId) return;
+  if (!currentConversationId) return;
   currentMessages.push({ role: 'agent', text, timestamp: Date.now() });
   persistCurrentConversation();
 }
 
 async function persistCurrentConversation() {
-  if (!currentConversationId || isViewingHistory) return;
+  if (!currentConversationId) return;
   if (currentMessages.length === 0) return;
   const conv = {
     id:            currentConversationId,
@@ -1491,11 +1422,8 @@ async function persistCurrentConversation() {
 }
 
 function newConversation() {
-  if (!isViewingHistory && currentConversationId && currentMessages.length > 0) {
+  if (currentConversationId && currentMessages.length > 0) {
     persistCurrentConversation();
-  }
-  if (isViewingHistory) {
-    exitHistoryViewSilent();
   }
   currentConversationId = null;
   currentMessages       = [];
@@ -1504,30 +1432,29 @@ function newConversation() {
     if (!UI.welcome.isConnected) UI.column.appendChild(UI.welcome);
     UI.welcome.style.display = '';
   }
-  setComposeEnabled(true);
-  hideHistoryBanner();
   renderSidebarHistory();
   scrollBottom();
 }
 
 async function loadConversation(id) {
-  if (isViewingHistory && viewedConversationId === id) return;
-  if (!isViewingHistory && id === currentConversationId) return;
+  if (id === currentConversationId) return;
 
   const conv = await idb_get(id);
   if (!conv) return;
 
-  if (!isViewingHistory && currentConversationId && currentMessages.length > 0) {
+  // Save current live conversation before switching
+  if (currentConversationId && currentMessages.length > 0) {
     await persistCurrentConversation();
   }
 
-  isViewingHistory     = true;
-  viewedConversationId = id;
+  // Load as active conversation
+  currentConversationId = id;
+  currentMessages       = conv.messages.map(m => ({ role: m.role, text: m.text, timestamp: m.timestamp }));
 
   UI.column.querySelectorAll('.turn, .think, .sys').forEach(el => el.remove());
   UI.welcome.style.display = 'none';
 
-  for (const msg of conv.messages) {
+  for (const msg of currentMessages) {
     if (msg.role === 'system') {
       addSysMsg(msg.text);
     } else {
@@ -1540,67 +1467,8 @@ async function loadConversation(id) {
     }
   }
   scrollBottom();
-  setComposeEnabled(false);
-  showHistoryBanner(conv);
   renderSidebarHistory();
-}
-
-function exitHistoryView() {
-  if (!isViewingHistory) return;
-  isViewingHistory     = false;
-  viewedConversationId = null;
-
-  UI.column.querySelectorAll('.turn, .think, .sys').forEach(el => el.remove());
-  if (currentMessages.length > 0) {
-    UI.welcome.style.display = 'none';
-    for (const msg of currentMessages) {
-      if (msg.role === 'system') {
-        addSysMsg(msg.text);
-      } else {
-        const turn = createTurn(msg.role);
-        turn.querySelector('.body').textContent = msg.text;
-      }
-    }
-  } else {
-    if (!UI.welcome.isConnected) UI.column.appendChild(UI.welcome);
-    UI.welcome.style.display = '';
-  }
-  scrollBottom();
-  setComposeEnabled(true);
-  hideHistoryBanner();
-  renderSidebarHistory();
-}
-
-function exitHistoryViewSilent() {
-  isViewingHistory     = false;
-  viewedConversationId = null;
-  setComposeEnabled(true);
-  hideHistoryBanner();
-}
-
-function setComposeEnabled(enabled) {
-  UI.textInput.disabled = !enabled;
-  UI.micBtn.disabled    = !enabled;
-  UI.sendBtn.disabled   = !enabled || !UI.textInput.value.trim();
-  UI.textInput.placeholder = enabled
-    ? '写点什么,或按麦克风说话…'
-    : '查看历史对话中…';
-}
-
-function showHistoryBanner(conv) {
-  const banner = document.getElementById('history-banner');
-  if (!banner) return;
-  const label = banner.querySelector('.history-label');
-  if (label) {
-    const title = _convTitle(conv);
-    label.textContent = title + '  ·  ' + _fmtDate(conv.timestamp);
-  }
-  banner.classList.add('show');
-}
-
-function hideHistoryBanner() {
-  const banner = document.getElementById('history-banner');
-  if (banner) banner.classList.remove('show');
+  // Input stays enabled — user can continue the conversation
 }
 
 // ── Sidebar rendering ──
@@ -1620,7 +1488,6 @@ function renderSidebarAgents() {
         '<span class="sidebar-agent-spec">' + _esc(a.specialty || '') + '</span>' +
       '</span>';
     item.addEventListener('click', () => {
-      if (isViewingHistory) exitHistoryViewSilent();
       switchAgent(a.name);
     });
     container.appendChild(item);
@@ -1647,8 +1514,7 @@ async function renderSidebarHistory() {
     list.forEach(conv => {
       const title   = _convTitle(conv);
       const dateStr = _fmtDate(conv.timestamp);
-      const isActive = (conv.id === currentConversationId && !isViewingHistory)
-                     || (conv.id === viewedConversationId && isViewingHistory);
+      const isActive = conv.id === currentConversationId;
 
       const item = document.createElement('div');
       item.className = 'sidebar-history-item' + (isActive ? ' active' : '');
@@ -1740,11 +1606,6 @@ function setSpeakingVisual(on) {
 
 // ── Message handling ──
 function handleMsg(msg) {
-  // When viewing history, skip mutating messages from the server
-  if (isViewingHistory && msg.type !== 'pong' && msg.type !== 'error'
-      && msg.type !== 'agent_list' && msg.type !== 'agent_switched') {
-    return;
-  }
   switch (msg.type) {
     case 'start':
       isWaitingResponse = true;
@@ -1777,7 +1638,7 @@ function handleMsg(msg) {
         currentAgentMsgEl.classList.remove('streaming');
       }
       // Persist agent message to conversation history
-      if (!isViewingHistory && lastFullText) {
+      if (lastFullText) {
         trackAgentMessage(lastFullText);
       }
 
@@ -1834,7 +1695,7 @@ function handleMsg(msg) {
       setSpeakingVisual(false);
       addSysMsg('something interrupted — ' + (msg.text || ''));
       setStatus('connected');
-      if (!isViewingHistory && currentConversationId) {
+      if (currentConversationId) {
         currentMessages.push({
           role: 'system',
           text: 'error: ' + (msg.text || ''),
@@ -1856,10 +1717,9 @@ function handleMsg(msg) {
       break;
     case 'agent_switched':
       // Persist current conversation before switching
-      if (!isViewingHistory && currentConversationId && currentMessages.length > 0) {
+      if (currentConversationId && currentMessages.length > 0) {
         persistCurrentConversation();
       }
-      if (isViewingHistory) exitHistoryViewSilent();
 
       currentAgent = {
         name: msg.agent,
@@ -2006,7 +1866,6 @@ function initRecognition() {
   recognition.onresult = (e) => {
     const text = e.results[e.results.length - 1][0].transcript;
     if (!text.trim()) return;
-    if (isViewingHistory) { stopListening(true); return; }
     stopSpeaking();
     stopListening(true);
     appendUserText(text);
@@ -2119,7 +1978,6 @@ function stopListening(silent) {
 }
 
 function toggleListening() {
-  if (isViewingHistory) return;
   // Treat the visual state as authoritative — if the mic button looks
   // active (red) but isListening went stale, the user's intent is "turn
   // this thing off", not "start a new session". stopListening() is now
@@ -2255,7 +2113,6 @@ function sendSpeech(text) {
 
 function sendText(text) {
   if (!text.trim()) return;
-  if (isViewingHistory) return;
   if (text.startsWith('/')) { handleCommand(text); return; }
   stopSpeaking();
   stopListening(true);
@@ -2348,23 +2205,8 @@ if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
 })();
 
 // ── Sidebar UI events ──
-const newConvBtn       = document.getElementById('new-conv-btn');
-const historyBackBtn   = document.getElementById('history-back-btn');
-const historyDeleteBtn = document.getElementById('history-delete-btn');
-
+const newConvBtn = document.getElementById('new-conv-btn');
 if (newConvBtn) newConvBtn.addEventListener('click', newConversation);
-
-if (historyBackBtn) historyBackBtn.addEventListener('click', exitHistoryView);
-
-if (historyDeleteBtn) {
-  historyDeleteBtn.addEventListener('click', async () => {
-    if (!viewedConversationId) return;
-    const id = viewedConversationId;
-    exitHistoryView();
-    try { await idb_delete(id); } catch (_) {}
-    renderSidebarHistory();
-  });
-}
 
 // ── Init ──
 connect();
