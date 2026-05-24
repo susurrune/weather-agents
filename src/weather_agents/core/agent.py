@@ -225,7 +225,9 @@ class BaseAgent:
                 "- Stay in scope. Do what's asked, then stop.\n"
                 "- Batch independent tool calls in one response.\n"
                 "- Verify writes: read back, report verified state.\n"
-                "- No decorative `---` lines; no emoji in generated web pages."
+                "- No decorative `---` lines; no emoji in generated web pages.\n"
+                "- Call list_skills when the task needs specialized capabilities "
+                "(pptx, xlsx, pdf, web design, code review, etc.)."
             )
         else:
             rules = (
@@ -234,7 +236,9 @@ class BaseAgent:
                 "- 不擅自扩大范围。用户要什么做什么,核心完成即止\n"
                 "- 独立的工具调用一次发出,并行执行\n"
                 "- 写入后回读验证,汇报已验证状态而非仅尝试\n"
-                "- 不用 `---` 装饰线,网页里不用 emoji"
+                "- 不用 `---` 装饰线,网页里不用 emoji\n"
+                "- 任务涉及专业能力时（PPT/Excel/PDF/网页设计/代码审查等），"
+                "先调 list_skills 查看可用技能，再用 use_skill 激活"
             )
         return prompt + rules
 
