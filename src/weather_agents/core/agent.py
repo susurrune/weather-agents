@@ -1309,6 +1309,52 @@ class BaseAgent:
                     await self._set_state(AgentState.IDLE)
                     yield {"type": "done"}
                     return
+
+                # Search-storm detection: the LLM can cycle through
+                # many different-but-similar web_search / fetch_page
+                # calls — each with a unique tool signature — without
+                # ever tripping the identical-call loop detector or the
+                # mostly-failing stuck detector. Count search/fetch
+                # calls in the recent window and force a stop when the
+                # agent is clearly just throwing queries at a dead end.
+                _search_storm_count = sum(
+                    1
+                    for s in recent_tool_sigs
+                    if s.startswith("web_search:") or s in ("fetch_page", "http_get")
+                )
+                if _search_storm_count >= 8 and not tool_loop_hint_injected:
+                    self.memory.add_message(
+                        "system",
+                        (
+                            "[Search storm] You have made "
+                            f"{_search_storm_count} web-search / fetch "
+                            "calls in the last few rounds — far more "
+                            "than a productive research session needs. "
+                            "The queries are not converging on an answer. "
+                            "STOP searching. Synthesize the best answer "
+                            "you can from what you already know, label "
+                            "any gaps clearly, and call task_done. "
+                            "Do NOT make another web_search or fetch_page call."
+                        ),
+                    )
+                    tool_loop_hint_injected = True
+                if _search_storm_count >= 12:
+                    self.memory.add_message(
+                        "assistant",
+                        "I have made too many search requests without "
+                        "finding the information. I will synthesize the "
+                        "best answer from available context.",
+                    )
+                    yield {
+                        "type": "content",
+                        "text": (
+                            "\n\n[stuck] excessive web searching "
+                            f"({_search_storm_count} calls) — stopping.\n"
+                        ),
+                    }
+                    await self._set_state(AgentState.IDLE)
+                    yield {"type": "done"}
+                    return
             # Max iterations reached
             if not assistant_stored:
                 self._pop_last_user_message()
@@ -2462,7 +2508,15 @@ def _tool_call_signature(tool_name: str, args: dict | None) -> str:
         return f"{tool_name}:{first[:30]}"
     if tool_name in ("web_search", "search", "search_web", "search_files", "grep"):
         q = _s("query", 40) or _s("pattern", 40)
-        return f"{tool_name}:{q.lower()}"
+        # Normalize: strip whitespace and quotes so "良驹汽车 毕节"
+        # and "良驹汽车毕节" and "\"良驹汽车\" 毕节" collapse to the
+        # same signature. Without this the LLM can cycle through
+        # dozens of cosmetic query variations without triggering the
+        # loop detector.
+        import re as _re
+
+        q = _re.sub(r"[\s\"'「」『』" "''‘’“”]", "", q)
+        return f"{tool_name}:{q.lower()[:30]}"
     if tool_name == "delegate_to":
         return f"delegate_to:{_s('agent')}"
     return tool_name
