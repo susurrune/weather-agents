@@ -1460,7 +1460,7 @@ function renderMarkdown(text) {
     return '\n\n<p>' + trimmed + '</p>';
   });
 
-  html = html.replace(/>\n+</g, '><');
+  html = html.replace(/>\n+</g, '><').trim();
   return html;
 }
 
