@@ -2441,9 +2441,10 @@ def _tool_call_signature(tool_name: str, args: dict | None) -> str:
     if tool_name == "edit_file":
         # Include old_string hash so different edits to the same file
         # aren't conflated as a loop. Only truly identical edits count.
-        os_val = _s('old_text')
+        os_val = _s("old_text")
         if os_val:
             import hashlib as _hl
+
             return f"edit_file:{_s('path')}#{_hl.sha1(os_val.encode()).hexdigest()[:8]}"
         return f"edit_file:{_s('path')}"
     if tool_name in ("write_file", "read_file", "delete_file"):
