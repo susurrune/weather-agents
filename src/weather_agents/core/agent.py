@@ -936,7 +936,9 @@ class BaseAgent:
                 messages = await self._messages_with_recall()
                 from weather_agents.core.vision import preprocess_messages_for_vision
 
-                messages = preprocess_messages_for_vision(messages)
+                messages = preprocess_messages_for_vision(
+                    messages, model=self.llm._get_model(self.name)
+                )
                 tool_names = _resolve_tool_names()
 
                 tool_calls_received: list[dict] = []
@@ -1830,7 +1832,9 @@ class BaseAgent:
                 messages = await self._messages_with_recall()
                 from weather_agents.core.vision import preprocess_messages_for_vision
 
-                messages = preprocess_messages_for_vision(messages)
+                messages = preprocess_messages_for_vision(
+                    messages, model=self.llm._get_model(self.name)
+                )
                 if on_status:
                     on_status("thinking...")
                 response = await self.llm.complete(

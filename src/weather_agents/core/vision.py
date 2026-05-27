@@ -79,21 +79,59 @@ def _expand_content(content: str) -> list[dict]:
     return parts if parts else [{"type": "text", "text": content}]
 
 
-def preprocess_messages_for_vision(messages: list[dict]) -> list[dict]:
+def _strip_markers(text: str) -> str:
+    """Replace ``<<IMG:path>>`` markers with ``[image: filename]`` text.
+
+    Used when the model doesn't support vision — markers must be removed
+    so the LLM doesn't receive garbage markup it can't handle.
+    """
+    def _replacer(m: re.Match) -> str:
+        fname = Path(m.group(1)).name
+        return f"[image: {fname}]"
+
+    return _MARKER_RE.sub(_replacer, text)
+
+
+def _model_supports_vision(model: str | None) -> bool:
+    """Check whether *model* supports image_url content blocks."""
+    if not model:
+        return False
+    try:
+        from litellm import supports_vision
+
+        return bool(supports_vision(model))
+    except Exception:
+        return False
+
+
+def preprocess_messages_for_vision(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+) -> list[dict]:
     """Return a copy of *messages* with image markers expanded.
 
     Only user-role messages are processed — system and assistant messages
     are left untouched.  Returns the original list unmodified when no
     markers are found (fast path).
+
+    If *model* is provided and doesn't support vision, markers are
+    stripped to plain-text ``[image: name]`` references instead of
+    being expanded into multimodal content blocks.
     """
     if not any(isinstance(m.get("content"), str) and has_images(m["content"]) for m in messages):
         return messages
+    supports = _model_supports_vision(model)
     out: list[dict] = []
     for m in messages:
         content = m.get("content", "")
         if m.get("role") == "user" and isinstance(content, str) and has_images(content):
-            expanded = _expand_content(content)
-            out.append({**m, "content": expanded})
+            if supports:
+                expanded = _expand_content(content)
+                out.append({**m, "content": expanded})
+            else:
+                stripped = _strip_markers(content)
+                out.append({**m, "content": stripped})
         else:
             out.append(m)
     return out
