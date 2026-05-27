@@ -1973,11 +1973,6 @@ async def _interactive(agent_name: str | None = None) -> None:
                 # the user staring at a frozen UI for the full slow-op
                 # duration. Solution: race each __anext__ against the esc
                 # event, and cancel the iteration task if Esc wins.
-                from weather_agents.core.vision import detect_image_paths, inject_markers
-
-                _img_paths = detect_image_paths(inp)
-                if _img_paths:
-                    inp = inject_markers(inp, _img_paths)
                 stream_iter = agent.chat_stream(inp).__aiter__()
                 esc_wait_task = asyncio.create_task(_esc_event.wait())
 

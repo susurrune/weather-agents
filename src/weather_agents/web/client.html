@@ -749,7 +749,7 @@
   }
   .compose-grid {
     display: grid;
-    grid-template-columns: 1fr auto auto auto;
+    grid-template-columns: 1fr auto auto;
     gap: 14px;
     align-items: end;
   }
@@ -840,63 +840,6 @@
   @keyframes mic-ripple {
     0%   { transform: scale(0.95); opacity: 0.6; }
     100% { transform: scale(1.45); opacity: 0; }
-  }
-
-  /* ═════ Image preview strip ═════ */
-  .img-preview {
-    display: none;
-    padding: 8px 0 4px;
-    gap: 8px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .img-preview.show { display: flex; }
-  .img-preview .thumb {
-    position: relative;
-    width: 56px; height: 56px;
-    border-radius: 3px;
-    overflow: hidden;
-    border: 1px solid var(--hairline);
-    flex-shrink: 0;
-  }
-  .img-preview .thumb img {
-    width: 100%; height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-  .img-preview .thumb .remove {
-    position: absolute;
-    top: 1px; right: 1px;
-    width: 18px; height: 18px;
-    background: rgba(42,31,23,0.65);
-    color: var(--paper);
-    border: none;
-    border-radius: 50%;
-    font-size: 12px;
-    line-height: 1;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-  .img-preview .thumb:hover .remove { opacity: 1; }
-  .img-preview .hint {
-    font-family: var(--serif-body);
-    font-style: italic;
-    font-size: 11px;
-    color: var(--ink-faint);
-    letter-spacing: 0.03em;
-  }
-
-  .act.img-upload {
-    border-color: var(--ink-whisper);
-    color: var(--ink-faint);
-  }
-  .act.img-upload:not(:disabled):hover {
-    border-color: var(--amber);
-    color: var(--amber);
   }
 
   /* ═════ Other agents — printer's footer ═════ */
@@ -1395,13 +1338,6 @@
     <div class="input-wrap">
       <textarea id="text-input" placeholder="写点什么,或按麦克风说话…" rows="1"></textarea>
     </div>
-    <button class="act img-upload" id="img-btn" title="上传图片" aria-label="上传图片">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-        <circle cx="8.5" cy="8.5" r="1.5"/>
-        <polyline points="21 15 16 10 5 21"/>
-      </svg>
-    </button>
     <button class="act send" id="send-btn" title="发送" aria-label="发送" disabled>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="19" x2="12" y2="5"/>
@@ -1417,8 +1353,6 @@
       </svg>
     </button>
   </div>
-  <input type="file" id="img-file" accept="image/*" multiple hidden>
-  <div class="img-preview" id="img-preview"></div>
 
   <div class="mic-cue" id="mic-cue">
     <span id="mic-cue-text">在聽…請說</span>
@@ -1576,72 +1510,7 @@ const UI = {
   noticeDismiss:   document.getElementById('notice-dismiss'),
   micCue:          document.getElementById('mic-cue'),
   micCueText:      document.getElementById('mic-cue-text'),
-  imgBtn:          document.getElementById('img-btn'),
-  imgFile:         document.getElementById('img-file'),
-  imgPreview:      document.getElementById('img-preview'),
 };
-
-// ── Pending images ──
-let pendingImages = [];
-
-function addPendingImage(file) {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const dataUrl = e.target.result;
-    const base64 = dataUrl.split(',')[1];
-    const mime = file.type || 'image/png';
-    pendingImages.push({ data: base64, mime, dataUrl });
-    renderImagePreview();
-    updateSendState();
-  };
-  reader.readAsDataURL(file);
-}
-
-function removePendingImage(idx) {
-  pendingImages.splice(idx, 1);
-  renderImagePreview();
-  updateSendState();
-}
-
-function clearPendingImages() {
-  pendingImages = [];
-  renderImagePreview();
-}
-
-function renderImagePreview() {
-  if (!UI.imgPreview) return;
-  if (!pendingImages.length) {
-    UI.imgPreview.classList.remove('show');
-    UI.imgPreview.innerHTML = '';
-    return;
-  }
-  UI.imgPreview.classList.add('show');
-  UI.imgPreview.innerHTML = '';
-  pendingImages.forEach((img, i) => {
-    const thumb = document.createElement('div');
-    thumb.className = 'thumb';
-    const imgEl = document.createElement('img');
-    imgEl.src = img.dataUrl;
-    imgEl.alt = 'image ' + (i + 1);
-    const btn = document.createElement('button');
-    btn.className = 'remove';
-    btn.textContent = '×';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); removePendingImage(i); });
-    thumb.appendChild(imgEl);
-    thumb.appendChild(btn);
-    UI.imgPreview.appendChild(thumb);
-  });
-  if (pendingImages.length) {
-    const hint = document.createElement('span');
-    hint.className = 'hint';
-    hint.textContent = pendingImages.length + ' image' + (pendingImages.length > 1 ? 's' : '');
-    UI.imgPreview.appendChild(hint);
-  }
-}
-
-function updateSendState() {
-  UI.sendBtn.disabled = !UI.textInput.value.trim() && !pendingImages.length;
-}
 
 // ── Lightweight markdown → HTML renderer ──
 function renderMarkdown(text) {
@@ -2174,25 +2043,13 @@ function scrollBottom() {
   requestAnimationFrame(() => { UI.stage.scrollTop = UI.stage.scrollHeight; });
 }
 
-function appendUserText(text, images) {
+function appendUserText(text) {
   const wrap = createTurn('user');
   const body = wrap.querySelector('.body');
-  if (images && images.length) {
-    const strip = document.createElement('div');
-    strip.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;justify-content:flex-end;flex-wrap:wrap;';
-    images.forEach(img => {
-      const imgEl = document.createElement('img');
-      imgEl.src = img.dataUrl;
-      imgEl.alt = 'attached image';
-      imgEl.style.cssText = 'max-width:120px;max-height:80px;border-radius:3px;border:1px solid var(--hairline);object-fit:cover;';
-      strip.appendChild(imgEl);
-    });
-    body.appendChild(strip);
-  }
-  if (text.trim()) body.appendChild(document.createTextNode(text));
+  body.appendChild(document.createTextNode(text));
   scrollBottom();
 
-  trackUserMessage(text || '[image]');
+  trackUserMessage(text);
 }
 
 // ── Secure context check ──
@@ -2246,15 +2103,12 @@ function initRecognition() {
 
   recognition.onresult = (e) => {
     const text = e.results[e.results.length - 1][0].transcript;
-    if (!text.trim() && !pendingImages.length) return;
+    if (!text.trim()) return;
     stopSpeaking();
     stopListening(true);
-    const imgs = pendingImages.slice();
-    appendUserText(text, imgs);
+    appendUserText(text);
     isWaitingResponse = true;
-    const imgPayload = imgs.map(i => ({data: i.data, mime: i.mime}));
-    sendSpeech(text, imgPayload.length ? imgPayload : undefined);
-    clearPendingImages();
+    sendSpeech(text);
     setStatus('waiting');
   };
 
@@ -2518,11 +2372,9 @@ function playBase64Audio(chunks) {
 }
 
 // ── Send ──
-function sendSpeech(text, images) {
+function sendSpeech(text) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const msg = {type: 'speech', text};
-    if (images && images.length) msg.images = images;
-    ws.send(JSON.stringify(msg));
+    ws.send(JSON.stringify({type: 'speech', text}));
   } else {
     addSysMsg('disconnected — cannot send');
     connect();
@@ -2530,20 +2382,14 @@ function sendSpeech(text, images) {
 }
 
 function sendText(text) {
-  if (!text.trim() && !pendingImages.length) return;
-  if (text.startsWith('/')) { handleCommand(text); clearPendingImages(); return; }
+  if (!text.trim()) return;
+  if (text.startsWith('/')) { handleCommand(text); return; }
   stopSpeaking();
   stopListening(true);
   ensureAudio();
-
-  // Show image thumbnails in the user turn
-  const imgs = pendingImages.slice();
-  appendUserText(text, imgs);
+  appendUserText(text);
   isWaitingResponse = true;
-
-  const imgPayload = imgs.map(i => ({data: i.data, mime: i.mime}));
-  sendSpeech(text, imgPayload.length ? imgPayload : undefined);
-  clearPendingImages();
+  sendSpeech(text);
   setStatus('waiting');
   UI.textInput.value = '';
   UI.sendBtn.disabled = true;
@@ -2589,31 +2435,12 @@ UI.micBtn.addEventListener('click', toggleListening);
 UI.sendBtn.addEventListener('click', () => sendText(UI.textInput.value));
 UI.textInput.addEventListener('input', () => {
   resizeTextarea();
-  updateSendState();
+  UI.sendBtn.disabled = !UI.textInput.value.trim();
 });
 UI.textInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    if (UI.textInput.value.trim() || pendingImages.length) sendText(UI.textInput.value);
-  }
-});
-
-// ── Image upload & paste ──
-UI.imgBtn.addEventListener('click', () => UI.imgFile.click());
-UI.imgFile.addEventListener('change', (e) => {
-  for (const f of e.target.files) {
-    if (f.type.startsWith('image/')) addPendingImage(f);
-  }
-  UI.imgFile.value = '';
-});
-UI.textInput.addEventListener('paste', (e) => {
-  const items = e.clipboardData && e.clipboardData.items;
-  if (!items) return;
-  for (const item of items) {
-    if (item.type.startsWith('image/')) {
-      e.preventDefault();
-      addPendingImage(item.getAsFile());
-    }
+    if (UI.textInput.value.trim()) sendText(UI.textInput.value);
   }
 });
 UI.reconnectBar.addEventListener('click', reconnect);

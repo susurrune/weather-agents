@@ -185,28 +185,6 @@ class VoiceServer:
                     msg_type = data.get("type", "")
                     if msg_type == "speech":
                         text = (data.get("text") or "").strip()
-                        images = data.get("images") or []
-                        if images:
-                            import base64 as _b64
-
-                            from weather_agents.core.vision import (
-                                make_marker,
-                                save_upload,
-                            )
-
-                            for img in images:
-                                raw = img.get("data", "")
-                                mime = img.get("mime", "image/png")
-                                ext = "." + mime.split("/")[-1].split(";")[0]
-                                if ext == ".jpeg":
-                                    ext = ".jpg"
-                                try:
-                                    img_bytes = _b64.b64decode(raw)
-                                    path = save_upload(img_bytes, ext)
-                                    text = text + " " + make_marker(str(path))
-                                except Exception:
-                                    pass
-                            text = text.strip()
                         if text and session_id:
                             async with self._ws_lock:
                                 await self._activate_session(my_agent_name, session_id)

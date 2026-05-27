@@ -934,11 +934,6 @@ class BaseAgent:
                 # extend_rounds tool may raise the limit mid-turn.
                 _round_limit = max(_round_limit, self._max_tool_rounds)
                 messages = await self._messages_with_recall()
-                from weather_agents.core.vision import preprocess_messages_for_vision
-
-                messages = preprocess_messages_for_vision(
-                    messages, model=self.llm._get_model(self.name)
-                )
                 tool_names = _resolve_tool_names()
 
                 tool_calls_received: list[dict] = []
@@ -1830,11 +1825,6 @@ class BaseAgent:
                 _rounds += 1
                 _limit = max(_limit, self._max_tool_rounds)
                 messages = await self._messages_with_recall()
-                from weather_agents.core.vision import preprocess_messages_for_vision
-
-                messages = preprocess_messages_for_vision(
-                    messages, model=self.llm._get_model(self.name)
-                )
                 if on_status:
                     on_status("thinking...")
                 response = await self.llm.complete(
