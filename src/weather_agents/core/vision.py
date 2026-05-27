@@ -85,6 +85,7 @@ def _strip_markers(text: str) -> str:
     Used when the model doesn't support vision — markers must be removed
     so the LLM doesn't receive garbage markup it can't handle.
     """
+
     def _replacer(m: re.Match) -> str:
         fname = Path(m.group(1)).name
         return f"[image: {fname}]"
