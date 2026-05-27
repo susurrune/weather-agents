@@ -42,6 +42,127 @@
     --column-max:  680px;
   }
 
+  /* ═════ Per-agent theme overrides ═════ */
+  body[data-agent="fog"] {
+    --paper:          #eae8e4;
+    --paper-deep:     #dddbd6;
+    --paper-edge:     #ccc9c2;
+    --ink:            #2c2b28;
+    --ink-soft:       #5a5850;
+    --ink-faint:      #8a877d;
+    --ink-whisper:    #b5b1a6;
+    --amber:          #7a8a8e;
+    --amber-soft:     #9aacb0;
+    --seal:           #5a7e8a;
+    --seal-deep:      #3e6370;
+    --sea:            #5a7e8a;
+    --hairline:       rgba(44,43,40,0.12);
+    --hairline-soft:  rgba(44,43,40,0.06);
+  }
+  body[data-agent="fog"] {
+    background:
+      radial-gradient(ellipse 90% 60% at 50% 0%, rgba(90,126,138,0.10), transparent 70%),
+      radial-gradient(ellipse 50% 40% at 0% 100%, rgba(90,126,138,0.06), transparent 60%),
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+    background-attachment: fixed;
+  }
+
+  body[data-agent="rain"] {
+    --paper:          #e4e6ea;
+    --paper-deep:     #d6d9e0;
+    --paper-edge:     #c2c6cf;
+    --ink:            #1e2128;
+    --ink-soft:       #3d4250;
+    --ink-faint:      #6b7080;
+    --ink-whisper:    #9a9eac;
+    --amber:          #5568a8;
+    --amber-soft:     #7888c0;
+    --seal:           #3a5298;
+    --seal-deep:      #2a3d75;
+    --sea:            #3a5298;
+    --hairline:       rgba(30,33,40,0.12);
+    --hairline-soft:  rgba(30,33,40,0.06);
+  }
+  body[data-agent="rain"] {
+    background:
+      radial-gradient(ellipse 80% 50% at 30% 0%, rgba(58,82,152,0.10), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 80%, rgba(58,82,152,0.06), transparent 60%),
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+    background-attachment: fixed;
+  }
+
+  body[data-agent="frost"] {
+    --paper:          #e8ecf0;
+    --paper-deep:     #dce2e8;
+    --paper-edge:     #c8d0d8;
+    --ink:            #1a2028;
+    --ink-soft:       #3a4350;
+    --ink-faint:      #687888;
+    --ink-whisper:    #98a8b5;
+    --amber:          #4a8898;
+    --amber-soft:     #6aa0b0;
+    --seal:           #2a7088;
+    --seal-deep:      #1a5568;
+    --sea:            #2a7088;
+    --hairline:       rgba(26,32,40,0.12);
+    --hairline-soft:  rgba(26,32,40,0.06);
+  }
+  body[data-agent="frost"] {
+    background:
+      radial-gradient(ellipse 70% 50% at 70% 0%, rgba(42,112,136,0.08), transparent 60%),
+      radial-gradient(ellipse 50% 40% at 0% 60%, rgba(42,112,136,0.05), transparent 60%),
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+    background-attachment: fixed;
+  }
+
+  body[data-agent="snow"] {
+    --paper:          #ededf2;
+    --paper-deep:     #e0e0e8;
+    --paper-edge:     #d0d0da;
+    --ink:            #1a1a28;
+    --ink-soft:       #3a3a50;
+    --ink-faint:      #6a6a80;
+    --ink-whisper:    #9a9ab0;
+    --amber:          #5a5a8a;
+    --amber-soft:     #7a7aa8;
+    --seal:           #4a4a80;
+    --seal-deep:      #333360;
+    --sea:            #4a4a80;
+    --hairline:       rgba(26,26,40,0.12);
+    --hairline-soft:  rgba(26,26,40,0.06);
+  }
+  body[data-agent="snow"] {
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 10%, rgba(74,74,128,0.07), transparent 60%),
+      radial-gradient(ellipse 40% 30% at 80% 90%, rgba(74,74,128,0.04), transparent 60%),
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+    background-attachment: fixed;
+  }
+
+  body[data-agent="dew"] {
+    --paper:          #e8ece4;
+    --paper-deep:     #dde2d6;
+    --paper-edge:     #c8cfbe;
+    --ink:            #1e2818;
+    --ink-soft:       #3d4a35;
+    --ink-faint:      #6b7a60;
+    --ink-whisper:    #9aaa88;
+    --amber:          #558a4a;
+    --amber-soft:     #78a868;
+    --seal:           #3a7a32;
+    --seal-deep:      #2a5a22;
+    --sea:            #3a7a32;
+    --hairline:       rgba(30,40,24,0.12);
+    --hairline-soft:  rgba(30,40,24,0.06);
+  }
+  body[data-agent="dew"] {
+    background:
+      radial-gradient(ellipse 70% 50% at 40% 0%, rgba(58,122,50,0.08), transparent 60%),
+      radial-gradient(ellipse 50% 40% at 90% 70%, rgba(58,122,50,0.05), transparent 60%),
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+    background-attachment: fixed;
+  }
+
   html, body { height: 100%; }
 
   body {
@@ -65,6 +186,7 @@
         transparent 60%),
       linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
     background-attachment: fixed;
+    transition: background 0.6s ease, color 0.4s ease;
 
     display: flex; flex-direction: column;
     height: 100%;
@@ -119,7 +241,7 @@
       0 1px 1px rgba(42,31,23,0.10);
     /* Slight irregularity — chop marks aren't perfect */
     transform: rotate(-1.5deg);
-    transition: transform 0.6s ease;
+    transition: transform 0.6s ease, background 0.5s ease, box-shadow 0.5s ease;
   }
   .seal::before, .seal::after {
     content: "";
@@ -507,8 +629,9 @@
   /* Agent body: paper tint with left seal accent */
   .turn.agent .body {
     font-family: var(--serif-cjk);
-    background: rgba(235,224,199,0.35);
+    background: color-mix(in srgb, var(--paper-deep) 35%, transparent);
     border-left: 2px solid var(--seal);
+    transition: border-color 0.5s ease, background 0.5s ease;
   }
   /* User body: warm whisper tone, right-aligned */
   .turn.user .body {
@@ -516,9 +639,10 @@
     font-weight: 300;
     color: var(--ink-soft);
     font-size: 16px;
-    background: rgba(212,160,86,0.08);
+    background: color-mix(in srgb, var(--amber-soft) 8%, transparent);
     border-right: 2px solid var(--amber-soft);
     text-align: right;
+    transition: border-color 0.5s ease, background 0.5s ease;
   }
 
   /* Streaming caret — a thin vertical hairline of seal red */
@@ -924,12 +1048,13 @@
     margin-bottom: 1px;
   }
   .sidebar-agent-item:hover {
-    background: rgba(184,116,26,0.06);
+    background: color-mix(in srgb, var(--amber) 6%, transparent);
   }
   .sidebar-agent-item.active {
-    background: rgba(184,116,26,0.09);
+    background: color-mix(in srgb, var(--amber) 9%, transparent);
     border-left: 2px solid var(--amber);
     padding-left: 8px;
+    transition: background 0.4s ease, border-color 0.4s ease;
   }
   .sidebar-agent-emoji {
     font-size: 19px;
@@ -966,10 +1091,10 @@
     margin-bottom: 1px;
   }
   .sidebar-history-item:hover {
-    background: rgba(184,116,26,0.06);
+    background: color-mix(in srgb, var(--amber) 6%, transparent);
   }
   .sidebar-history-item.active {
-    background: rgba(90,126,138,0.08);
+    background: color-mix(in srgb, var(--seal) 8%, transparent);
   }
   .sidebar-history-title {
     font-family: var(--serif-body);
@@ -2144,11 +2269,43 @@ function renderAgentRow() {
   row.insertBefore(cur, row.firstChild);
 }
 
+const AGENT_THEMES = {
+  fair:  { wordmark: 'Fair',  tag: 'an afternoon together',     welcome: 'Sit. Read. Speak when you\'re ready.',        themeColor: '#f3ead7' },
+  fog:   { wordmark: 'Fog',   tag: 'through the looking glass', welcome: 'Ask the question no one else thought to ask.', themeColor: '#eae8e4' },
+  rain:  { wordmark: 'Rain',  tag: 'words into being',          welcome: 'Tell me what to make. I\'ll shape it.',        themeColor: '#e4e6ea' },
+  frost: { wordmark: 'Frost', tag: 'measure twice',             welcome: 'Show me. I\'ll find what doesn\'t hold.',      themeColor: '#e8ecf0' },
+  snow:  { wordmark: 'Snow',  tag: 'the bigger picture',        welcome: 'Describe the goal. I\'ll draw the map.',       themeColor: '#ededf2' },
+  dew:   { wordmark: 'Dew',   tag: 'steady hands',              welcome: 'What needs running? I\'ll keep it alive.',     themeColor: '#e8ece4' },
+};
+
 function updateBrand() {
-  // The 朱印 always shows the current agent's primary character
+  const name = currentAgent.name || 'fair';
+  const theme = AGENT_THEMES[name] || AGENT_THEMES.fair;
+
+  document.body.setAttribute('data-agent', name);
+  document.title = theme.wordmark + ' · ' + (currentAgent.display_name || '晴');
+
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', theme.themeColor);
+
   const stamp = (currentAgent.display_name || '晴').slice(0, 1);
   UI.seal.textContent = stamp;
   UI.brandSpec.textContent = currentAgent.specialty || '';
+  UI.brandTag.textContent = theme.tag;
+
+  const wm = document.querySelector('.brand .wordmark');
+  if (wm) wm.innerHTML = '<em>' + _esc(theme.wordmark) + '</em>';
+
+  if (UI.welcome) {
+    const rule = UI.welcome.querySelector('.rule');
+    UI.welcome.textContent = theme.welcome;
+    if (rule) UI.welcome.appendChild(rule);
+    else {
+      const r = document.createElement('span');
+      r.className = 'rule';
+      UI.welcome.appendChild(r);
+    }
+  }
 }
 
 function switchAgent(name) {
