@@ -41,7 +41,7 @@ class LLMCache:
         if entry is None:
             return None
         ts, response = entry
-        if time.time() - ts > self._ttl:
+        if time.time() - ts >= self._ttl:
             del self._cache[key]
             return None
         self._cache.move_to_end(key)
