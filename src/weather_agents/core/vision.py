@@ -79,20 +79,6 @@ def _expand_content(content: str) -> list[dict]:
     return parts if parts else [{"type": "text", "text": content}]
 
 
-def _strip_markers(text: str) -> str:
-    """Replace ``<<IMG:path>>`` markers with ``[image: filename]`` text.
-
-    Used when the model doesn't support vision — markers must be removed
-    so the LLM doesn't receive garbage markup it can't handle.
-    """
-
-    def _replacer(m: re.Match) -> str:
-        fname = Path(m.group(1)).name
-        return f"[image: {fname}]"
-
-    return _MARKER_RE.sub(_replacer, text)
-
-
 def _model_supports_vision(model: str | None) -> bool:
     """Check whether *model* supports image_url content blocks."""
     if not model:
@@ -116,23 +102,21 @@ def preprocess_messages_for_vision(
     are left untouched.  Returns the original list unmodified when no
     markers are found (fast path).
 
-    If *model* is provided and doesn't support vision, markers are
-    stripped to plain-text ``[image: name]`` references instead of
-    being expanded into multimodal content blocks.
+    When *model* doesn't support vision, messages with markers are left
+    as plain strings so the LLM doesn't crash on multimodal blocks.
+    The markers persist in memory, so switching to a vision-capable model
+    on the next turn will retroactively expand them.
     """
     if not any(isinstance(m.get("content"), str) and has_images(m["content"]) for m in messages):
         return messages
-    supports = _model_supports_vision(model)
+    if not _model_supports_vision(model):
+        return messages
     out: list[dict] = []
     for m in messages:
         content = m.get("content", "")
         if m.get("role") == "user" and isinstance(content, str) and has_images(content):
-            if supports:
-                expanded = _expand_content(content)
-                out.append({**m, "content": expanded})
-            else:
-                stripped = _strip_markers(content)
-                out.append({**m, "content": stripped})
+            expanded = _expand_content(content)
+            out.append({**m, "content": expanded})
         else:
             out.append(m)
     return out
