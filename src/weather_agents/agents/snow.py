@@ -13,6 +13,13 @@ from weather_agents.core.schemas import TaskPlanSchema
 # 若 LLM 仍写出 fair,会被重定向到 rain (与未知 agent 行为一致)。
 _VALID_AGENTS_STATIC: frozenset = frozenset({"fog", "rain", "frost", "snow", "dew"})
 
+# Pre-compiled JSON-block extractors; the parser is called once per LLM
+# response so recompiling inside the function wasted work.
+_JSON_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL),
+    re.compile(r"```\s*\n(\{.*?\})\n```", re.DOTALL),
+)
+
 
 class SnowAgent(BaseAgent):
     name = "snow"
@@ -234,11 +241,7 @@ Like snow — silent but all-covering. Clear structure, thorough consideration.
     @staticmethod
     def _extract_json(content: str) -> str | None:
         """Extract JSON from markdown code blocks."""
-        patterns = [
-            re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL),
-            re.compile(r"```\s*\n(\{.*?\})\n```", re.DOTALL),
-        ]
-        for pattern in patterns:
+        for pattern in _JSON_BLOCK_PATTERNS:
             match = pattern.search(content)
             if match:
                 return match.group(1).strip()

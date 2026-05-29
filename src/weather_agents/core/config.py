@@ -370,13 +370,22 @@ def _load_yaml(path: Path) -> dict:
 
 
 def _save_user_cfg(data: dict) -> None:
-    """Write data to the user config file, merging with existing."""
+    """Write data to the user config file, merging with existing.
+
+    Chmods the file to 0600 because callers persist API keys here
+    (``llm.api_keys.*``, ``tts.api_key``). Default umask on Linux/macOS
+    would otherwise leave the file world-readable and leak credentials
+    to any other local user. ``_write_yaml`` already does the same for
+    its own write path; keeping them consistent.
+    """
     path = USER_CONFIG_DIR / "config.yaml"
     existing = _load_yaml(path)
     _deep_merge(existing, data)
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(existing, f, allow_unicode=True, default_flow_style=False)
+    with contextlib.suppress(PermissionError, OSError):
+        os.chmod(path, 0o600)
     invalidate_cache()
 
 

@@ -34,13 +34,15 @@ def detect_all_lan_ips() -> list[str]:
     except Exception:
         pass
 
-    # Also try UDP trick to get the default route interface IP
+    # Also try UDP trick to get the default route interface IP.
+    # ``socket.socket`` as a context manager guarantees close on every
+    # path; the previous explicit ``s.close()`` leaked the fd when
+    # ``connect`` raised (e.g. offline machine).
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.2)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.2)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
         if ip not in ips:
             ips.append(ip)
     except Exception:
@@ -96,7 +98,10 @@ def ensure_self_signed_cert(ips: list[str]) -> tuple[str, str]:
 
     san = x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(ip)) for ip in ips])
 
-    now = datetime.datetime.now()
+    # cryptography>=42 deprecates naive datetimes for not_valid_before/after;
+    # use timezone-aware UTC. ``timedelta`` avoids the Feb-29 edge case where
+    # ``now.replace(year=now.year + 10)`` would raise on a non-leap target.
+    now = datetime.datetime.now(datetime.UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -104,7 +109,7 @@ def ensure_self_signed_cert(ips: list[str]) -> tuple[str, str]:
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now.replace(year=now.year + 10))
+        .not_valid_after(now + datetime.timedelta(days=365 * 10))
         .add_extension(san, critical=False)
         .sign(key, hashes.SHA256())
     )

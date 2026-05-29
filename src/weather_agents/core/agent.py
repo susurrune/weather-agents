@@ -1686,8 +1686,6 @@ class BaseAgent:
         substring in the message. Returns ``[]`` on every failure path so the
         caller can iterate safely.
         """
-        import re
-
         text = (content or "").strip()
         if not text:
             return []
@@ -1699,7 +1697,7 @@ class BaseAgent:
         except (json.JSONDecodeError, TypeError):
             pass
         # 2. Markdown-fenced JSON
-        m = re.search(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```", text)
+        m = _RE_FENCED_JSON_ARRAY.search(text)
         if m:
             try:
                 data = json.loads(m.group(1))
@@ -1708,7 +1706,7 @@ class BaseAgent:
             except (json.JSONDecodeError, TypeError):
                 pass
         # 3. First raw JSON array substring
-        m = re.search(r"\[[\s\S]*?\]", text)
+        m = _RE_JSON_ARRAY.search(text)
         if m:
             try:
                 data = json.loads(m.group(0))
@@ -2186,6 +2184,8 @@ _TOOL_LABELS: dict[str, str] = {
 }
 
 
+_RE_FENCED_JSON_ARRAY = re.compile(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```")
+_RE_JSON_ARRAY = re.compile(r"\[[\s\S]*?\]")
 _RE_OBJ_OR_ARRAY = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
 _RE_KV_DETECT = re.compile(r"\b\w[\w\d_]*\s*=")
 _RE_KV_PAIRS = re.compile(r'(\w[\w\d_]*)\s*=\s*("[^"]*"|\'[^\']*\'|[\w\d_.+-]+)')

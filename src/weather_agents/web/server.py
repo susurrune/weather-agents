@@ -70,7 +70,12 @@ class VoiceServer:
             self._html_content = _HTML_PATH.read_text(encoding="utf-8")
             import hashlib
 
-            self._html_etag = hashlib.md5(self._html_content.encode()).hexdigest()[:16]
+            # ETag — collision-resistance is the only requirement, no
+            # security context. ``usedforsecurity=False`` satisfies FIPS
+            # builds where md5 is disabled by default.
+            self._html_etag = hashlib.md5(
+                self._html_content.encode(), usedforsecurity=False
+            ).hexdigest()[:16]
         else:
             self._html_content = "<h1>Voice client not found</h1>"
             self._html_etag = "not-found"

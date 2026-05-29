@@ -109,7 +109,7 @@ class MessageBus:
     ) -> list[Event]:
         events = self._history
         if agent_name:
-            events = [e for e in events if e.source == agent_name or e.target == agent_name]
+            events = [e for e in events if agent_name in (e.source, e.target)]
         if event_type:
             events = [e for e in events if e.type == event_type]
         return events[-limit:]

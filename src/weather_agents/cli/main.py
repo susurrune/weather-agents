@@ -703,8 +703,6 @@ def _build_status_line(agent, ctx) -> Text:
 
 def _numbered_blocks(text: str) -> list[str]:
     """Extract numbered or letter-prefixed lines from text.  2+ items or empty."""
-    import re
-
     items: list[str] = []
     for line in text.split("\n"):
         stripped = line.strip()
@@ -778,8 +776,6 @@ def _parse_simple_choices(text: str) -> list[str]:
         "1. 个人作品集\\n2. 产品官网\\n3. 博客首页"
         → ["个人作品集", "产品官网", "博客首页"]
     """
-    import re
-
     items: list[str] = []
     for line in text.split("\n"):
         # Strip leading visual decorations (box-drawing, checkboxes, bullets)
@@ -815,8 +811,6 @@ def _parse_questionnaire(text: str) -> list[dict] | None:
     Returns ``[{"question": str, "options": [str, ...]}, ...]`` with at
     least one entry, or ``None`` when the pattern is not detected.
     """
-    import re
-
     raw = _numbered_blocks(text)
     if not raw:
         return None
@@ -4152,9 +4146,13 @@ async def _run_voice_server(
     # Detect all LAN IPs (Wi-Fi, hotspot, etc.)
     all_ips = detect_all_lan_ips()
 
-    # Try to add Windows firewall rule (requires admin; silently ignore failure)
+    # Try to add Windows firewall rule (requires admin; silently ignore failure).
+    # ``subprocess.run`` blocks the event loop — wrap in ``asyncio.to_thread``
+    # so a slow netsh (up to 5s timeout) doesn't stall everything else the
+    # caller awaits afterwards.
     with contextlib.suppress(Exception):
-        subprocess.run(
+        await asyncio.to_thread(
+            subprocess.run,
             [
                 "netsh",
                 "advfirewall",
@@ -4193,7 +4191,8 @@ async def _run_voice_server(
 
     firewall_hint = ""
     with contextlib.suppress(Exception):
-        r = subprocess.run(
+        r = await asyncio.to_thread(
+            subprocess.run,
             ["netsh", "advfirewall", "firewall", "show", "rule", f"name=WA Voice ({port})"],
             capture_output=True,
             timeout=5,

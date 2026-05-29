@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -15,6 +16,11 @@ from typing import Any
 import aiosqlite
 
 from weather_agents.core.config import MemoryConfig
+
+# Token extraction patterns for fact-recall queries. Pre-compiled because
+# ``_tokenize_query`` runs on every recall_for_injection call.
+_ASCII_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]+")
+_CJK_RUN_RE = re.compile(r"[一-鿿]+")
 
 
 class _RetryDB:
@@ -707,13 +713,12 @@ class Memory:
           missing facts stored under a sub-phrase.
         Returns unique tokens preserving the priority above.
         """
-        import re
-
         out: dict[str, None] = {}
+        text = query or ""
         # ASCII first → they're typically the most discriminative tokens.
-        for w in re.findall(r"[A-Za-z][A-Za-z0-9_+-]+", query or ""):
+        for w in _ASCII_TOKEN_RE.findall(text):
             out.setdefault(w, None)
-        for run in re.findall(r"[一-鿿]+", query or ""):
+        for run in _CJK_RUN_RE.findall(text):
             for size in (3, 2):
                 if len(run) < size:
                     continue

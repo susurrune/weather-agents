@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from weather_agents.agents.dew import DewAgent
 from weather_agents.agents.fair import FairAgent
@@ -22,9 +22,13 @@ from weather_agents.core.bus import MessageBus
 from weather_agents.core.config import AppConfig, load_config
 from weather_agents.core.llm import LLMClient
 from weather_agents.core.logger import get_logger
-from weather_agents.core.mcp import MCPManager
 from weather_agents.core.skill import SkillRegistry
 from weather_agents.core.tool import ToolRegistry
+
+if TYPE_CHECKING:
+    # mcp imports httpx (~60ms). Defer until a system context is actually
+    # built — CLI paths like ``wa --help`` / ``wa config`` never need it.
+    from weather_agents.core.mcp import MCPManager
 from weather_agents.core.workspace import init_workspace, resolve_workspace_path
 from weather_agents.plugins.loader import PluginLoader
 from weather_agents.skills.loader import register_all_skills
@@ -114,7 +118,9 @@ def create_system_context() -> SystemContext:
     # Configure MCP manager (servers connect during init_all)
     mcp_manager: MCPManager | None = None
     if config.mcp.servers:
-        mcp_manager = MCPManager(base_tool_registry)
+        from weather_agents.core.mcp import MCPManager as _MCPManager
+
+        mcp_manager = _MCPManager(base_tool_registry)
         mcp_manager.configure(config.mcp.servers)
 
     # Shared LLM client (cost tracking is global; rate limiting is per-client)

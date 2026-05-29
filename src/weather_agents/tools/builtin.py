@@ -9,12 +9,16 @@ import re as _re
 import shlex
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
-
-import httpx
 
 from weather_agents.core.constants import TASK_DONE_SENTINEL
 from weather_agents.core.tool import Tool, ToolParameter, ToolRegistry
+
+if TYPE_CHECKING:
+    # httpx adds ~50ms at import; HTTP tools are rarely used by ``wa --help``
+    # or other no-LLM paths. Defer to first call via ``_get_http``.
+    import httpx
 
 _MAX_FILE_BYTES = 50_000
 _MAX_SHELL_OUTPUT = 20_000
@@ -52,6 +56,11 @@ _WRITE_PROTECT_ROOTS = {
     "/proc",
     "/sys",
     "/dev",
+    # macOS firmlinks: /etc, /var, /tmp are actually located under /private.
+    # Without these, ``/private/etc/passwd`` (the real path) bypasses the check.
+    "/private/etc",
+    "/private/var",
+    "/private/tmp",
     # Windows system dirs
     "c:\\windows",
     "c:\\program files",
@@ -63,22 +72,36 @@ _WRITE_PROTECT_ROOTS = {
 
 
 def _is_protected_path(path: str) -> bool:
-    """Check if a path is inside a system-protected directory tree."""
-    resolved = os.path.normpath(os.path.expanduser(path)).lower()
-    normalized = resolved.rstrip(os.sep)
+    """Check if a path is inside a system-protected directory tree.
 
-    # Exact-match dangerous paths
-    if normalized in _WRITE_PROTECT_EXACT:
-        return True
-    # Drive roots: "c:", "c:\", "d:", "d:\" (Windows)
-    if len(normalized) <= 3 and (normalized.endswith(":") or normalized.endswith(":\\")):
-        return True
+    Checks both the normalised lexical form AND the symlink-resolved real
+    path: a user-controlled symlink (``~/safe`` → ``/etc/passwd``) would
+    otherwise sneak past a pure ``normpath`` check.
+    """
+    expanded = os.path.expanduser(path)
+    candidates: list[str] = [os.path.normpath(expanded).lower()]
+    # realpath may raise on weird inputs (long paths on Windows, etc.); the
+    # lexical form is already in ``candidates`` so a failure here is safe.
+    try:
+        real = os.path.realpath(expanded).lower()
+        if real != candidates[0]:
+            candidates.append(real)
+    except (OSError, ValueError):
+        pass
 
-    # Rooted protected directories
-    for root in _WRITE_PROTECT_ROOTS:
-        r = os.path.normpath(root).lower()
-        if normalized == r or normalized.startswith(r + os.sep):
+    for resolved in candidates:
+        normalized = resolved.rstrip(os.sep)
+        # Exact-match dangerous paths
+        if normalized in _WRITE_PROTECT_EXACT:
             return True
+        # Drive roots: "c:", "c:\", "d:", "d:\" (Windows)
+        if len(normalized) <= 3 and (normalized.endswith(":") or normalized.endswith(":\\")):
+            return True
+        # Rooted protected directories
+        for root in _WRITE_PROTECT_ROOTS:
+            r = os.path.normpath(root).lower()
+            if normalized == r or normalized.startswith(r + os.sep):
+                return True
     return False
 
 
@@ -330,7 +353,6 @@ async def _code_search(
     **kwargs,
 ) -> str:
     """Search for text or regex in source files. Set regex=True for regex mode."""
-    import re as _re
     from pathlib import Path
 
     suffixes = {
@@ -929,9 +951,11 @@ _ALLOW_PRIVATE_NET = os.environ.get("WA_ALLOW_PRIVATE_NET", "0") == "1"
 async def _get_http() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(30, connect=10),
-            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        import httpx as _httpx
+
+        _http_client = _httpx.AsyncClient(
+            timeout=_httpx.Timeout(30, connect=10),
+            limits=_httpx.Limits(max_keepalive_connections=10, max_connections=20),
             follow_redirects=True,
             max_redirects=10,
             headers={"User-Agent": "WeatherAgents/1.0"},
@@ -942,9 +966,22 @@ async def _get_http() -> httpx.AsyncClient:
 def _validate_url(url: str) -> str | None:
     """Return None if URL is safe; otherwise an error string.
 
-    Blocks: non-http(s) schemes, private/loopback/link-local IPs, IMDS endpoint,
-    and the file:// scheme. Override with WA_ALLOW_PRIVATE_NET=1.
+    Blocks: non-http(s) schemes, private/loopback/link-local/unspecified/
+    multicast IPs, IMDS endpoint, file:// scheme. Override with
+    WA_ALLOW_PRIVATE_NET=1.
+
+    Hardened against IPv4 short-form bypasses (``127.1``, ``0x7f000001``,
+    ``2130706433``, ``0177.0.0.1``, ``0``) — ``ipaddress.ip_address`` rejects
+    these, but ``socket.inet_aton`` (used by getaddrinfo internally) accepts
+    them and httpx would happily connect. Trailing-dot variants of
+    ``localhost.`` are normalised too.
+
+    Limitation: DNS rebinding (a public hostname that resolves to a private
+    IP at request time) is NOT blocked here — fix at the socket layer or
+    require WA_ALLOW_PRIVATE_NET=1 in trusted environments.
     """
+    import socket
+
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return f"Error: only http/https URLs allowed (got {parsed.scheme!r})"
@@ -953,13 +990,31 @@ def _validate_url(url: str) -> str | None:
     if _ALLOW_PRIVATE_NET:
         return None
     host = parsed.hostname or ""
-    if host.lower() in {"localhost", "ip6-localhost", "metadata.google.internal"}:
+    # Strip a trailing dot — DNS treats ``localhost.`` and ``localhost`` the
+    # same, but a substring/equality check on the raw hostname would not.
+    norm = host.lower().rstrip(".")
+    if norm in {"localhost", "ip6-localhost", "metadata.google.internal"}:
         return f"Error: refusing to reach internal host {host!r} (set WA_ALLOW_PRIVATE_NET=1 to override)"
+
+    # Try strict IPv4/IPv6 first; if that fails, try ``inet_aton`` to catch
+    # short / octal / hex / integer forms (127.1, 0x7f000001, 2130706433).
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None = None
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return None  # hostname — DNS resolution would happen at request time
-    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved:
+        try:
+            packed = socket.inet_aton(host)
+            ip = ipaddress.IPv4Address(socket.inet_ntoa(packed))
+        except OSError:
+            return None  # genuine hostname — relies on caller's DNS trust
+    if (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_unspecified
+        or ip.is_multicast
+    ):
         return f"Error: refusing to reach private/loopback IP {ip} (set WA_ALLOW_PRIVATE_NET=1 to override)"
     return None
 
@@ -967,6 +1022,8 @@ def _validate_url(url: str) -> str | None:
 async def _http_get(url: str, **kwargs) -> str:
     if err := _validate_url(url):
         return err
+    import httpx
+
     try:
         client = await _get_http()
         resp = await client.get(url)
@@ -980,6 +1037,8 @@ async def _http_get(url: str, **kwargs) -> str:
 async def _http_post(url: str, data: str = "", **kwargs) -> str:
     if err := _validate_url(url):
         return err
+    import httpx
+
     try:
         client = await _get_http()
         headers = {}
@@ -1278,12 +1337,7 @@ async def _fetch_web_page(url: str, extract_text: bool = True) -> str:
     permission/audit story as those, plus a cheap regex-based text
     extraction so the LLM doesn't have to parse raw HTML.
     """
-    import re
-
-    try:
-        import httpx
-    except ImportError:
-        return "Error: httpx not available"
+    import httpx
 
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -1298,14 +1352,14 @@ async def _fetch_web_page(url: str, extract_text: bool = True) -> str:
                 return resp.text[:5000]
 
             html = resp.text
-            html = re.sub(
+            html = _re.sub(
                 r"<(script|style|noscript|iframe|svg)[^>]*>.*?</\1>",
                 "",
                 html,
-                flags=re.DOTALL | re.IGNORECASE,
+                flags=_re.DOTALL | _re.IGNORECASE,
             )
-            html = re.sub(r"<[^>]+>", " ", html)
-            html = re.sub(r"\s+", " ", html).strip()
+            html = _re.sub(r"<[^>]+>", " ", html)
+            html = _re.sub(r"\s+", " ", html).strip()
             html = (
                 html.replace("&amp;", "&")
                 .replace("&lt;", "<")

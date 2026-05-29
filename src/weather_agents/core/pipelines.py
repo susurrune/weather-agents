@@ -220,6 +220,21 @@ _PIPELINES: tuple[Pipeline, ...] = (
 )
 
 
+# Compiled regex cache for ``require_regex`` — the source tuples live on
+# frozen dataclasses, so we key by ``id(p.require_regex)``. Match path runs
+# per LLM turn; recompiling raw patterns each call was wasted work.
+_REGEX_CACHE: dict[int, tuple[re.Pattern[str], ...]] = {}
+
+
+def _compiled_regex(p: Pipeline) -> tuple[re.Pattern[str], ...]:
+    key = id(p.require_regex)
+    compiled = _REGEX_CACHE.get(key)
+    if compiled is None:
+        compiled = tuple(re.compile(rx) for rx in p.require_regex)
+        _REGEX_CACHE[key] = compiled
+    return compiled
+
+
 def match_pipeline(goal: str) -> Pipeline | None:
     """Return the first matching pipeline, or None.
 
@@ -231,7 +246,7 @@ def match_pipeline(goal: str) -> Pipeline | None:
     for p in _PIPELINES:
         if not any(tok.lower() in lower for tok in p.triggers):
             continue
-        if p.require_regex and not any(re.search(rx, lower) for rx in p.require_regex):
+        if p.require_regex and not any(rx.search(lower) for rx in _compiled_regex(p)):
             continue
         return p
     return None

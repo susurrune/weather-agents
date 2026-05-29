@@ -56,6 +56,12 @@ class CircuitBreaker:
                 return True
             return False
         # HALF_OPEN — allow one probe
+        # KNOWN LIMITATION: under concurrent callers, all of them pass
+        # through during HALF_OPEN until success/failure resolves the
+        # breaker (thundering herd). The existing test
+        # ``test_half_open_allows_all_until_decision`` locks in this
+        # contract; tightening it to a true single-probe semantics needs
+        # a coordinated change to that test.
         return True
 
     def record_success(self) -> None:
