@@ -143,6 +143,35 @@ class VoiceServer:
         if not ok:
             await mem.create_session()
 
+    # Cap replayed turns so reopening a long conversation can't blow the
+    # context window (and to bound the work). Most recent turns are kept.
+    _MAX_CONTEXT_TURNS: int = 40
+
+    def _load_context(self, agent_name: str, messages: list[dict[str, Any]]) -> int:
+        """Seed ``agent_name``'s short-term memory from a saved conversation.
+
+        The browser stores conversations client-side; the server session is
+        separate. When the user reopens one, we replay its user/agent turns so
+        the agent can continue with context. We clear short-term first (keeping
+        only the freshly-rebuilt system prompt) to avoid duplicating turns on a
+        re-load, then append the turns as plain user/assistant messages — no
+        LLM call, no tool replay.
+        """
+        agent = self._agent_map.get(agent_name)
+        if not agent:
+            return 0
+        mem = agent.memory
+        # Drop everything but the system prompt, then re-stamp it fresh.
+        mem.short_term = [m for m in mem.short_term if m.role == "system"]
+        loaded = 0
+        for m in messages[-self._MAX_CONTEXT_TURNS :]:
+            role = "assistant" if m.get("role") == "agent" else str(m.get("role") or "")
+            text = (m.get("text") or "").strip()
+            if role in ("user", "assistant") and text:
+                mem.add_message(role, text)
+                loaded += 1
+        return loaded
+
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
@@ -197,6 +226,19 @@ class VoiceServer:
                     elif msg_type == "ping":
                         with contextlib.suppress(Exception):
                             await ws.send_json({"type": "pong"})
+                    elif msg_type == "load_context":
+                        # Browser reopened a saved conversation: replay its turns
+                        # into the agent's short-term memory so the next message
+                        # continues with full context (the client store and the
+                        # server session are otherwise independent).
+                        if session_id:
+                            async with self._ws_lock:
+                                await self._activate_session(my_agent_name, session_id)
+                                count = self._load_context(
+                                    my_agent_name, data.get("messages") or []
+                                )
+                            with contextlib.suppress(Exception):
+                                await ws.send_json({"type": "context_loaded", "count": count})
                     elif msg_type == "list_agents":
                         with contextlib.suppress(Exception):
                             await ws.send_json(

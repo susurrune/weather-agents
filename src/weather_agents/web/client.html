@@ -540,14 +540,19 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--seal) 30%, transparent) transparent;
   }
   .stage::-webkit-scrollbar { width: 6px; }
   .stage::-webkit-scrollbar-track { background: transparent; }
   .stage::-webkit-scrollbar-thumb {
-    background: var(--ink-whisper);
+    background: color-mix(in srgb, var(--seal) 28%, transparent);
     border-radius: 3px;
-    opacity: 0.5;
   }
+  .stage::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--seal) 45%, transparent);
+  }
+  .stage::-webkit-scrollbar-button { display: none; height: 0; }
 
   .column {
     display: flex;
@@ -1207,7 +1212,21 @@
   #sidebar-history {
     max-height: 360px;
     overflow-y: auto;
+    /* Firefox: thin, themed, no chrome. */
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--seal) 35%, transparent) transparent;
   }
+  #sidebar-history::-webkit-scrollbar { width: 5px; }
+  #sidebar-history::-webkit-scrollbar-track { background: transparent; }
+  #sidebar-history::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--seal) 28%, transparent);
+    border-radius: 3px;
+  }
+  #sidebar-history::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--seal) 45%, transparent);
+  }
+  /* Kill the native up/down arrow buttons (the boxy look in the screenshot). */
+  #sidebar-history::-webkit-scrollbar-button { display: none; height: 0; }
   .sidebar-history-item {
     padding: 7px 10px;
     border-radius: 3px;
@@ -1321,6 +1340,8 @@
       background: rgba(235,224,199,0.50);
       position: relative;
       z-index: 2;
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--seal) 30%, transparent) transparent;
     }
     #sidebar::-webkit-scrollbar {
       width: 4px;
@@ -1329,9 +1350,10 @@
       background: transparent;
     }
     #sidebar::-webkit-scrollbar-thumb {
-      background: var(--ink-whisper);
+      background: color-mix(in srgb, var(--seal) 28%, transparent);
       border-radius: 2px;
     }
+    #sidebar::-webkit-scrollbar-button { display: none; height: 0; }
 
     #main-wrap {
       flex: 1;
@@ -1784,6 +1806,11 @@ function newConversation() {
     if (!UI.welcome.isConnected) UI.column.appendChild(UI.welcome);
     UI.welcome.style.display = '';
   }
+  // Clear the server agent's short-term memory so the new conversation starts
+  // with a clean slate (empty context resets it to just the system prompt).
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'load_context', messages: [] }));
+  }
   renderSidebarHistory();
   scrollBottom();
 }
@@ -1820,6 +1847,18 @@ async function loadConversation(id) {
   }
   scrollBottom();
   renderSidebarHistory();
+
+  // Seed the server agent's short-term memory with this conversation so the
+  // next message continues with full context (client store and server session
+  // are otherwise independent). System messages are display-only — skip them.
+  if (ws && ws.readyState === WebSocket.OPEN && currentMessages.length) {
+    ws.send(JSON.stringify({
+      type: 'load_context',
+      messages: currentMessages
+        .filter(m => m.role === 'user' || m.role === 'agent')
+        .map(m => ({ role: m.role, text: m.text })),
+    }));
+  }
   // Input stays enabled — user can continue the conversation
 }
 

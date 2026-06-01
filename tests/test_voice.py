@@ -182,6 +182,56 @@ async def test_empty_text_no_agent_call(voice_server, mock_agent, mock_ws):
     assert called
 
 
+# ── Context replay (reopening a saved conversation) ──
+
+
+def test_load_context_seeds_memory(voice_server, mock_agent):
+    """Replaying a saved conversation drops stale turns (keeping only the
+    system prompt) and re-adds the user/agent turns as user/assistant."""
+    from types import SimpleNamespace
+
+    mock_agent.memory.short_term = [
+        SimpleNamespace(role="system", content="SYS"),
+        SimpleNamespace(role="user", content="stale — should be dropped"),
+    ]
+    added: list[tuple[str, str]] = []
+    mock_agent.memory.add_message = lambda role, content, **_k: added.append((role, content))
+
+    n = voice_server._load_context(
+        "fair",
+        [
+            {"role": "user", "text": "hi"},
+            {"role": "agent", "text": "hello there"},  # agent → assistant
+            {"role": "system", "text": "ignored"},  # non user/agent → skipped
+            {"role": "user", "text": "   "},  # blank → skipped
+        ],
+    )
+
+    assert n == 2
+    assert added == [("user", "hi"), ("assistant", "hello there")]
+    # short_term reset to the system prompt only (stale user turn dropped)
+    assert [m.role for m in mock_agent.memory.short_term] == ["system"]
+
+
+def test_load_context_caps_turns(voice_server, mock_agent):
+    """Only the most recent _MAX_CONTEXT_TURNS turns are replayed."""
+    mock_agent.memory.short_term = []
+    added: list[tuple[str, str]] = []
+    mock_agent.memory.add_message = lambda role, content, **_k: added.append((role, content))
+
+    cap = VoiceServer._MAX_CONTEXT_TURNS
+    msgs = [{"role": "user", "text": f"m{i}"} for i in range(cap + 10)]
+    n = voice_server._load_context("fair", msgs)
+
+    assert n == cap
+    assert added[0][1] == "m10"  # oldest 10 dropped
+    assert added[-1][1] == f"m{cap + 9}"
+
+
+def test_load_context_unknown_agent(voice_server):
+    assert voice_server._load_context("nope", [{"role": "user", "text": "x"}]) == 0
+
+
 # ── Markdown stripping ──
 
 
