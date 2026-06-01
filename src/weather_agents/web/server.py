@@ -188,6 +188,9 @@ class VoiceServer:
         # Track all sessions created during this WS lifecycle so they
         # are reliably cleaned up on every exit path.
         _open_sessions: list[tuple[str, str]] = [(my_agent_name, session_id)] if session_id else []
+        # The in-flight turn (so a `stop` message can cancel it). Runs as a
+        # background task rather than inline, keeping the receive loop free.
+        current_task: asyncio.Task | None = None
 
         _log.info("voice_ws_open session=%s", session_id)
 
@@ -220,9 +223,23 @@ class VoiceServer:
                     if msg_type == "speech":
                         text = (data.get("text") or "").strip()
                         if text and session_id:
-                            async with self._ws_lock:
-                                await self._activate_session(my_agent_name, session_id)
-                                await self._handle_speech(ws, text)
+                            # Run as a cancelable background task so the receive
+                            # loop stays free to handle `stop`. A new turn
+                            # supersedes any still-running one.
+                            if current_task and not current_task.done():
+                                current_task.cancel()
+                            current_task = asyncio.create_task(
+                                self._run_turn(ws, my_agent_name, session_id, text)
+                            )
+                    elif msg_type == "stop":
+                        # User hit pause — cancel the in-flight turn and tell the
+                        # client to settle (partial output already streamed stays).
+                        if current_task and not current_task.done():
+                            current_task.cancel()
+                            with contextlib.suppress(Exception):
+                                await ws.send_json(
+                                    {"type": "done", "full_text": "", "interrupted": True}
+                                )
                     elif msg_type == "ping":
                         with contextlib.suppress(Exception):
                             await ws.send_json({"type": "pong"})
@@ -313,6 +330,9 @@ class VoiceServer:
         except asyncio.CancelledError:
             pass
         finally:
+            # Cancel any in-flight turn so it doesn't outlive the connection.
+            if current_task and not current_task.done():
+                current_task.cancel()
             _log.info("voice_ws_close sessions=%s", [s for _, s in _open_sessions])
             for agent_name, sid in _open_sessions:
                 agent = self._agent_map.get(agent_name)
@@ -322,6 +342,26 @@ class VoiceServer:
                             await agent.memory.delete_session(sid)
 
         return ws
+
+    async def _run_turn(
+        self, ws: web.WebSocketResponse, agent_name: str, session_id: str, text: str
+    ) -> None:
+        """Run one speech turn under the WS lock, as a cancelable task.
+
+        Cancellation (a `stop` message) propagates as CancelledError, which
+        unwinds the ``async with`` and releases the lock; the receive loop has
+        already told the client to settle, so we just let it end.
+        """
+        try:
+            async with self._ws_lock:
+                await self._activate_session(agent_name, session_id)
+                await self._handle_speech(ws, text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a turn error shouldn't kill the socket
+            _log.warning("voice_turn_error %s", exc)
+            with contextlib.suppress(Exception):
+                await self._safe_send(ws, {"type": "error", "text": f"error: {exc}"})
 
     async def _safe_send(self, ws: web.WebSocketResponse, data: dict[str, Any]) -> bool:
         try:

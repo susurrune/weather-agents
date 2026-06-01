@@ -705,6 +705,95 @@
     opacity: 0.7;
   }
 
+  /* ═════ Tool-call group — collapsible, classified ═════
+     Replaces the loose stream of "Searching: …" notes with one foldable
+     block per turn, themed to the active agent (var(--seal)). */
+  .tools {
+    align-self: flex-start;
+    width: 100%;
+    max-width: 560px;
+    margin: 6px 0 18px;
+    border-left: 2px solid color-mix(in srgb, var(--seal) 35%, transparent);
+    background: color-mix(in srgb, var(--paper-deep) 22%, transparent);
+    border-radius: 0 3px 3px 0;
+    font-family: var(--serif-body);
+  }
+  .tools-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--ink-soft);
+    font-family: inherit;
+    font-size: 12.5px;
+    letter-spacing: 0.03em;
+  }
+  .tools-head:hover { color: var(--seal-deep); }
+  .tools-icon { color: var(--seal); font-size: 12px; }
+  .tools-label { font-style: italic; }
+  .tools-count {
+    font-size: 11px;
+    color: var(--paper);
+    background: color-mix(in srgb, var(--seal) 70%, transparent);
+    border-radius: 9px;
+    padding: 0 7px;
+    line-height: 1.5;
+    min-width: 14px;
+    text-align: center;
+  }
+  .tools-latest {
+    flex: 1;
+    min-width: 0;
+    color: var(--ink-faint);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tools-chev {
+    color: var(--ink-whisper);
+    transition: transform 0.25s ease;
+    font-size: 14px;
+  }
+  .tools:not(.collapsed) .tools-chev { transform: rotate(90deg); }
+  .tools:not(.collapsed) .tools-latest { display: none; }
+  .tools-list {
+    overflow: hidden;
+    max-height: 600px;
+    transition: max-height 0.3s ease;
+    padding: 0 14px 4px 14px;
+  }
+  .tools.collapsed .tools-list {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  .tools-item {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    padding: 3px 0 3px 16px;
+    position: relative;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .tools-item::before {
+    content: "›";
+    position: absolute;
+    left: 2px;
+    color: var(--seal);
+    opacity: 0.6;
+  }
+  .tools-item.running::before {
+    content: "·";
+    animation: tool-blink 1s steps(2) infinite;
+  }
+  @keyframes tool-blink { 50% { opacity: 0.2; } }
+
   /* Thinking — three ink dots forming an em-dash thought */
   .think {
     display: grid;
@@ -930,6 +1019,12 @@
     color: var(--paper);
     border-color: var(--ink);
   }
+  /* Pause/stop — shown only while a turn is generating (body.generating),
+     swapping in for the send button so the grid stays 1fr·auto·auto. */
+  .act.stop { display: none; border-color: var(--seal); color: var(--seal); }
+  .act.stop:hover { background: var(--seal); color: var(--paper); border-color: var(--seal); }
+  body.generating .act.send { display: none; }
+  body.generating .act.stop { display: inline-flex; }
   .act.mic {
     border-color: var(--seal);
     color: var(--seal);
@@ -1500,6 +1595,11 @@
         <polyline points="5 12 12 5 19 12"/>
       </svg>
     </button>
+    <button class="act stop" id="stop-btn" title="停止" aria-label="停止生成">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
+      </svg>
+    </button>
     <button class="act mic" id="mic-btn" title="语音输入" aria-label="语音输入">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <rect x="9" y="2" width="6" height="12" rx="3" ry="3"/>
@@ -1635,6 +1735,7 @@ let recognition = null;
 let autoListenEnabled = false;
 let ttsEnabled = true;
 let currentAgentMsgEl = null;
+let currentToolGroup  = null;  // collapsible tool-call block for the active turn
 
 // Conversation history state
 let currentConversationId = null;
@@ -1648,6 +1749,7 @@ const UI = {
   statusText:      document.getElementById('status-text'),
   micBtn:          document.getElementById('mic-btn'),
   sendBtn:         document.getElementById('send-btn'),
+  stopBtn:         document.getElementById('stop-btn'),
   textInput:       document.getElementById('text-input'),
   reconnectBar:    document.getElementById('reconnect-bar'),
   ttsRate:         document.getElementById('tts-rate'),
@@ -2019,7 +2121,9 @@ function handleMsg(msg) {
     case 'start':
       isWaitingResponse = true;
       setStatus('waiting');
+      setGenerating(true);
       currentAgentMsgEl = null;
+      currentToolGroup = null;  // a fresh tool-call group for this turn
       showThinking();
       pendingAudioChunks = [];
       serverTtsPending = false;
@@ -2035,9 +2139,11 @@ function handleMsg(msg) {
       break;
     case 'done':
       isWaitingResponse = false;
+      setGenerating(false);
       lastFullText = msg.full_text || '';
       serverTtsPending = !!msg.tts && ttsEnabled;
       hideThinking();
+      finalizeToolGroup();
       if (currentAgentMsgEl && lastFullText) {
         const body = currentAgentMsgEl.querySelector('.body');
         if (body) body.innerHTML = renderMarkdown(lastFullText);
@@ -2107,11 +2213,13 @@ function handleMsg(msg) {
       serverTtsPending = false;
       break;
     case 'status':
-      addSysMsg(msg.label || '');
+      addToolStatus(msg.label || '');
       break;
     case 'error':
       isWaitingResponse = false;
+      setGenerating(false);
       hideThinking();
+      finalizeToolGroup();
       setSpeakingVisual(false);
       addSysMsg('something interrupted — ' + (msg.text || ''));
       setStatus('connected');
@@ -2195,6 +2303,57 @@ function addSysMsg(text) {
   div.textContent = text;
   UI.column.appendChild(div);
   scrollBottom();
+}
+
+// ── Collapsible tool-call group ──
+// One foldable block per turn collects every tool action, instead of a loose
+// stream of status notes. Collapsed by default (shows count + latest action);
+// click the header to expand the full list.
+function ensureToolGroup() {
+  if (currentToolGroup) return currentToolGroup;
+  const wrap = document.createElement('div');
+  wrap.className = 'tools collapsed';
+  wrap.innerHTML =
+    '<button class="tools-head" type="button">' +
+      '<span class="tools-icon">⚙</span>' +
+      '<span class="tools-label">工具调用</span>' +
+      '<span class="tools-count">0</span>' +
+      '<span class="tools-latest"></span>' +
+      '<span class="tools-chev">›</span>' +
+    '</button>' +
+    '<div class="tools-list"></div>';
+  wrap.querySelector('.tools-head').addEventListener('click', () => {
+    wrap.classList.toggle('collapsed');
+    scrollBottom();
+  });
+  UI.column.appendChild(wrap);
+  currentToolGroup = wrap;
+  return wrap;
+}
+
+function addToolStatus(label) {
+  if (!label) return;
+  const g = ensureToolGroup();
+  const list = g.querySelector('.tools-list');
+  // Settle the previous item (it's no longer the running one).
+  const prev = list.querySelector('.tools-item.running');
+  if (prev) prev.classList.remove('running');
+  const item = document.createElement('div');
+  item.className = 'tools-item running';
+  item.textContent = label;
+  list.appendChild(item);
+  const n = list.children.length;
+  g.querySelector('.tools-count').textContent = String(n);
+  g.querySelector('.tools-latest').textContent = label;
+  scrollBottom();
+}
+
+// Mark the current turn's tool group finished (stop the blinking dot).
+function finalizeToolGroup() {
+  if (!currentToolGroup) return;
+  const running = currentToolGroup.querySelector('.tools-item.running');
+  if (running) running.classList.remove('running');
+  currentToolGroup = null;
 }
 
 // Per-agent thinking-animation markup. Each builder returns the inner HTML
@@ -2630,9 +2789,28 @@ function resizeTextarea() {
   UI.textInput.style.height = Math.min(UI.textInput.scrollHeight, 140) + 'px';
 }
 
+// Toggle the compose bar between "send" and "stop" while a turn generates.
+function setGenerating(on) {
+  document.body.classList.toggle('generating', !!on);
+}
+
+// Pause button — ask the server to cancel the in-flight turn and settle the UI.
+function stopGeneration() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'stop' }));
+  }
+  isWaitingResponse = false;
+  hideThinking();
+  finalizeToolGroup();
+  if (currentAgentMsgEl) currentAgentMsgEl.classList.remove('streaming');
+  setGenerating(false);
+  setStatus('connected');
+}
+
 // ── UI Events ──
 UI.micBtn.addEventListener('click', toggleListening);
 UI.sendBtn.addEventListener('click', () => sendText(UI.textInput.value));
+UI.stopBtn.addEventListener('click', stopGeneration);
 UI.textInput.addEventListener('input', () => {
   resizeTextarea();
   UI.sendBtn.disabled = !UI.textInput.value.trim();

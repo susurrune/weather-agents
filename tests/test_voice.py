@@ -232,6 +232,50 @@ def test_load_context_unknown_agent(voice_server):
     assert voice_server._load_context("nope", [{"role": "user", "text": "x"}]) == 0
 
 
+# ── Turn cancellation (pause button) ──
+
+
+@pytest.mark.asyncio
+async def test_run_turn_streams_speech(voice_server, mock_agent, mock_ws):
+    """_run_turn activates the session and streams the speech turn."""
+
+    async def mock_stream(_text):
+        yield {"type": "content", "text": "hi"}
+        yield {"type": "done"}
+
+    mock_agent.memory.get_active_session.return_value = "s1"
+    mock_agent.memory.load_session = AsyncMock(return_value=True)
+    mock_agent.chat_stream = mock_stream
+
+    await voice_server._run_turn(mock_ws, "fair", "s1", "hello")
+    types = [m["type"] for m in mock_ws.sent]
+    assert "start" in types and "content" in types and "done" in types
+
+
+@pytest.mark.asyncio
+async def test_run_turn_cancel_propagates(voice_server, mock_agent, mock_ws):
+    """Cancelling a turn raises CancelledError (so the lock unwinds) and does
+    not swallow it as a generic error."""
+    import asyncio
+
+    started = asyncio.Event()
+
+    async def slow_stream(_text):
+        started.set()
+        await asyncio.sleep(5)
+        yield {"type": "done"}
+
+    mock_agent.memory.get_active_session.return_value = "s1"
+    mock_agent.memory.load_session = AsyncMock(return_value=True)
+    mock_agent.chat_stream = slow_stream
+
+    task = asyncio.create_task(voice_server._run_turn(mock_ws, "fair", "s1", "x"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 # ── Markdown stripping ──
 
 
