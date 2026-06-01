@@ -735,6 +735,131 @@
     30%           { transform: translateY(-4px) scale(1.15); opacity: 0.95; }
   }
 
+  /* ═════ Per-agent thinking animations ═════
+     Each weather agent gets a distinct running motion, themed to its
+     accent (var(--seal)). Built in showThinking(); see ANIM_BUILDERS. */
+  .think .anim {
+    position: relative;
+    width: 44px;
+    height: 28px;
+    margin-top: 10px;
+    color: var(--seal);
+  }
+  .think .anim span,
+  .think .anim i { display: block; }
+
+  /* fog 雾 — drifting mist layers */
+  .anim.fog .bar {
+    position: absolute; height: 3px; border-radius: 3px;
+    background: var(--seal); opacity: 0.5;
+    animation: fog-drift 2.6s ease-in-out infinite;
+  }
+  .anim.fog .bar:nth-child(1) { top: 4px;  width: 26px; animation-delay: 0s; }
+  .anim.fog .bar:nth-child(2) { top: 12px; width: 38px; animation-delay: .5s; opacity: .7; }
+  .anim.fog .bar:nth-child(3) { top: 20px; width: 20px; animation-delay: 1s; }
+  @keyframes fog-drift {
+    0%, 100% { transform: translateX(-6px); opacity: .22; }
+    50%      { transform: translateX(9px);  opacity: .8; }
+  }
+
+  /* rain 雨 — falling streaks */
+  .anim.rain .drop {
+    position: absolute; top: 0; width: 2px; height: 9px; border-radius: 2px;
+    background: var(--seal); opacity: .7;
+    animation: rain-fall 1.1s linear infinite;
+  }
+  .anim.rain .drop:nth-child(1) { left: 4px;  animation-delay: 0s; }
+  .anim.rain .drop:nth-child(2) { left: 13px; animation-delay: .38s; }
+  .anim.rain .drop:nth-child(3) { left: 22px; animation-delay: .16s; }
+  .anim.rain .drop:nth-child(4) { left: 31px; animation-delay: .54s; }
+  @keyframes rain-fall {
+    0%   { transform: translateY(-4px); opacity: 0; }
+    30%  { opacity: .9; }
+    100% { transform: translateY(24px); opacity: 0; }
+  }
+
+  /* frost 霜 — crystallizing six-point star (rotates + pulses) */
+  .anim.frost .star {
+    position: absolute; left: 11px; top: 3px; width: 22px; height: 22px;
+    animation: frost-spin 3.4s linear infinite, frost-pulse 1.9s ease-in-out infinite;
+  }
+  .anim.frost .star::before,
+  .anim.frost .star::after,
+  .anim.frost .star i {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    width: 2px; height: 22px; margin: -11px 0 0 -1px;
+    background: currentColor; border-radius: 2px;
+  }
+  .anim.frost .star::after { transform: rotate(60deg); }
+  .anim.frost .star i      { transform: rotate(120deg); }
+  @keyframes frost-spin  { to { transform: rotate(180deg); } }
+  @keyframes frost-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+  /* snow 雪 — snowflakes drifting down with a sway */
+  .anim.snow .flake {
+    position: absolute; top: 0; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--seal); opacity: .7;
+    animation: snow-fall 2.3s ease-in-out infinite;
+  }
+  .anim.snow .flake:nth-child(1) { left: 5px;  animation-delay: 0s; }
+  .anim.snow .flake:nth-child(2) { left: 18px; animation-delay: .75s; }
+  .anim.snow .flake:nth-child(3) { left: 31px; animation-delay: 1.4s; }
+  @keyframes snow-fall {
+    0%   { transform: translate(0, -5px);   opacity: 0; }
+    20%  { opacity: .9; }
+    50%  { transform: translate(6px, 9px);  }
+    100% { transform: translate(-4px, 23px); opacity: 0; }
+  }
+
+  /* dew 露 — a dewdrop swells, drips, and ripples */
+  .anim.dew .drop {
+    position: absolute; left: 17px; top: 2px; width: 10px; height: 10px;
+    background: var(--seal);
+    border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+    animation: dew-swell 2.3s ease-in-out infinite;
+  }
+  .anim.dew .ring {
+    position: absolute; left: 14px; top: 18px; width: 16px; height: 7px;
+    border: 1.5px solid var(--seal); border-radius: 50%; opacity: 0;
+    animation: dew-ripple 2.3s ease-out infinite;
+  }
+  @keyframes dew-swell {
+    0%   { transform: translateY(0) scale(.7);    opacity: .6; }
+    55%  { transform: translateY(2px) scale(1.05); opacity: 1; }
+    78%  { transform: translateY(11px) scale(.9);  opacity: .3; }
+    100% { transform: translateY(11px) scale(.5);  opacity: 0; }
+  }
+  @keyframes dew-ripple {
+    0%, 62% { transform: scale(.4); opacity: 0; }
+    76%     { opacity: .55; }
+    100%    { transform: scale(1.5); opacity: 0; }
+  }
+
+  /* fair 晴 — radiant sun: pulsing core + slowly rotating rays */
+  .anim.fair .sun {
+    position: absolute; left: 16px; top: 8px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--seal);
+    animation: fair-core 1.8s ease-in-out infinite;
+  }
+  .anim.fair .rays {
+    position: absolute; left: 10px; top: 2px; width: 24px; height: 24px;
+    animation: fair-spin 6s linear infinite;
+  }
+  .anim.fair .rays i {
+    position: absolute; left: 50%; top: 50%;
+    width: 2px; height: 6px; margin: -12px 0 0 -1px;
+    background: var(--seal); border-radius: 2px; opacity: .8;
+    transform-origin: 50% 12px;
+  }
+  @keyframes fair-spin { to { transform: rotate(360deg); } }
+  @keyframes fair-core {
+    0%, 100% { transform: scale(.82); opacity: .8; }
+    50%      { transform: scale(1.08); opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .think .anim * { animation-duration: 0s !important; }
+  }
+
   /* ═════ Compose (input area) ═════ */
   .compose {
     flex-shrink: 0;
@@ -2014,8 +2139,25 @@ function addSysMsg(text) {
   scrollBottom();
 }
 
+// Per-agent thinking-animation markup. Each builder returns the inner HTML
+// for an `.anim.<name>` box; the CSS (see "Per-agent thinking animations")
+// drives a motion unique to that weather agent.
+const ANIM_BUILDERS = {
+  fog:   () => '<span class="bar"></span><span class="bar"></span><span class="bar"></span>',
+  rain:  () => '<span class="drop"></span><span class="drop"></span><span class="drop"></span><span class="drop"></span>',
+  frost: () => '<span class="star"><i></i></span>',
+  snow:  () => '<span class="flake"></span><span class="flake"></span><span class="flake"></span>',
+  dew:   () => '<span class="drop"></span><span class="ring"></span>',
+  fair:  () => {
+    let rays = '';
+    for (let k = 0; k < 8; k++) rays += '<i style="transform:rotate(' + (k * 45) + 'deg)"></i>';
+    return '<span class="sun"></span><span class="rays">' + rays + '</span>';
+  },
+};
+
 function showThinking() {
   hideThinking();
+  const name = (currentAgent && currentAgent.name) || 'fair';
   const wrap = document.createElement('div');
   wrap.className = 'think';
   wrap.id = 'think-indicator';
@@ -2024,12 +2166,12 @@ function showThinking() {
   tag.className = 'tag';
   tag.textContent = (currentAgent.display_name || '晴') + ' —';
 
-  const dots = document.createElement('div');
-  dots.className = 'dots';
-  dots.innerHTML = '<span></span><span></span><span></span>';
+  const anim = document.createElement('div');
+  anim.className = 'anim ' + name;
+  anim.innerHTML = (ANIM_BUILDERS[name] || ANIM_BUILDERS.fair)();
 
   wrap.appendChild(tag);
-  wrap.appendChild(dots);
+  wrap.appendChild(anim);
   UI.column.appendChild(wrap);
   scrollBottom();
 }
