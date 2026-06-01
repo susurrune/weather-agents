@@ -193,9 +193,7 @@ class TestWebSearch:
             return []
 
         errors: list[str] = []
-        out = await _race_search(
-            {"a": empty(), "b": empty()}, timeout=2.0, errors=errors
-        )
+        out = await _race_search({"a": empty(), "b": empty()}, timeout=2.0, errors=errors)
         assert out is None
 
 
