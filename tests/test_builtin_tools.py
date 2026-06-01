@@ -220,6 +220,39 @@ class TestWebSearch:
         assert calls["n"] == 1  # second query served from cache, no new backend hit
 
 
+class TestCaches:
+    def test_cache_put_get(self):
+        from weather_agents.tools.builtin import _cache_get, _cache_put
+
+        store: dict = {}
+        _cache_put(store, "k", "v", 8)
+        assert _cache_get(store, "k", 100) == "v"
+
+    def test_cache_expiry_prunes(self):
+        from weather_agents.tools.builtin import _cache_get, _cache_put
+
+        store: dict = {}
+        _cache_put(store, "k", "v", 8)
+        # A negative TTL means "already expired" → returns None and prunes.
+        assert _cache_get(store, "k", -1) is None
+        assert "k" not in store
+
+    def test_cache_eviction_bounded(self):
+        from weather_agents.tools.builtin import _cache_put
+
+        store: dict = {}
+        for i in range(6):
+            _cache_put(store, f"k{i}", "v", 3)
+        assert len(store) <= 3
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_blocks_private_host(self):
+        from weather_agents.tools.builtin import _fetch_web_page
+
+        out = await _fetch_web_page("http://127.0.0.1/admin")
+        assert out.startswith("Error")  # SSRF guard, no network hit
+
+
 class TestHttpTools:
     @pytest.mark.asyncio
     async def test_http_get_invalid_url(self):

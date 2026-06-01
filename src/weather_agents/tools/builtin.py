@@ -1070,6 +1070,31 @@ def _search_cache_key(query: str, n: int) -> str:
     return f"{query.strip().lower()}|{n}"
 
 
+# Same idea for fetched pages: research turns often fetch the same URL more than
+# once (e.g. re-read after a search). Reuse within the TTL.
+_fetch_page_cache: dict[str, tuple[float, str]] = {}
+_FETCH_PAGE_TTL = 300.0  # seconds
+_FETCH_PAGE_CACHE_MAX = 32
+
+
+def _cache_get(store: dict[str, tuple[float, str]], key: str, ttl: float) -> str | None:
+    hit = store.get(key)
+    if hit is None:
+        return None
+    ts, val = hit
+    if time.monotonic() - ts < ttl:
+        return val
+    del store[key]
+    return None
+
+
+def _cache_put(store: dict[str, tuple[float, str]], key: str, value: str, cap: int) -> None:
+    if len(store) >= cap:
+        oldest = min(store, key=lambda k: store[k][0])
+        del store[oldest]
+    store[key] = (time.monotonic(), value)
+
+
 async def _race_search(
     coros: dict[str, Any],
     timeout: float,
@@ -1118,15 +1143,11 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
     now = time.monotonic()
     n = min(num_results, 10)
 
-    # Cache hit → return instantly (skips network + rate-limit). Expired entries
-    # are pruned lazily on access.
+    # Cache hit → return instantly (skips network + rate-limit).
     key = _search_cache_key(query, n)
-    cached = _web_search_cache.get(key)
+    cached = _cache_get(_web_search_cache, key, _WEB_SEARCH_TTL)
     if cached is not None:
-        ts, text = cached
-        if now - ts < _WEB_SEARCH_TTL:
-            return text
-        del _web_search_cache[key]
+        return cached
 
     global _web_search_timestamps
     _web_search_timestamps = [t for t in _web_search_timestamps if now - t < 1.0]
@@ -1179,12 +1200,7 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
             output_parts.append(f"   {r['snippet']}")
         output_parts.append("")
     text = "\n".join(output_parts)
-
-    # Cache the successful result (bounded — evict the oldest on overflow).
-    if len(_web_search_cache) >= _WEB_SEARCH_CACHE_MAX:
-        oldest = min(_web_search_cache, key=lambda k: _web_search_cache[k][0])
-        del _web_search_cache[oldest]
-    _web_search_cache[key] = (time.monotonic(), text)
+    _cache_put(_web_search_cache, key, text, _WEB_SEARCH_CACHE_MAX)  # successes only
     return text
 
 
@@ -1462,6 +1478,16 @@ async def _fetch_web_page(url: str, extract_text: bool = True) -> str:
     """
     import httpx
 
+    # Same SSRF guard as http_get — fetch_page takes an LLM-supplied URL, so it
+    # must not be a hole that reaches internal/private hosts.
+    if err := _validate_url(url):
+        return err
+
+    key = f"{url}|{int(extract_text)}"
+    cached = _cache_get(_fetch_page_cache, key, _FETCH_PAGE_TTL)
+    if cached is not None:
+        return cached
+
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(
@@ -1472,7 +1498,9 @@ async def _fetch_web_page(url: str, extract_text: bool = True) -> str:
                 return f"HTTP {resp.status_code}: Could not fetch {url}"
 
             if not extract_text:
-                return resp.text[:5000]
+                out = resp.text[:5000]
+                _cache_put(_fetch_page_cache, key, out, _FETCH_PAGE_CACHE_MAX)
+                return out
 
             html = resp.text
             html = _re.sub(
@@ -1491,7 +1519,9 @@ async def _fetch_web_page(url: str, extract_text: bool = True) -> str:
                 .replace("&#39;", "'")
                 .replace("&nbsp;", " ")
             )
-            return html[:3000] if len(html) > 3000 else html
+            out = html[:3000] if len(html) > 3000 else html
+            _cache_put(_fetch_page_cache, key, out, _FETCH_PAGE_CACHE_MAX)
+            return out
     except Exception as e:
         return f"Error fetching {url}: {e}"
 
