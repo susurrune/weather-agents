@@ -1057,6 +1057,18 @@ async def _http_post(url: str, data: str = "", **kwargs) -> str:
 _web_search_timestamps: list[float] = []
 _WEB_SEARCH_MAX_PER_SEC = 2  # throttle to avoid rate-limiting
 
+# Short-lived result cache: a successful search is reused for identical queries
+# within the TTL. This makes the agent's repeat/refine searches instant and
+# avoids hammering the backends — the single biggest speed win for research
+# turns that fire several similar queries.
+_web_search_cache: dict[str, tuple[float, str]] = {}
+_WEB_SEARCH_TTL = 300.0  # seconds
+_WEB_SEARCH_CACHE_MAX = 64
+
+
+def _search_cache_key(query: str, n: int) -> str:
+    return f"{query.strip().lower()}|{n}"
+
 
 async def _race_search(
     coros: dict[str, Any],
@@ -1102,8 +1114,20 @@ async def _race_search(
 
 
 async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
-    """Search the web using available backends (DuckDuckGo, Bing). Rate-limited."""
+    """Search the web using available backends (DuckDuckGo, Bing). Cached + rate-limited."""
     now = time.monotonic()
+    n = min(num_results, 10)
+
+    # Cache hit → return instantly (skips network + rate-limit). Expired entries
+    # are pruned lazily on access.
+    key = _search_cache_key(query, n)
+    cached = _web_search_cache.get(key)
+    if cached is not None:
+        ts, text = cached
+        if now - ts < _WEB_SEARCH_TTL:
+            return text
+        del _web_search_cache[key]
+
     global _web_search_timestamps
     _web_search_timestamps = [t for t in _web_search_timestamps if now - t < 1.0]
     if len(_web_search_timestamps) >= _WEB_SEARCH_MAX_PER_SEC:
@@ -1113,7 +1137,6 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
 
     results: list[dict] | None = None
     errors: list[str] = []
-    n = min(num_results, 10)
 
     # Race the two fast *direct* HTML scrapes — Bing and DuckDuckGo — and take
     # whichever returns results first, so we never pay a blocked backend's full
@@ -1155,7 +1178,14 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
         if r.get("snippet"):
             output_parts.append(f"   {r['snippet']}")
         output_parts.append("")
-    return "\n".join(output_parts)
+    text = "\n".join(output_parts)
+
+    # Cache the successful result (bounded — evict the oldest on overflow).
+    if len(_web_search_cache) >= _WEB_SEARCH_CACHE_MAX:
+        oldest = min(_web_search_cache, key=lambda k: _web_search_cache[k][0])
+        del _web_search_cache[oldest]
+    _web_search_cache[key] = (time.monotonic(), text)
+    return text
 
 
 def _ddg_api_search_sync(query: str, num_results: int) -> list[dict]:

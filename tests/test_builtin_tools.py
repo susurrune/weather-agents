@@ -196,6 +196,29 @@ class TestWebSearch:
         out = await _race_search({"a": empty(), "b": empty()}, timeout=2.0, errors=errors)
         assert out is None
 
+    @pytest.mark.asyncio
+    async def test_web_search_caches_results(self, monkeypatch):
+        import weather_agents.tools.builtin as b
+
+        b._web_search_cache.clear()
+        calls = {"n": 0}
+
+        async def fake_bing(_q, _n):
+            calls["n"] += 1
+            return [{"title": "T", "url": "https://x", "snippet": "s"}]
+
+        async def fake_ddg(_q, _n):
+            return []
+
+        monkeypatch.setattr(b, "_bing_html_search", fake_bing)
+        monkeypatch.setattr(b, "_ddg_html_fallback", fake_ddg)
+
+        r1 = await b._web_search("hello world", 3)
+        r2 = await b._web_search("Hello World", 3)  # key is normalized (lower/strip)
+        assert "Search results for" in r1
+        assert r1 == r2
+        assert calls["n"] == 1  # second query served from cache, no new backend hit
+
 
 class TestHttpTools:
     @pytest.mark.asyncio
