@@ -1893,11 +1893,20 @@ async function renderSidebarHistory() {
     return;
   }
   try {
-    const list = await idb_list();
+    let list = await idb_list();
+    // History is classified per agent: only show the active agent's
+    // conversations. Older records without agent_name fall back to showing
+    // (so nothing silently disappears after an upgrade).
+    const activeName = (currentAgent && currentAgent.name) || null;
+    if (activeName) {
+      list = list.filter(c => !c.agent_name || c.agent_name === activeName);
+    }
     list.sort((a, b) => b.timestamp - a.timestamp);
 
     if (list.length === 0) {
-      container.innerHTML = '<div class="sidebar-history-empty">暂无对话</div>';
+      const who = (currentAgent && currentAgent.display_name) || '';
+      container.innerHTML = '<div class="sidebar-history-empty">' +
+        _esc(who ? who + ' 暂无对话' : '暂无对话') + '</div>';
       return;
     }
 
@@ -2138,6 +2147,7 @@ function handleMsg(msg) {
       renderAgentRow();
       renderSidebarAgents();
       updateBrand();
+      renderSidebarHistory(); // history is per-agent — refresh for the new agent
       addSysMsg('now with ' + msg.display_name);
       break;
   }
