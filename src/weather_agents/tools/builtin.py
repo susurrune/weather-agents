@@ -9,7 +9,7 @@ import re as _re
 import shlex
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from weather_agents.core.constants import TASK_DONE_SENTINEL
@@ -1058,6 +1058,49 @@ _web_search_timestamps: list[float] = []
 _WEB_SEARCH_MAX_PER_SEC = 2  # throttle to avoid rate-limiting
 
 
+async def _race_search(
+    coros: dict[str, Any],
+    timeout: float,
+    errors: list[str],
+) -> list[dict] | None:
+    """Run search coroutines concurrently; return the first *non-empty* result.
+
+    A backend that finishes empty doesn't end the race — we keep waiting for a
+    sibling until one yields results or the overall timeout elapses. Pending
+    tasks are cancelled on exit so a slow/blocked backend never holds us up.
+    """
+    tasks = {asyncio.ensure_future(c): name for name, c in coros.items()}
+    pending = set(tasks)
+    found: list[dict] | None = None
+    try:
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while pending and found is None:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            done, pending = await asyncio.wait(
+                pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            )
+            if not done:
+                break
+            for d in done:
+                name = tasks[d]
+                try:
+                    r = d.result()
+                except Exception as exc:  # noqa: BLE001 — record and try siblings
+                    errors.append(f"{name}: {exc}")
+                    continue
+                if r:
+                    found = r
+                    break
+                errors.append(f"{name}: 0 results")
+    finally:
+        for t in pending:
+            t.cancel()
+    return found
+
+
 async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
     """Search the web using available backends (DuckDuckGo, Bing). Rate-limited."""
     now = time.monotonic()
@@ -1070,33 +1113,32 @@ async def _web_search(query: str, num_results: int = 5, **kwargs) -> str:
 
     results: list[dict] | None = None
     errors: list[str] = []
+    n = min(num_results, 10)
 
-    # Try DuckDuckGo first. The ddgs library is synchronous and its
-    # internal HTTP retries against yahoo/bing backends can stall for
-    # tens of seconds when those endpoints misbehave — exactly the
-    # "agent suddenly stopped" symptom seen by users. asyncio.wait_for
-    # gives the whole search a hard wall-clock cap so the chat loop can
-    # always recover, while _ddg_api_search itself uses asyncio.to_thread
-    # to keep the event loop responsive during the blocking call.
-    try:
-        results = await asyncio.wait_for(_ddg_api_search(query, min(num_results, 10)), timeout=12.0)
-    except Exception as e:
-        errors.append(f"ddgs: {e}")
+    # Race the two fast *direct* HTML scrapes — Bing and DuckDuckGo — and take
+    # whichever returns results first, so we never pay a blocked backend's full
+    # timeout. In mainland China Bing wins (DDG is blocked); in DDG-friendly
+    # networks DDG wins. The loser is cancelled. (The ddgs *library* is a
+    # last-ditch fallback below — it's reliable but slow, hitting several
+    # upstreams serially, so it shouldn't gate the common case.)
+    results = await _race_search(
+        {
+            "bing-html": _bing_html_search(query, n),
+            "ddg-html": _ddg_html_fallback(query, n),
+        },
+        timeout=8.0,
+        errors=errors,
+    )
+    if not results:
         try:
-            results = await asyncio.wait_for(
-                _ddg_html_fallback(query, min(num_results, 10)), timeout=10.0
-            )
-        except Exception as e2:
-            errors.append(f"ddg-html: {e2}")
-
-    # Try Bing if DDG failed and key is available
+            results = await asyncio.wait_for(_ddg_api_search(query, n), timeout=8.0)
+        except Exception as e:
+            errors.append(f"ddgs: {e}")
     if not results:
         bing_key = os.environ.get("BING_API_KEY")
         if bing_key:
             try:
-                results = await asyncio.wait_for(
-                    _bing_search(query, min(num_results, 10), bing_key), timeout=10.0
-                )
+                results = await asyncio.wait_for(_bing_search(query, n, bing_key), timeout=8.0)
             except Exception as e3:
                 errors.append(f"bing: {e3}")
 
@@ -1185,6 +1227,57 @@ async def _ddg_html_fallback(query: str, num_results: int) -> list[dict]:
     if resp.status_code != 200:
         return []
     return _parse_ddg_html(resp.text, num_results)
+
+
+def _parse_bing_html(html_text: str, max_results: int) -> list[dict]:
+    """Extract results from Bing's SERP HTML (keyless). Works where DuckDuckGo
+    is blocked (e.g. mainland China), so it's our primary backend."""
+    import html as _html
+    from re import DOTALL, IGNORECASE
+    from re import compile as re_compile
+    from re import sub as re_sub
+
+    block_rx = re_compile(r'<li class="b_algo"[^>]*>(.*?)</li>', DOTALL | IGNORECASE)
+    a_rx = re_compile(r'<h2[^>]*>\s*<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', DOTALL | IGNORECASE)
+    p_rx = re_compile(r"<p[^>]*>(.*?)</p>", DOTALL | IGNORECASE)
+
+    results: list[dict] = []
+    for block_match in block_rx.finditer(html_text):
+        if len(results) >= max_results:
+            break
+        block = block_match.group(1)
+        a_match = a_rx.search(block)
+        if not a_match:
+            continue
+        url = a_match.group(1)
+        title = _html.unescape(re_sub(r"<[^>]+>", "", a_match.group(2))).strip()
+        p_match = p_rx.search(block)
+        snippet = (
+            _html.unescape(re_sub(r"<[^>]+>", "", p_match.group(1))).strip() if p_match else ""
+        )
+        if title and url.startswith("http"):
+            results.append({"title": title, "url": url, "snippet": snippet})
+    return results
+
+
+async def _bing_html_search(query: str, num_results: int) -> list[dict]:
+    """Primary keyless backend: scrape Bing's SERP. Fast and reachable inside
+    mainland China (unlike DuckDuckGo), so it usually returns on the first try
+    — which stops the agent from re-searching in a loop."""
+    client = await _get_http()
+    resp = await client.get(
+        "https://www.bing.com/search",
+        params={"q": query, "setlang": "en"},
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            )
+        },
+    )
+    if resp.status_code != 200:
+        return []
+    return _parse_bing_html(resp.text, num_results)
 
 
 async def _bing_search(query: str, num_results: int, api_key: str) -> list[dict]:

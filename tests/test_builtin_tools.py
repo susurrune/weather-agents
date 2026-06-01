@@ -137,6 +137,67 @@ class TestWebSearch:
         results = _parse_ddg_html("<html>no results</html>", 5)
         assert results == []
 
+    @pytest.mark.asyncio
+    async def test_parse_bing_html(self):
+        from weather_agents.tools.builtin import _parse_bing_html
+
+        html = (
+            '<li class="b_algo">'
+            '<h2 class=""><a href="https://news.example.com/x">Big &#183; News</a></h2>'
+            '<div class="b_caption"><p class="b_lineclamp2">Oct 9, 2025&ensp;summary.</p></div>'
+            "</li>"
+            '<li class="b_algo">'
+            '<h2><a href="https://two.example.com/">Second</a></h2>'
+            "<p>second snippet</p></li>"
+        )
+        results = _parse_bing_html(html, 5)
+        assert len(results) == 2
+        assert results[0]["title"] == "Big · News"  # entity decoded
+        assert results[0]["url"] == "https://news.example.com/x"
+        assert "summary" in results[0]["snippet"]
+        assert results[1]["url"] == "https://two.example.com/"
+
+    @pytest.mark.asyncio
+    async def test_parse_bing_skips_relative_links(self):
+        from weather_agents.tools.builtin import _parse_bing_html
+
+        html = '<li class="b_algo"><h2><a href="/relative">x</a></h2></li>'
+        assert _parse_bing_html(html, 5) == []
+
+    @pytest.mark.asyncio
+    async def test_race_search_returns_first_nonempty(self):
+        import asyncio
+
+        from weather_agents.tools.builtin import _race_search
+
+        async def slow_winner():
+            await asyncio.sleep(0.05)
+            return [{"title": "T", "url": "https://x", "snippet": ""}]
+
+        async def fast_empty():
+            return []
+
+        errors: list[str] = []
+        # The empty backend resolves first but must NOT end the race — the
+        # non-empty sibling wins.
+        out = await _race_search(
+            {"empty": fast_empty(), "winner": slow_winner()}, timeout=2.0, errors=errors
+        )
+        assert out and out[0]["title"] == "T"
+
+    @pytest.mark.asyncio
+    async def test_race_search_all_empty(self):
+        from weather_agents.tools.builtin import _race_search
+
+        async def empty():
+            return []
+
+        errors: list[str] = []
+        out = await _race_search(
+            {"a": empty(), "b": empty()}, timeout=2.0, errors=errors
+        )
+        assert out is None
+
 
 class TestHttpTools:
     @pytest.mark.asyncio
