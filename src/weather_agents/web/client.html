@@ -1355,17 +1355,26 @@
     }
     #sidebar::-webkit-scrollbar-button { display: none; height: 0; }
 
+    /* One shared reading measure for the whole pane — header, messages and the
+       compose bar all align to --column-max and center together, so there's no
+       narrow-text-in-wide-chrome mismatch. Wider than mobile to fill a desktop
+       screen without letting the line length run long. */
     #main-wrap {
       flex: 1;
       min-width: 0;
+      --column-max: 900px;
     }
 
-    #main-wrap header          { max-width: none; padding-left: 36px; padding-right: 36px; }
-    #main-wrap #settings       { max-width: none; padding-left: 36px; padding-right: 36px; }
-    #main-wrap .reconnect-bar  { max-width: none; }
-    #main-wrap .notice         { max-width: none; }
-    #main-wrap .compose        { max-width: none; padding-left: 36px; padding-right: 36px; }
-    #main-wrap .stage .column  { max-width: 760px; padding-left: 40px; padding-right: 40px; }
+    /* Matching side padding so the chrome and the messages share one edge. */
+    #main-wrap header,
+    #main-wrap #settings,
+    #main-wrap .compose,
+    #main-wrap .stage .column { padding-left: 40px; padding-right: 40px; }
+
+    /* Agent prose fills the reading measure; the user's note stays a shorter
+       right-aligned block. */
+    #main-wrap .turn.agent { max-width: 100%; }
+    #main-wrap .turn.user  { max-width: 600px; }
 
     .colophon {
       display: none;
