@@ -2517,8 +2517,26 @@ def _tool_call_signature(tool_name: str, args: dict | None) -> str:
 
         q = _re.sub(r"[\s\"'「」『』" "''‘’“”]", "", q)
         return f"{tool_name}:{q.lower()[:30]}"
+    if tool_name in ("fetch_page", "fetch_web_page", "http_get", "http_post"):
+        # Anchor on the URL — fetching many *different* pages is normal research
+        # progress, not a loop. Without this these tools fell to the generic
+        # tool-name fallback below, so visiting 6 distinct URLs collapsed to one
+        # signature and falsely tripped the hard-stop.
+        return f"{tool_name}:{_s('url')[:60]}"
     if tool_name == "delegate_to":
         return f"delegate_to:{_s('agent')}"
+    # Generic fallback: fold a short fingerprint of the args so distinct calls
+    # to the same tool (different targets/params) aren't conflated into a false
+    # loop. Only genuinely identical calls collapse to the same signature.
+    if a:
+        import hashlib as _hl
+        import json as _json
+
+        try:
+            blob = _json.dumps(a, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:
+            blob = str(a)
+        return f"{tool_name}:{_hl.sha1(blob[:300].encode()).hexdigest()[:8]}"
     return tool_name
 
 

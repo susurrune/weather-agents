@@ -975,13 +975,32 @@ class TestToolCallSignature:
         assert s1 == s2
         assert s1 != s3
 
-    def test_unknown_tool_falls_back_to_name(self):
+    def test_fetch_and_http_keyed_on_url(self):
         from weather_agents.core.agent import _tool_call_signature
 
-        s = _tool_call_signature("some_custom_tool", {"x": 1})
-        # Coarse but safe — every call collapses to the same bucket,
-        # which is fine for "called custom_tool 8 times" detection.
-        assert s == "some_custom_tool"
+        # Fetching different pages is normal research — must NOT collapse to one
+        # signature (that caused false "[stuck] repeated 6×" stops).
+        a = _tool_call_signature("fetch_page", {"url": "https://a.com/docs"})
+        b = _tool_call_signature("fetch_page", {"url": "https://b.com/readme"})
+        assert a != b
+        # Same URL twice -> same bucket (a genuine re-fetch loop).
+        assert a == _tool_call_signature("fetch_page", {"url": "https://a.com/docs"})
+        # http_get / http_post are URL-keyed too.
+        assert _tool_call_signature("http_get", {"url": "https://x"}) != _tool_call_signature(
+            "http_get", {"url": "https://y"}
+        )
+
+    def test_unknown_tool_keyed_on_args(self):
+        from weather_agents.core.agent import _tool_call_signature
+
+        # Distinct args -> distinct signatures (no false loop); identical args
+        # collapse; no-args falls back to the bare tool name.
+        s1 = _tool_call_signature("some_custom_tool", {"x": 1})
+        s2 = _tool_call_signature("some_custom_tool", {"x": 2})
+        assert s1 != s2
+        assert s1 == _tool_call_signature("some_custom_tool", {"x": 1})
+        assert _tool_call_signature("some_custom_tool", {}) == "some_custom_tool"
+        assert _tool_call_signature("some_custom_tool", None) == "some_custom_tool"
 
     def test_none_args_safe(self):
         from weather_agents.core.agent import _tool_call_signature
