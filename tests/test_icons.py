@@ -32,7 +32,7 @@ class TestIconText:
         from weather_agents.core.icons import icon_text
 
         assert icon_text("fog") == "≋"
-        assert icon_text("rain") == "╱"
+        assert icon_text("rain") == "▼"
         assert icon_text("frost") == "✱"
         assert icon_text("snow") == "❉"
         assert icon_text("dew") == "∘"

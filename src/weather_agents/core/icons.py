@@ -26,7 +26,7 @@ AGENT_COLORS = AGENT_COLOR_MAP
 # Agent icon glyph map — used for tests and any dict-based lookup.
 AGENT_EMOJI: dict[str, str] = {
     "fog": "≋",
-    "rain": "╱",
+    "rain": "▼",
     "frost": "✱",
     "snow": "❉",
     "dew": "∘",
@@ -50,7 +50,7 @@ def icon_text(name: str) -> str:
 
     Each glyph is metaphorically tied to its agent:
       fog  ≋  three wavy lines — drifting mist
-      rain ╱  slanted line — falling raindrop
+      rain ▼  downward triangle — falling rain / code landing
       frost ✱  pointed asterisk — frost crystal
       snow ❉  balloon-spoked star — snowflake
       dew  ∘  ring — dewdrop
@@ -58,7 +58,7 @@ def icon_text(name: str) -> str:
     """
     return {
         "fog": "≋",
-        "rain": "╱",
+        "rain": "▼",
         "frost": "✱",
         "snow": "❉",
         "dew": "∘",
