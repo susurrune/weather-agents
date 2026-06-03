@@ -88,8 +88,8 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Capacitor CLI
-        run: npm install -g @capacitor/cli @capacitor/core @capacitor/android
+      - name: Install Capacitor CLI + TypeScript
+        run: npm install -g @capacitor/cli @capacitor/core @capacitor/android typescript
 
       - name: Bootstrap Capacitor Android project
         run: |
