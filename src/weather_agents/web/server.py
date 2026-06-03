@@ -134,11 +134,14 @@ class VoiceServer:
             import io
 
             import qrcode  # optional dep
+            import qrcode.image.svg
 
-            img = qrcode.make(data)
+            # SVG factory is pure-Python (no Pillow dependency) and scales
+            # crisply in the <img> banner.
+            img = qrcode.make(data, image_factory=qrcode.image.svg.SvgPathImage, border=2)
             buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return web.Response(body=buf.getvalue(), content_type="image/png")
+            img.save(buf)
+            return web.Response(body=buf.getvalue(), content_type="image/svg+xml")
         except Exception:
             return web.Response(status=404, text="qr unavailable")
 
