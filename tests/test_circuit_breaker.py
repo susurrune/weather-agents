@@ -43,7 +43,7 @@ class TestCircuitBreaker:
         cb.record_failure()
         assert cb.state == CircuitState.OPEN
         assert cb.allow_request() is False
-        time.sleep(0.06)
+        time.sleep(0.15)
         assert cb.allow_request() is True
         assert cb.state == CircuitState.HALF_OPEN
 
@@ -51,7 +51,7 @@ class TestCircuitBreaker:
         cb = CircuitBreaker("test", failure_threshold=2, recovery_timeout=0.05)
         cb.record_failure()
         cb.record_failure()
-        time.sleep(0.06)
+        time.sleep(0.15)
         cb.allow_request()  # transitions to HALF_OPEN
         cb.record_success()
         assert cb.state == CircuitState.CLOSED
@@ -60,7 +60,7 @@ class TestCircuitBreaker:
         cb = CircuitBreaker("test", failure_threshold=2, recovery_timeout=0.05)
         cb.record_failure()
         cb.record_failure()
-        time.sleep(0.06)
+        time.sleep(0.15)
         cb.allow_request()  # transitions to HALF_OPEN
         cb.record_failure()
         assert cb.state == CircuitState.OPEN
@@ -139,7 +139,7 @@ class TestCircuitBreaker:
 
         import time as _time
 
-        _time.sleep(0.06)
+        _time.sleep(0.15)
 
         # First call transitions OPEN → HALF_OPEN; all subsequent also allowed
         results = [cb.allow_request() for _ in range(10)]

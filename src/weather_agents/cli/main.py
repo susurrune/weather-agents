@@ -4306,6 +4306,90 @@ def app_desktop(
     run_desktop_app(agent_name=agent, port=port, tunnel=tunnel, window=window)
 
 
+@app.command()
+def profile(
+    action: str = typer.Argument("show", help="show / set / forget"),
+    key: str = typer.Argument(None, help="Field name (for set / forget)"),
+    value: str = typer.Argument(None, help="Field value (for set)"),
+) -> None:
+    """View or edit your local profile (用户画像) — facts every agent remembers."""
+    from weather_agents.core.profile import (
+        clear_profile_field,
+        load_profile,
+        set_profile_field,
+    )
+
+    if action == "show":
+        data = load_profile()
+        console.print()
+        console.print(Rule("  用户画像  ", align="left", style="dim"))
+        if not data:
+            console.print(
+                "  [dim]还没有任何信息。用 [cyan]sky profile set <字段> <值>[/cyan] 添加，"
+                "或在对话中告诉智能体。[/dim]"
+            )
+        else:
+            for k, v in data.items():
+                console.print(f"  [cyan]{k}[/cyan]  {v}")
+        console.print(f"\n  [dim]{USER_CONFIG_DIR / 'profile.json'}[/dim]")
+    elif action == "set":
+        if not key or value is None:
+            console.print("  [red]用法: sky profile set <字段> <值>[/red]")
+            raise typer.Exit(1)
+        set_profile_field(key, value)
+        console.print(f"  [green]已记住 {key} = {value}[/green]")
+    elif action == "forget":
+        clear_profile_field(key)  # key=None wipes all
+        console.print(
+            "  [green]已清除整个画像[/green]" if not key else f"  [green]已删除 {key}[/green]"
+        )
+    else:
+        console.print(f"  [red]未知操作: {action} (show / set / forget)[/red]")
+
+
+@app.command()
+def persona(
+    action: str = typer.Argument("show", help="show / set / reset"),
+    agent: str = typer.Argument("fair", help="Agent name"),
+) -> None:
+    """View / customize / reset an agent's role setting (角色设定).
+
+    `sky persona set fair` reads the new persona from stdin (paste, then Ctrl-Z↵
+    on Windows / Ctrl-D on Unix). The custom persona replaces the built-in one.
+    """
+    from weather_agents.core.profile import clear_persona, load_persona, save_persona
+
+    if agent not in AGENT_CLASSES:
+        raise typer.BadParameter(f"unknown agent '{agent}'; available: {', '.join(AGENT_CLASSES)}")
+
+    if action == "show":
+        custom = load_persona(agent)
+        console.print()
+        if custom:
+            console.print(Rule(f"  {agent} 的自定义角色设定  ", align="left", style="dim"))
+            console.print(custom)
+        else:
+            console.print(
+                f"  [dim]{agent} 使用内置角色设定（未自定义）。"
+                f"用 [cyan]sky persona set {agent}[/cyan] 自定义。[/dim]"
+            )
+    elif action == "set":
+        console.print(
+            f"  [dim]粘贴 {agent} 的新角色设定，结束按 Ctrl-Z↵(Win) / Ctrl-D(Unix)：[/dim]"
+        )
+        text = sys.stdin.read().strip()
+        if not text:
+            console.print("  [red]内容为空，已取消[/red]")
+            raise typer.Exit(1)
+        save_persona(agent, text)
+        console.print(f"  [green]已保存 {agent} 的角色设定（下次启动生效）[/green]")
+    elif action == "reset":
+        clear_persona(agent)
+        console.print(f"  [green]已恢复 {agent} 的内置角色设定[/green]")
+    else:
+        console.print(f"  [red]未知操作: {action} (show / set / reset)[/red]")
+
+
 @voice_app.callback(invoke_without_command=True)
 def voice(
     ctx: typer.Context,
