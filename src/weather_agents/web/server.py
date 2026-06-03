@@ -83,6 +83,10 @@ class VoiceServer:
         self._app.router.add_get("/", self._handle_index)
         self._app.router.add_get("/health", self._handle_health)
         self._app.router.add_get("/qr", self._handle_qr)
+        # PWA: installable "add to home screen" app on phones.
+        self._app.router.add_get("/manifest.webmanifest", self._handle_manifest)
+        self._app.router.add_get("/sw.js", self._handle_sw)
+        self._app.router.add_get("/icon.svg", self._handle_icon)
         self._app.router.add_get("/ws", self._handle_ws)
 
     @property
@@ -144,6 +148,63 @@ class VoiceServer:
             return web.Response(body=buf.getvalue(), content_type="image/svg+xml")
         except Exception:
             return web.Response(status=404, text="qr unavailable")
+
+    async def _handle_manifest(self, _request: web.Request) -> web.Response:
+        """PWA manifest — makes the voice client installable to a phone's home
+        screen as a full-screen app. start_url is relative so it works on the
+        ephemeral Cloudflare hostname the phone was opened from."""
+        manifest = {
+            "name": "Weather Agents",
+            "short_name": self.agent.display_name or "Agents",
+            "description": "Voice companion — talk to your weather agents.",
+            "start_url": ".",
+            "scope": ".",
+            "display": "standalone",
+            "orientation": "portrait",
+            "background_color": "#f3ead7",
+            "theme_color": "#2a1f17",
+            "icons": [
+                {"src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
+                {
+                    "src": "icon.svg",
+                    "sizes": "any",
+                    "type": "image/svg+xml",
+                    "purpose": "maskable",
+                },
+            ],
+        }
+        return web.json_response(manifest, content_type="application/manifest+json")
+
+    async def _handle_sw(self, _request: web.Request) -> web.Response:
+        """Minimal service worker — required for the install prompt. Network
+        passthrough only (no caching), so it never serves a stale shell or
+        interferes with the WebSocket."""
+        js = (
+            "self.addEventListener('install', e => self.skipWaiting());\n"
+            "self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));\n"
+            "self.addEventListener('fetch', e => { return; });\n"
+        )
+        return web.Response(
+            text=js,
+            content_type="application/javascript",
+            headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+        )
+
+    async def _handle_icon(self, _request: web.Request) -> web.Response:
+        """App icon for the manifest / home screen — the central sun mark on a
+        dark rounded tile (matches the favicon family)."""
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+            '<rect width="64" height="64" rx="14" fill="#2a1f17"/>'
+            '<circle cx="32" cy="32" r="12" fill="#d4a056"/>'
+            '<g stroke="#d4a056" stroke-width="2.5" stroke-linecap="round">'
+            '<line x1="32" y1="8" x2="32" y2="16"/><line x1="32" y1="48" x2="32" y2="56"/>'
+            '<line x1="8" y1="32" x2="16" y2="32"/><line x1="48" y1="32" x2="56" y2="32"/>'
+            '<line x1="15" y1="15" x2="21" y2="21"/><line x1="43" y1="43" x2="49" y2="49"/>'
+            '<line x1="49" y1="15" x2="43" y2="21"/><line x1="21" y1="43" x2="15" y2="49"/>'
+            "</g></svg>"
+        )
+        return web.Response(body=svg.encode("utf-8"), content_type="image/svg+xml")
 
     async def _activate_session(self, agent_name: str, session_id: str) -> None:
         """Ensure ``agent_name``'s memory is positioned on ``session_id``.
