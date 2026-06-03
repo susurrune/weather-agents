@@ -1,0 +1,69 @@
+# PyInstaller spec for the Weather Agents desktop app.
+#
+# Build:  pyinstaller packaging/wa-desktop.spec --noconfirm
+# Output: dist/WeatherAgents/WeatherAgents.exe  (one-folder; --onefile optional)
+#
+# Notes:
+#   - litellm + tiktoken do heavy dynamic importing, so we collect_all them.
+#   - The runtime loads config/skills/icons/client.html via importlib.resources,
+#     so those package data trees must be bundled (collect_data_files).
+#   - cloudflared is NOT bundled — it's an external binary the user installs;
+#     the app degrades to local/LAN if it's missing.
+
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+
+datas = []
+binaries = []
+hiddenimports = []
+
+# Weather Agents' own package data (config/, assets/builtin_skills, assets/icons,
+# web/client.html, etc.) — everything importlib.resources reaches for.
+datas += collect_data_files("weather_agents", includes=["**/*"])
+
+# Heavy / dynamically-imported third parties.
+for pkg in ("litellm", "tiktoken", "tiktoken_ext"):
+    d, b, h = collect_all(pkg)
+    datas += d
+    binaries += b
+    hiddenimports += h
+
+hiddenimports += collect_submodules("weather_agents")
+hiddenimports += ["webview", "qrcode", "qrcode.image.svg", "aiohttp", "aiosqlite"]
+
+import os
+
+a = Analysis(
+    [os.path.join(SPECPATH, "desktop_main.py")],
+    pathex=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=["tkinter", "pytest", "mypy", "ruff"],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="WeatherAgents",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,  # GUI app — no console window
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="WeatherAgents",
+)
