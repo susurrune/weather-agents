@@ -310,6 +310,30 @@ async def _get_cwd(**kwargs) -> str:
     return os.getcwd()
 
 
+async def _set_user_profile(key: str = "", value: str = "", **kwargs) -> str:
+    """Persist a fact about the user into the local profile (用户画像)."""
+    key = (key or "").strip()
+    if not key:
+        return "Error: key is required"
+    from weather_agents.core.profile import set_profile_field
+
+    set_profile_field(key, value)
+    return f"已记住：{key} = {value}"
+
+
+async def _set_persona(agent: str = "", persona: str = "", **kwargs) -> str:
+    """Save a custom persona for an agent (applied from the next turn)."""
+    agent = (agent or "").strip().lower()
+    persona = (persona or "").strip()
+    if not agent or not persona:
+        return "Error: agent and persona are both required"
+    from weather_agents.core.profile import save_persona
+
+    if not save_persona(agent, persona):
+        return f"Error: unknown agent '{agent}' (use fog/rain/frost/snow/dew/fair)"
+    return f"已保存「{agent}」的新角色设定（下次启动该 agent 时生效）。"
+
+
 async def _file_search(directory: str, pattern: str, max_depth: int = 0, **kwargs) -> str:
     """Glob-search for files. Uses pathlib for cross-platform correctness.
 
@@ -1993,6 +2017,40 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
             description="Get the current working directory path",
             parameters=[],
             handler=_get_cwd,
+        ),
+        Tool(
+            name="set_user_profile",
+            description=(
+                "Remember a lasting fact about the user in their local profile "
+                "(用户画像) — name, how they like to be addressed, preferences, "
+                "background, etc. Persists across sessions and is shown to every "
+                "agent. Use when the user shares something durable about themselves."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="key", type="string", description="Field name, e.g. 称呼 / 喜好 / 职业"
+                ),
+                ToolParameter(name="value", type="string", description="The value to remember"),
+            ],
+            handler=_set_user_profile,
+            cacheable=False,
+        ),
+        Tool(
+            name="set_persona",
+            description=(
+                "Rewrite an agent's persona / role setting, saved locally and "
+                "applied from the next turn on. Pass your OWN agent name to "
+                "redefine yourself, or another agent's. Write the FULL persona "
+                "(it replaces the built-in one). Agents: fog/rain/frost/snow/dew/fair."
+            ),
+            parameters=[
+                ToolParameter(name="agent", type="string", description="Agent name to redefine"),
+                ToolParameter(
+                    name="persona", type="string", description="The complete new persona text"
+                ),
+            ],
+            handler=_set_persona,
+            cacheable=False,
         ),
         Tool(
             name="task_done",

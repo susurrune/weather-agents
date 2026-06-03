@@ -167,7 +167,19 @@ class BaseAgent:
         self._turn_lock: asyncio.Lock = asyncio.Lock()
 
     def _resolve_system_prompt(self) -> str:
-        """Pick the language-appropriate system prompt based on config."""
+        """Pick the agent's base persona.
+
+        A user-defined persona (``~/.skyloom/personas/<agent>.md``) overrides
+        the built-in one entirely — that's how the user (or the agent itself,
+        via the ``set_persona`` tool) redefines who this agent is. Otherwise the
+        language-appropriate built-in prompt is used.
+        """
+        from weather_agents.core import profile
+
+        custom = profile.load_persona(self.name)
+        if custom:
+            return custom
+
         lang = getattr(self.config.llm, "language", "zh")
         if lang == "en" and hasattr(self.__class__, "system_prompt_en"):
             return self.__class__.system_prompt_en  # type: ignore[no-any-return]
@@ -522,7 +534,10 @@ class BaseAgent:
                 model = str(agent_cfg.model)
         except Exception:
             pass
+        from weather_agents.core import profile
+
         lang = getattr(self.config.llm, "language", "zh")
+        user_block = profile.format_profile_for_prompt(lang)
         if lang == "en":
             return (
                 f"\n\n## Runtime\n"
@@ -531,7 +546,7 @@ class BaseAgent:
                 "what model you are, give them this exact model id verbatim — "
                 "do NOT guess or claim to be a different model.\n"
                 "Always reply in English unless the user clearly writes in "
-                "another language — then match theirs."
+                "another language — then match theirs." + user_block
             )
         return (
             f"\n\n## 运行环境\n"
@@ -539,7 +554,7 @@ class BaseAgent:
             f"底层语言模型为 **{model}**。如果用户问你是什么模型，"
             "直接告诉他们这个准确的 model id —— 不要猜测、不要冒充其他模型。\n"
             "默认始终用中文回复；除非用户明确用其他语言提问，才用对应语言。"
-            "代码、命令、专有名词等保持原文。"
+            "代码、命令、专有名词等保持原文。" + user_block
         )
 
     def _rebuild_system_prompt(self) -> None:
