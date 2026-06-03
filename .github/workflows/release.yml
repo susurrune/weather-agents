@@ -88,13 +88,15 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Capacitor CLI + TypeScript
-        run: npm install -g @capacitor/cli @capacitor/core @capacitor/android typescript
+      - name: Install Capacitor + TypeScript (global)
+        run: npm install -g @capacitor/cli
 
       - name: Bootstrap Capacitor Android project
         run: |
           mkdir -p mobile/skyloom-app
           cd mobile/skyloom-app
+          npm init -y >/dev/null 2>&1
+          npm install @capacitor/core @capacitor/android typescript
           # Capacitor expects a web app in www/ — we point it at our voice client.
           # The actual runtime needs the voice server, so the "app" opens the
           # user's Cloudflare or LAN URL (entered once, stored in localStorage).
