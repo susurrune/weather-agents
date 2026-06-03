@@ -4,7 +4,7 @@ Uses the ``cryptography`` library to generate a 2048-bit RSA key
 and a self-signed X.509 certificate with Subject Alternative Names
 (SANs) for all specified IP addresses.
 
-Certificates are stored in ``~/.weather-agents/certs/`` and keyed
+Certificates are stored in ``~/.skyloom/certs/`` and keyed
 by a hash of the IP list so they are reused when addresses don't change.
 """
 
@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-CERT_DIR = Path.home() / ".weather-agents" / "certs"
+CERT_DIR = Path.home() / ".skyloom" / "certs"
 
 
 def detect_all_lan_ips() -> list[str]:
@@ -91,7 +91,7 @@ def ensure_self_signed_cert(ips: list[str]) -> tuple[str, str]:
     subject = issuer = x509.Name(
         [
             x509.NameAttribute(NameOID.COUNTRY_NAME, "CN"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Weather Agents"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Skyloom"),
             x509.NameAttribute(NameOID.COMMON_NAME, "voice-server"),
         ]
     )

@@ -108,7 +108,7 @@ def init_workspace(root: Path) -> Path:
     # Touch a .workspace marker so tools can identify it
     marker = root / ".workspace"
     if not marker.exists():
-        marker.write_text(f"# Weather Agents workspace — created automatically\npath: {root}\n")
+        marker.write_text(f"# Skyloom workspace — created automatically\npath: {root}\n")
     return root
 
 

@@ -1,7 +1,7 @@
-# PyInstaller spec for the Weather Agents desktop app.
+# PyInstaller spec for the Skyloom desktop app.
 #
-# Build:  pyinstaller packaging/wa-desktop.spec --noconfirm
-# Output: dist/WeatherAgents/WeatherAgents.exe  (one-folder; --onefile optional)
+# Build:  pyinstaller packaging/sky-desktop.spec --noconfirm
+# Output: dist/Skyloom/Skyloom.exe  (one-folder; --onefile optional)
 #
 # Notes:
 #   - litellm + tiktoken do heavy dynamic importing, so we collect_all them.
@@ -16,7 +16,7 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# Weather Agents' own package data (config/, assets/builtin_skills, assets/icons,
+# Skyloom' own package data (config/, assets/builtin_skills, assets/icons,
 # web/client.html, etc.) — everything importlib.resources reaches for.
 datas += collect_data_files("weather_agents", includes=["**/*"])
 
@@ -51,7 +51,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="WeatherAgents",
+    name="Skyloom",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -65,5 +65,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="WeatherAgents",
+    name="Skyloom",
 )

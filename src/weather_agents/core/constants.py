@@ -1,4 +1,4 @@
-"""Shared constants across the Weather Agents framework.
+"""Shared constants across the Skyloom framework.
 
 Central home for values that cross module boundaries — keeps
 circular imports in check and avoids duplication.

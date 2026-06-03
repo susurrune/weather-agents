@@ -26,7 +26,7 @@ _CJK_RUN_RE = re.compile(r"[一-鿿]+")
 class _RetryDB:
     """Wraps aiosqlite connection with automatic retry on SQLITE_BUSY.
 
-    Multiple ``wa`` instances share the same SQLite file.  WAL mode allows
+    Multiple ``sky`` instances share the same SQLite file.  WAL mode allows
     concurrent reads but writes still serialise — when two processes write
     simultaneously one gets ``database is locked``.  SQLite's built-in
     ``busy_timeout`` handles retry at the C level; this wrapper adds a
@@ -107,7 +107,7 @@ class Memory:
         self.short_term: list[Message] = []
         self.working: dict[str, Any] = {}
         # Each agent gets its own database file for full isolation.
-        # e.g. ~/.weather-agents/memory/fog.db  (from memory.db parent dir)
+        # e.g. ~/.skyloom/memory/fog.db  (from memory.db parent dir)
         base = Path(config.db_path).expanduser()
         self._db_path = base.parent / f"{agent_name}.db"
         self._db: _RetryDB | None = None
@@ -128,7 +128,7 @@ class Memory:
         if self._db is not None:
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Windows-only: hard-killed wa processes leave stale WAL/SHM that lock
+        # Windows-only: hard-killed sky processes leave stale WAL/SHM that lock
         # the next startup.  os.remove fails on these (no FILE_SHARE_DELETE), so
         # fall back to cmd.exe /c del which can force-delete locked files.
         # On POSIX os.remove succeeds even with live handles and can corrupt a
@@ -263,7 +263,7 @@ class Memory:
         rows = list(await cursor.fetchall())
         # Conversation-gap truncation: walking from the newest backward, stop
         # as soon as we see a timestamp gap larger than RESUME_GAP_SECONDS.
-        # Pre-fix users complained that a fresh `wa chat` would drag in 50
+        # Pre-fix users complained that a fresh `sky chat` would drag in 50
         # messages spanning days of unrelated tasks (the "乱拉取" bug). A 4h
         # gap is a cheap proxy for "different work session"; nothing earlier
         # belongs in the immediate context.
@@ -871,7 +871,7 @@ class Memory:
     async def resume_latest_session(self) -> str | None:
         """Activate this agent's most recently updated session, if any.
 
-        CLI entry points call this to restore continuity across `wa chat`
+        CLI entry points call this to restore continuity across `sky chat`
         invocations. Without it, every fresh process starts amnesic — which
         produced the "memory chaos" complaint where users felt their agents
         forgot everything between turns.

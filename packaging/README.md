@@ -1,23 +1,23 @@
 # Packaging — standalone desktop executable
 
-Turn `wa app` into a double-clickable desktop app (no Python install needed).
+Turn `sky app` into a double-clickable desktop app (no Python install needed).
 
 ## Build (Windows)
 
 ```bash
 pip install -e ".[desktop]"     # pywebview + qrcode
 pip install pyinstaller
-pyinstaller packaging/wa-desktop.spec --noconfirm
+pyinstaller packaging/sky-desktop.spec --noconfirm
 ```
 
-Output: `dist/WeatherAgents/WeatherAgents.exe` (one-folder, ~150 MB — litellm
-and its model providers dominate the size). Zip the `dist/WeatherAgents/`
+Output: `dist/Skyloom/Skyloom.exe` (one-folder, ~150 MB — litellm
+and its model providers dominate the size). Zip the `dist/Skyloom/`
 folder to distribute.
 
 Smoke-test the bundle without opening a window:
 
 ```bash
-dist/WeatherAgents/WeatherAgents.exe --selftest   # prints "selftest ok", exits 0
+dist/Skyloom/Skyloom.exe --selftest   # prints "selftest ok", exits 0
 ```
 
 ## What's bundled / not
@@ -34,5 +34,5 @@ dist/WeatherAgents/WeatherAgents.exe --selftest   # prints "selftest ok", exits 
   the OS it runs on (build on each target platform).
 - The exe is GUI-mode (`console=False`). Run `--selftest` from a terminal to see
   output.
-- API keys and conversation history live in `~/.weather-agents/` (outside the
+- API keys and conversation history live in `~/.skyloom/` (outside the
   bundle), so they persist across rebuilds and updates.

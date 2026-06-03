@@ -1,4 +1,4 @@
-"""Plugin loader for extending Weather Agents."""
+"""Plugin loader for extending Skyloom."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Configuration management for Weather Agents."""
+"""Configuration management for Skyloom."""
 
 from __future__ import annotations
 
@@ -10,7 +10,23 @@ from pathlib import Path
 
 import yaml
 
-USER_CONFIG_DIR = Path.home() / ".weather-agents"
+_LEGACY_CONFIG_DIR = Path.home() / ".weather-agents"
+
+
+def _resolve_user_config_dir() -> Path:
+    """User data lives in ``~/.skyloom``. If only the legacy ``~/.weather-agents``
+    exists (pre-rename installs), migrate it once so API keys / history / sessions
+    carry over seamlessly."""
+    new = Path.home() / ".skyloom"
+    if not new.exists() and _LEGACY_CONFIG_DIR.exists():
+        with contextlib.suppress(Exception):
+            _LEGACY_CONFIG_DIR.rename(new)
+        if not new.exists():  # rename failed (e.g. cross-device) → fall back
+            return _LEGACY_CONFIG_DIR
+    return new
+
+
+USER_CONFIG_DIR = _resolve_user_config_dir()
 
 # All agent names — single source of truth for config iteration and validation.
 AGENT_NAMES = ("fog", "rain", "frost", "snow", "dew", "fair")
@@ -103,7 +119,7 @@ _PROVIDER_CACHE: dict[str, dict] | None = None
 def load_provider_catalog() -> dict[str, dict]:
     """Load providers.yaml. Returns {provider_id: {env_var, region, ...}}.
 
-    User overrides at ``~/.weather-agents/providers.yaml`` are deep-
+    User overrides at ``~/.skyloom/providers.yaml`` are deep-
     merged on top of the bundled file so users can add their own
     provider without touching the install. Falls back to a minimal
     hard-coded set if the bundled file is missing (e.g. running
@@ -269,7 +285,7 @@ class BusConfig:
 
 @dataclass
 class MemoryConfig:
-    db_path: str = "~/.weather-agents/memory.db"
+    db_path: str = "~/.skyloom/memory.db"
     short_term_limit: int = 50
     max_persisted_messages: int = 1000
 
@@ -305,7 +321,7 @@ class TTSConfig:
 @dataclass
 class PluginConfig:
     enabled: bool = True
-    directories: list[str] = field(default_factory=lambda: ["~/.weather-agents/plugins"])
+    directories: list[str] = field(default_factory=lambda: ["~/.skyloom/plugins"])
 
 
 @dataclass
@@ -325,7 +341,7 @@ class MCPConfig:
 
 @dataclass
 class CLIConfig:
-    # Default agent used when none is specified on `wa chat`
+    # Default agent used when none is specified on `sky chat`
     default_agent: str = "fog"
     # Persisted interactive-mode pick (default | plan | auto). Read by
     # cli.mode.ModeController on startup; written when the user toggles.

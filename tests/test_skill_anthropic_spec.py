@@ -11,7 +11,7 @@ from __future__ import annotations
 class TestClaudeToolNameNormalization:
     """Real Anthropic skill files write ``allowed-tools`` with the
     PascalCase Claude Code names (``Read``, ``Write``, ``Bash``), often
-    with permission-scoping suffixes like ``Bash(ls *)``. wa's registry
+    with permission-scoping suffixes like ``Bash(ls *)``. sky's registry
     uses snake_case names. The loader must translate so a restricted-
     tool skill installed straight from Claude Code actually works."""
 
@@ -33,15 +33,15 @@ class TestClaudeToolNameNormalization:
         )
         s = Skill.from_markdown(md)
         assert s is not None
-        # The mapped wa registry names — what _active_tool_names will
+        # The mapped sky registry names — what _active_tool_names will
         # filter against. Without the mapping the agent would see
         # ``[Read, Write, Edit, Bash]`` and have no usable tools.
         assert s.allowed_tools == ["read_file", "write_file", "edit_file", "run_bash"]
 
     def test_bash_with_scope_strips_to_run_bash(self, tmp_path):
-        """``Bash(ls *)`` strips the scope (wa has no per-command Bash
+        """``Bash(ls *)`` strips the scope (sky has no per-command Bash
         permissioning) and maps to ``run_bash``. Multiple ``Bash(...)``
-        entries dedupe to a single ``run_bash`` so wa doesn't see a
+        entries dedupe to a single ``run_bash`` so sky doesn't see a
         redundant restriction list."""
         from weather_agents.core.skill import Skill
 
@@ -62,7 +62,7 @@ class TestClaudeToolNameNormalization:
         assert s.allowed_tools == ["run_bash", "read_file"]
 
     def test_snake_case_already_wa_name_passes_through(self, tmp_path):
-        """wa-native skill files use snake_case directly. Those must
+        """sky-native skill files use snake_case directly. Those must
         not be re-mapped (would corrupt the list)."""
         from weather_agents.core.skill import Skill
 
@@ -118,7 +118,7 @@ class TestClaudeToolNameNormalization:
 class TestMetadataPreserved:
     """Real-world Claude Code skills include version / homepage / slug /
     metadata / compatibility / changelog blocks in their frontmatter.
-    wa used to silently drop these — round 8 keeps them in skill.metadata
+    sky used to silently drop these — round 8 keeps them in skill.metadata
     so /skill info and future tooling can display them, and so the data
     survives a round-trip load."""
 
@@ -144,7 +144,7 @@ class TestMetadataPreserved:
         assert s is not None
         # First-class field still works.
         assert s.license == "MIT"
-        # Unknown-to-wa fields preserved.
+        # Unknown-to-sky fields preserved.
         assert s.metadata["version"] == "1.2.3"
         assert s.metadata["homepage"] == "https://example.com"
         assert s.metadata["compatibility"] == "Node 18+"

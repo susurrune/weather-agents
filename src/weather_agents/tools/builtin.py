@@ -16,7 +16,7 @@ from weather_agents.core.constants import TASK_DONE_SENTINEL
 from weather_agents.core.tool import Tool, ToolParameter, ToolRegistry
 
 if TYPE_CHECKING:
-    # httpx adds ~50ms at import; HTTP tools are rarely used by ``wa --help``
+    # httpx adds ~50ms at import; HTTP tools are rarely used by ``sky --help``
     # or other no-LLM paths. Defer to first call via ``_get_http``.
     import httpx
 
@@ -958,7 +958,7 @@ async def _get_http() -> httpx.AsyncClient:
             limits=_httpx.Limits(max_keepalive_connections=10, max_connections=20),
             follow_redirects=True,
             max_redirects=10,
-            headers={"User-Agent": "WeatherAgents/1.0"},
+            headers={"User-Agent": "Skyloom/1.0"},
         )
     return _http_client
 
@@ -1268,7 +1268,7 @@ async def _ddg_html_fallback(query: str, num_results: int) -> list[dict]:
     resp = await client.get(
         "https://html.duckduckgo.com/html/",
         params={"q": query},
-        headers={"User-Agent": "Mozilla/5.0 (compatible; WeatherAgents/1.0)"},
+        headers={"User-Agent": "Mozilla/5.0 (compatible; Skyloom/1.0)"},
     )
     if resp.status_code != 200:
         return []
@@ -1492,7 +1492,7 @@ async def _fetch_web_page(url: str, extract_text: bool = True) -> str:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(
                 url,
-                headers={"User-Agent": "WeatherAgents/1.0 WebResearcher"},
+                headers={"User-Agent": "Skyloom/1.0 WebResearcher"},
             )
             if resp.status_code != 200:
                 return f"HTTP {resp.status_code}: Could not fetch {url}"

@@ -1,4 +1,4 @@
-"""Structured logging for Weather Agents.
+"""Structured logging for Skyloom.
 
 Usage:
     from weather_agents.core.logger import get_logger
@@ -96,7 +96,7 @@ def setup_logging(
     if _configured:
         return
 
-    root = logging.getLogger("wa")
+    root = logging.getLogger("sky")
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     root.handlers.clear()
 
@@ -130,14 +130,14 @@ def _ensure_default_setup() -> None:
     global _configured
     if _configured:
         return
-    root = logging.getLogger("wa")
+    root = logging.getLogger("sky")
     root.setLevel(logging.INFO)
     root.handlers.clear()
     root.propagate = False  # don't leak to Python's root logger -> stderr
 
     # File handler — quiet by default. Best-effort: if file isn't writable,
     # fall through to NullHandler so the CLI never crashes on logging.
-    log_path = Path.home() / ".weather-agents" / "wa.log"
+    log_path = Path.home() / ".skyloom" / "sky.log"
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         fh = logging.FileHandler(str(log_path), encoding="utf-8")
@@ -165,7 +165,7 @@ def get_logger(name: str) -> logging.Logger:
     """Get a structured logger for the given component name."""
     _ensure_default_setup()
     if name not in _loggers:
-        logger = logging.getLogger(f"wa.{name}")
+        logger = logging.getLogger(f"sky.{name}")
         _loggers[name] = logger
     return _loggers[name]
 

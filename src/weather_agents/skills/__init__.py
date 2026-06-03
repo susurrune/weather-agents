@@ -1,1 +1,1 @@
-"""Built-in skills for Weather Agents."""
+"""Built-in skills for Skyloom."""

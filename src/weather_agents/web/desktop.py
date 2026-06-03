@@ -118,7 +118,7 @@ def run_desktop_app(
         try:
             import webview  # optional dep (pywebview)
 
-            webview.create_window("Weather Agents", target, width=920, height=760)
+            webview.create_window("Skyloom", target, width=920, height=760)
             try:
                 webview.start()
             finally:
@@ -127,7 +127,7 @@ def run_desktop_app(
         except ImportError:
             print(
                 "  pywebview 未安装，改用默认浏览器打开。"
-                "（pip install 'weather-agents[desktop]' 可获得原生窗口）"
+                "（pip install 'skyloom[desktop]' 可获得原生窗口）"
             )
 
     # Fallback: open in the default browser, keep serving until Ctrl-C.

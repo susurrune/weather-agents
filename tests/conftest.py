@@ -1,4 +1,4 @@
-"""Test fixtures and mocks for Weather Agents."""
+"""Test fixtures and mocks for Skyloom."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def mock_llm():
 def app_config(tmp_path):
     """AppConfig with an isolated SQLite DB.
 
-    Without this override, every test run hit ``~/.weather-agents/memory.db``
+    Without this override, every test run hit ``~/.skyloom/memory.db``
     — the user's real database — leaving session rows, mock-stringified
     messages, and other artefacts that polluted production data. The
     ``tmp_path`` fixture gives each test its own clean directory.
@@ -101,7 +101,7 @@ def app_config(tmp_path):
 @pytest.fixture
 def temp_config_dir(tmp_path):
     """Isolate config tests to a temp directory so user config is not touched."""
-    user_cfg = tmp_path / ".weather-agents"
+    user_cfg = tmp_path / ".skyloom"
     user_cfg.mkdir()
     with patch("weather_agents.core.config.USER_CONFIG_DIR", user_cfg):
         # Also invalidate cache to pick up new dir

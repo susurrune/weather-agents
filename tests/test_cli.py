@@ -16,7 +16,7 @@ class TestCLIFlags:
     def test_version_flag(self):
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert "Weather Agents" in result.stdout
+        assert "Skyloom" in result.stdout
 
     def test_help_output(self):
         result = runner.invoke(app, ["--help"])
@@ -89,7 +89,7 @@ class TestSlashCommandRouting:
             with patch("weather_agents.cli.main.console.print") as mock_print:
                 await _run_interactive("fog")
                 # Should print version info
-                assert any("Weather Agents" in str(c) for c in mock_print.call_args_list if c.args)
+                assert any("Skyloom" in str(c) for c in mock_print.call_args_list if c.args)
 
 
 class TestAgentSwitching:

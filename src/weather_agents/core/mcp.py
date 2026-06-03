@@ -23,7 +23,7 @@ from weather_agents.core.tool import Tool, ToolParameter, ToolRegistry
 _log = get_logger("mcp")
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
-CLIENT_INFO = {"name": "weather-agents", "version": "1.0.0"}
+CLIENT_INFO = {"name": "skyloom", "version": "1.0.0"}
 
 
 @dataclass

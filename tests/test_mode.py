@@ -10,10 +10,10 @@ from weather_agents.cli.mode import InteractiveMode, ModeController
 
 @pytest.fixture
 def isolated_user_dir(monkeypatch, tmp_path):
-    """Redirect USER_CONFIG_DIR so tests never touch the real ~/.weather-agents."""
+    """Redirect USER_CONFIG_DIR so tests never touch the real ~/.skyloom."""
     import weather_agents.core.config as cfg_mod
 
-    user_dir = tmp_path / ".weather-agents"
+    user_dir = tmp_path / ".skyloom"
     user_dir.mkdir()
     monkeypatch.setattr(cfg_mod, "USER_CONFIG_DIR", user_dir)
     cfg_mod.invalidate_cache()

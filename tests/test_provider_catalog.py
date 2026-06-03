@@ -1,7 +1,7 @@
 """Tests for the YAML-driven provider catalog (round 11).
 
 Round 11 split the hard-coded ``_PROVIDER_ENV`` / ``_KNOWN_PROVIDERS``
-sets in ``llm.py`` out into ``config/providers.yaml`` so wa now ships
+sets in ``llm.py`` out into ``config/providers.yaml`` so sky now ships
 recognition + env-var routing for 35+ providers (OpenAI / Anthropic /
 DeepSeek + every major Chinese provider + Bedrock / Azure / Groq /
 Together / Fireworks / Replicate / xAI / Perplexity / Ollama / vLLM /
@@ -53,14 +53,14 @@ class TestLoadProviderCatalog:
             )
 
     def test_user_override_merges_on_top(self, tmp_path, monkeypatch):
-        """User can drop a providers.yaml into ~/.weather-agents/ to add
+        """User can drop a providers.yaml into ~/.skyloom/ to add
         their own provider entries. The user file is merged on top of
         the bundled one so existing entries can be customised and new
         ones added without forking the install."""
         from weather_agents.core import config as cfg_mod
 
         # Point the user dir at a tmp_path with a custom providers.yaml.
-        user_dir = tmp_path / ".weather-agents"
+        user_dir = tmp_path / ".skyloom"
         user_dir.mkdir()
         (user_dir / "providers.yaml").write_text(
             "my_custom_provider:\n"

@@ -1,6 +1,6 @@
 """Tests for cross-process session resume — fixes the 'amnesia on reconnect' bug.
 
-Before the fix, `wa chat` always created a new session per process, so users'
+Before the fix, `sky chat` always created a new session per process, so users'
 follow-up turns saw an empty short_term. Now `BaseAgent.init()` prefers to
 resume this agent's most recent session.
 """

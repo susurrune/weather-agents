@@ -1,6 +1,6 @@
 ---
 name: self_evolve
-description: Read, analyze, and improve the Weather Agents codebase — architecture, features, bug fixes, tests
+description: Read, analyze, and improve the Skyloom codebase — architecture, features, bug fixes, tests
 tools:
   - read_file
   - write_file
@@ -13,7 +13,7 @@ tools:
 ---
 
 ## 技能：自我进化 (Self-Evolve)
-你激活了「自我进化」技能，可以改进 Weather Agents 自身的代码。
+你激活了「自我进化」技能，可以改进 Skyloom 自身的代码。
 
 ### 代码库结构
 ```

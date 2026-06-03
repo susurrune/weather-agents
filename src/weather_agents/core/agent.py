@@ -1,4 +1,4 @@
-"""Base agent class for all Weather Agents."""
+"""Base agent class for all Skyloom."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ class TaskResult:
 
 
 class BaseAgent:
-    """Base class for all Weather Agents."""
+    """Base class for all Skyloom."""
 
     name: str = ""
     display_name: str = ""
@@ -249,13 +249,13 @@ class BaseAgent:
             wisdom = (
                 "\n\n## Engineering\n"
                 "Top-tier engineer: type-safe code, real error handling, debugging by root cause, "
-                "reviewing for security & perf. You can read and modify Weather Agents' own source."
+                "reviewing for security & perf. You can read and modify Skyloom' own source."
             )
         else:
             wisdom = (
                 "\n\n## 工程能力\n"
                 "顶级工程师:类型安全、真实的错误处理、按根因调试、按安全与性能审查。"
-                "你可以阅读和修改 Weather Agents 自身源码。"
+                "你可以阅读和修改 Skyloom 自身源码。"
             )
         return prompt + wisdom
 
@@ -283,7 +283,7 @@ class BaseAgent:
             return
         await self.memory.init_db()
         # Always own a session. Prefer resuming this agent's most recent
-        # session so `wa chat` feels continuous across invocations; fall back
+        # session so `sky chat` feels continuous across invocations; fall back
         # to creating a new one for first run or when WA_NO_RESUME=1 is set
         # (e.g. tests asserting cross-process isolation).
         import os as _os
@@ -526,14 +526,14 @@ class BaseAgent:
         if lang == "en":
             return (
                 f"\n\n## Runtime\n"
-                f"You are the {self.display_name} agent in Weather Agents, "
+                f"You are the {self.display_name} agent in Skyloom, "
                 f"powered by the **{model}** language model. If the user asks "
                 "what model you are, give them this exact model id verbatim — "
                 "do NOT guess or claim to be a different model."
             )
         return (
             f"\n\n## 运行环境\n"
-            f"你是 Weather Agents 中的「{self.display_name}」智能体，"
+            f"你是 Skyloom 中的「{self.display_name}」智能体，"
             f"底层语言模型为 **{model}**。如果用户问你是什么模型，"
             "直接告诉他们这个准确的 model id —— 不要猜测、不要冒充其他模型。"
         )
@@ -1581,7 +1581,7 @@ class BaseAgent:
 
 **应该抽取**：
 - 工具/技术偏好（pkg_mgr=pnpm, editor=neovim, framework=FastAPI）
-- 项目信息（project_lang=Python, project_name=weather-agents）
+- 项目信息（project_lang=Python, project_name=skyloom）
 - 长期目标（goal=build_url_shortener）
 - 关键约束（os=Windows, python_version=3.13）
 
@@ -1976,7 +1976,7 @@ class BaseAgent:
         # Orchestration-task isolation. Sub-task 提示词不能污染 chat 会话:
         # 1) 内存层: 替换 short_term, finally 中恢复;
         # 2) 持久化层: add_message(ephemeral=True) 跳过 SQLite 写入。
-        # 否则下次 wa chat 时 resume_latest_session 会把 "Complete this task NOW…"
+        # 否则下次 sky chat 时 resume_latest_session 会把 "Complete this task NOW…"
         # 当成历史对话回放,导致 agent 答非所问。
         with self.memory._short_term_lock:
             saved_short_term = list(self.memory.short_term)

@@ -1,7 +1,7 @@
-"""PyInstaller entry point for the Weather Agents desktop app.
+"""PyInstaller entry point for the Skyloom desktop app.
 
-Built into a standalone executable by ``packaging/wa-desktop.spec``. Running the
-exe is equivalent to ``wa app`` — a native window + Cloudflare tunnel for phone
+Built into a standalone executable by ``packaging/sky-desktop.spec``. Running the
+exe is equivalent to ``sky app`` — a native window + Cloudflare tunnel for phone
 access. ``--selftest`` imports the heavy dependency graph and exits, so a CI/
 build smoke test can confirm the bundle is complete without opening a window.
 """

@@ -2,22 +2,22 @@
 
 Skill sources, in registration order (earlier sources win on name conflicts):
 
-  1. Python-coded skills bundled with wa (weather_agents.skills.*)
-  2. Markdown skills bundled inside the wa package
+  1. Python-coded skills bundled with sky (weather_agents.skills.*)
+  2. Markdown skills bundled inside the sky package
      (weather_agents/config/skills/*.md)
   3. User-installed Anthropic-format skills at
-     ``~/.weather-agents/skills/<name>/SKILL.md``
+     ``~/.skyloom/skills/<name>/SKILL.md``
   4. Plugin-bundled skills at
-     ``~/.weather-agents/plugins/marketplaces/<m>/{plugins,external_plugins}/<plugin>/skills/<name>/SKILL.md``
+     ``~/.skyloom/plugins/marketplaces/<m>/{plugins,external_plugins}/<plugin>/skills/<name>/SKILL.md``
      — registered with the namespaced name ``<plugin>:<name>``.
 
 Prior versions scanned Claude Code's ``~/.claude/skills/`` and
-``~/.claude/plugins/`` directly. That coupled wa's skill set to Claude
-Code's install, so reinstalling wa or uninstalling Claude Code silently
-broke skills. wa now owns the directory under its own config root; a
+``~/.claude/plugins/`` directly. That coupled sky's skill set to Claude
+Code's install, so reinstalling sky or uninstalling Claude Code silently
+broke skills. sky now owns the directory under its own config root; a
 one-time migration helper copies user-level skills from the legacy
-``~/.claude/skills/`` location into the new wa-owned tree on demand
-(``wa skill migrate`` / the ``/skills migrate`` REPL command).
+``~/.claude/skills/`` location into the new sky-owned tree on demand
+(``sky skill migrate`` / the ``/skills migrate`` REPL command).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from pathlib import Path
 from weather_agents.core.config import USER_CONFIG_DIR
 from weather_agents.core.skill import Skill, SkillRegistry
 
-# Canonical wa-owned locations (under ~/.weather-agents/). Created on
+# Canonical sky-owned locations (under ~/.skyloom/). Created on
 # demand by the migration helper; absence is fine — the loader returns
 # an empty list and the agent proceeds with built-in skills only.
 WA_SKILLS_DIR: Path = USER_CONFIG_DIR / "skills"
@@ -43,21 +43,21 @@ LEGACY_CLAUDE_PLUGINS_DIR: Path = Path(os.path.expanduser("~/.claude/plugins/mar
 
 
 def register_all_skills(registry: SkillRegistry | None = None) -> None:
-    """Discover and register all skills wa knows about.
+    """Discover and register all skills sky knows about.
 
     Registration order (earlier sources win on name conflicts):
 
-      1. Built-in SKILL.md files shipped inside the wa package
+      1. Built-in SKILL.md files shipped inside the sky package
          (weather_agents/assets/builtin_skills/<name>/SKILL.md). These
          were Python-coded skill modules before the unification
-         refactor; converting to SKILL.md means every skill in wa now
+         refactor; converting to SKILL.md means every skill in sky now
          uses the same on-disk format as Claude Code.
       2. User-installed Anthropic-format skills under
-         ``~/.weather-agents/skills/<name>/SKILL.md``. A user file with
+         ``~/.skyloom/skills/<name>/SKILL.md``. A user file with
          the same name as a built-in shadows it — that's the official
          override path for customising a default.
       3. Plugin-bundled skills under
-         ``~/.weather-agents/plugins/marketplaces/<m>/...``. Namespaced
+         ``~/.skyloom/plugins/marketplaces/<m>/...``. Namespaced
          as ``<plugin>:<skill_name>`` so they coexist with user-level
          and built-in skills of the same bare name.
     """
@@ -67,7 +67,7 @@ def register_all_skills(registry: SkillRegistry | None = None) -> None:
     for skill in _get_wa_user_skills():
         # User SKILL.md files override built-ins by name. The override
         # path is intentional: a user dropping a customised
-        # ``code_reviewer/SKILL.md`` into ~/.weather-agents/skills/
+        # ``code_reviewer/SKILL.md`` into ~/.skyloom/skills/
         # wins over the bundled default.
         reg.register(skill)
     for skill in _get_wa_plugin_skills():
@@ -76,7 +76,7 @@ def register_all_skills(registry: SkillRegistry | None = None) -> None:
 
 
 def _get_builtin_md_skills() -> list[Skill]:
-    """Load the SKILL.md files shipped inside the wa package.
+    """Load the SKILL.md files shipped inside the sky package.
 
     These cover the agents' default specialties (code_reviewer,
     web_research, task_planner, etc.) that used to be Python-coded
@@ -122,9 +122,9 @@ def _load_skills_from_skills_root(base_path: Path) -> list[Skill]:
 
 
 def _get_wa_user_skills() -> list[Skill]:
-    """User-installed Anthropic-format skills under wa's own folder.
+    """User-installed Anthropic-format skills under sky's own folder.
 
-    Path: ``~/.weather-agents/skills/<name>/SKILL.md``.
+    Path: ``~/.skyloom/skills/<name>/SKILL.md``.
     Names are kept bare (no prefix) so a user-installed ``pptx`` shadows
     the plugin-namespaced ``anthropic-skills:pptx`` if both exist.
     """
@@ -132,13 +132,13 @@ def _get_wa_user_skills() -> list[Skill]:
 
 
 def _get_wa_plugin_skills() -> list[Skill]:
-    """Plugin-bundled skills under wa's marketplaces tree.
+    """Plugin-bundled skills under sky's marketplaces tree.
 
     Layout (mirroring Claude Code's marketplace structure but rooted at
-    wa's config dir):
+    sky's config dir):
 
-      ~/.weather-agents/plugins/marketplaces/<marketplace>/plugins/<plugin>/skills/<skill>/SKILL.md
-      ~/.weather-agents/plugins/marketplaces/<marketplace>/external_plugins/<plugin>/skills/<skill>/SKILL.md
+      ~/.skyloom/plugins/marketplaces/<marketplace>/plugins/<plugin>/skills/<skill>/SKILL.md
+      ~/.skyloom/plugins/marketplaces/<marketplace>/external_plugins/<plugin>/skills/<skill>/SKILL.md
 
     Each loaded skill is namespaced as ``<plugin>:<skill_name>`` so it
     coexists with any user-level skill of the same bare name.
@@ -186,7 +186,7 @@ def has_legacy_claude_skills() -> bool:
     """True if the legacy Claude Code skills directory has content.
 
     The REPL uses this to decide whether to surface a one-line hint
-    suggesting ``/skills migrate`` when wa's own skills directory is
+    suggesting ``/skills migrate`` when sky's own skills directory is
     empty. Cheap call — only counts entries, no file reads.
     """
     if not LEGACY_CLAUDE_SKILLS_DIR.is_dir():
@@ -197,7 +197,7 @@ def has_legacy_claude_skills() -> bool:
 
 
 def wa_skills_dir_empty() -> bool:
-    """True when wa's own skills directory is missing or has no skills."""
+    """True when sky's own skills directory is missing or has no skills."""
     if not WA_SKILLS_DIR.is_dir():
         return True
     return not any(
@@ -206,15 +206,15 @@ def wa_skills_dir_empty() -> bool:
 
 
 def migrate_from_claude(*, dry_run: bool = False) -> dict:
-    """Copy user-level skills + plugins from ``~/.claude/`` into wa's own
+    """Copy user-level skills + plugins from ``~/.claude/`` into sky's own
     config tree. Returns a summary dict for the caller to display.
 
     Behaviour:
       - Each existing skill directory in ``~/.claude/skills/<name>/`` is
-        copied to ``~/.weather-agents/skills/<name>/`` (full tree copy
+        copied to ``~/.skyloom/skills/<name>/`` (full tree copy
         so reference files like ``editing.md`` come along).
       - Each plugin tree under ``~/.claude/plugins/marketplaces/`` is
-        copied to the matching path under ``~/.weather-agents/``.
+        copied to the matching path under ``~/.skyloom/``.
       - Existing destination dirs are SKIPPED (not overwritten) so a
         repeated migrate is idempotent and never clobbers customised
         local copies.

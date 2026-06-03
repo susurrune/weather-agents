@@ -1,4 +1,4 @@
-"""CLI interface for Weather Agents — terminal agent product."""
+"""CLI interface for Skyloom — terminal agent product."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/mcp", "MCP server status"),
     ("/skills", "list & pick (↑↓ enter, type to filter)"),
     ("/skills refresh", "reload skills from disk (no restart)"),
-    ("/skills migrate", "copy skills from ~/.claude/ into wa's own folder"),
+    ("/skills migrate", "copy skills from ~/.claude/ into sky's own folder"),
     ("/use ", "activate a skill (name or #, e.g. /use 23)"),
     ("/deactivate", "pick a skill to deactivate (or /deactivate all)"),
     ("/sessions", "pick a session to load (↑↓ enter)"),
@@ -295,7 +295,7 @@ def _poll_esc() -> bool:
     return False
 
 
-app = typer.Typer(name="wa", help="Weather Agents CLI", no_args_is_help=False)
+app = typer.Typer(name="sky", help="Skyloom CLI", no_args_is_help=False)
 voice_app = typer.Typer(help="Voice chat server and TTS voice management")
 app.add_typer(voice_app, name="voice", help="Voice chat server and TTS voice management")
 console = Console()
@@ -331,7 +331,7 @@ _CODE_THEME = os.environ.get("WA_CODE_THEME", "monokai")
 
 def _version_callback(value: bool) -> None:
     if value:
-        console.print(f"Weather Agents v{__version__}")
+        console.print(f"Skyloom v{__version__}")
         raise typer.Exit()
 
 
@@ -1464,7 +1464,7 @@ async def _interactive(agent_name: str | None = None) -> None:
     workspace_path = ws if isinstance(ws, str) else ""
     _print_welcome(model, workspace_path)
 
-    # One-time migration hint. When wa's own skills directory is empty
+    # One-time migration hint. When sky's own skills directory is empty
     # but the user already has Anthropic-format skills installed under
     # ~/.claude/skills/, tell them how to bring those over. Quiet —
     # one line, only printed when the condition is genuinely actionable.
@@ -1478,7 +1478,7 @@ async def _interactive(agent_name: str | None = None) -> None:
             console.print(
                 "  [dim]Found Anthropic-format skills at ~/.claude/skills/ — "
                 "run [/]\\[cyan]/skills migrate[/cyan][dim] to copy them into "
-                "wa's own folder.[/]"
+                "sky's own folder.[/]"
             )
 
     try:
@@ -1664,10 +1664,10 @@ async def _interactive(agent_name: str | None = None) -> None:
                 continue
             if cmd_lower == "/skills migrate":
                 # Copy user-level skills + plugins from ~/.claude/ into
-                # wa's own ~/.weather-agents/ tree. Idempotent: existing
+                # sky's own ~/.skyloom/ tree. Idempotent: existing
                 # destination dirs are skipped, not overwritten. After
                 # migration, /skills refresh picks up the new content
-                # without restarting wa.
+                # without restarting sky.
                 from weather_agents.skills.loader import migrate_from_claude
 
                 summary = migrate_from_claude()
@@ -1691,10 +1691,10 @@ async def _interactive(agent_name: str | None = None) -> None:
                 console.print("    [dim]tip: run `/skills refresh` to load the new skills now.[/]")
                 continue
             if cmd_lower == "/skills refresh":
-                # Re-scan the on-disk skill sources without restarting wa.
+                # Re-scan the on-disk skill sources without restarting sky.
                 # Useful after installing a new skill into
-                # ~/.weather-agents/skills/ or a new plugin under
-                # ~/.weather-agents/plugins/.
+                # ~/.skyloom/skills/ or a new plugin under
+                # ~/.skyloom/plugins/.
                 from weather_agents.core.skill import SkillRegistry
                 from weather_agents.skills.loader import register_all_skills
 
@@ -1820,7 +1820,7 @@ async def _interactive(agent_name: str | None = None) -> None:
                 _handle_apikey_command(cmd, ctx)
                 continue
             if cmd_lower == "/version":
-                console.print(f"  Weather Agents [bold]v{__version__}[/bold]")
+                console.print(f"  Skyloom [bold]v{__version__}[/bold]")
                 continue
             if cmd_lower in ("/default", "/auto", "/plan"):
                 target = InteractiveMode(cmd_lower[1:])
@@ -2359,8 +2359,8 @@ def _print_help(ctx) -> None:
                 (
                     "/skills migrate",
                     _h(
-                        "把 ~/.claude/ 下的技能复制到 wa 自己的目录",
-                        "copy ~/.claude skills into wa's own folder",
+                        "把 ~/.claude/ 下的技能复制到 sky 自己的目录",
+                        "copy ~/.claude skills into sky's own folder",
                     ),
                 ),
                 (
@@ -2875,7 +2875,7 @@ def _arrow_pick_from_list(
 
     The picker is the standard interactive widget for any "pick one
     from a known list" command. _interactive_model_select was the
-    first instance of this pattern in wa; this generalises it so
+    first instance of this pattern in sky; this generalises it so
     /skills (and future commands like /agent / /session pick) can
     share the implementation.
     """
@@ -3396,7 +3396,7 @@ def _handle_model_command(cmd: str, ctx) -> None:
 def _print_provider_status(ctx) -> None:
     """Render every catalog provider grouped by region with key status.
 
-    The catalog is the single source of truth — every provider wa knows
+    The catalog is the single source of truth — every provider sky knows
     how to route to (35+ entries as of round 11). This view answers
     "which providers can I use right now?" at a glance: ● means a key
     is configured (in config OR an env var), ○ means missing.
@@ -3620,7 +3620,7 @@ class _TaskDashboard:
     """Rich Live dashboard for real-time orchestration execution.
 
     Shows a live-updating panel with a progress bar, task status table,
-    and current activity during ``wa task`` execution. Transient — the
+    and current activity during ``sky task`` execution. Transient — the
     dashboard disappears once orchestration completes, leaving only the
     final summary on screen.
     """
@@ -4249,14 +4249,14 @@ def chat(
         raise typer.Exit(1)
 
     # First-run: nothing is configured yet. Walk the user through the wizard,
-    # then drop straight into chat — no separate `wa init` step required.
+    # then drop straight into chat — no separate `sky init` step required.
     if not _is_configured():
         console.print("\n  [yellow]No API key configured yet — running first-run setup.[/yellow]")
         _run_setup_wizard()
         if not _is_configured():
             console.print(
                 "\n  [yellow]Skipped without entering a key. "
-                "Run [cyan]wa init[/cyan] later when ready.[/yellow]\n"
+                "Run [cyan]sky init[/cyan] later when ready.[/yellow]\n"
             )
             raise typer.Exit(0)
 
@@ -4296,7 +4296,7 @@ def app_desktop(
 
     With --tunnel (default) it opens a Cloudflare Quick Tunnel and prints a
     public https URL + QR code — open that on your phone to talk to this
-    desktop from anywhere. Install extras with: pip install 'weather-agents[desktop]'.
+    desktop from anywhere. Install extras with: pip install 'skyloom[desktop]'.
     """
     if agent not in AGENT_CLASSES:
         names = ", ".join(AGENT_CLASSES)
@@ -4375,19 +4375,19 @@ def voice_list() -> None:
     console.print(tbl)
     current = load_config().tts.voice_type
     console.print(f"\n  当前音色: [cyan]{current}[/cyan]")
-    console.print("  [dim]使用 [cyan]wa voice select <名称>[/cyan] 切换音色[/dim]")
+    console.print("  [dim]使用 [cyan]sky voice select <名称>[/cyan] 切换音色[/dim]")
 
 
 @voice_app.command("select")
 def voice_select(
     name: str = typer.Argument(..., help="音色名称 (如 sajiaoxuemei, uranus)"),
 ) -> None:
-    """Select a TTS voice by name (use 'wa voice list' to see available voices)."""
+    """Select a TTS voice by name (use 'sky voice list' to see available voices)."""
     from weather_agents.web.tts import get_voice_by_key
 
     entry = get_voice_by_key(name)
     if not entry:
-        console.print(f"[red]未知音色: {name}. 使用 wa voice list 查看可用音色[/red]")
+        console.print(f"[red]未知音色: {name}. 使用 sky voice list 查看可用音色[/red]")
         raise typer.Exit(1)
     _save_user_cfg({"tts": {"voice_type": entry["voice_type"]}})
     console.print(f"[green]已切换音色至: {entry['name']} ({entry['desc']})[/green]")
@@ -4478,7 +4478,7 @@ def config(
 
     elif action == "set":
         if not key or value is None:
-            console.print("  [red]usage: wa config set <key> <value>[/red]")
+            console.print("  [red]usage: sky config set <key> <value>[/red]")
             raise typer.Exit(1)
         ok, msg = set_config(key, value)
         color = "green" if ok else "red"
@@ -4486,7 +4486,7 @@ def config(
 
     elif action == "delete":
         if not key:
-            console.print("  [red]usage: wa config delete <key>[/red]")
+            console.print("  [red]usage: sky config delete <key>[/red]")
             raise typer.Exit(1)
         ok, msg = delete_config(key)
         color = "green" if ok else "red"
@@ -4657,8 +4657,7 @@ def _collect_keys(providers: set[str]) -> None:
     catalog = load_provider_catalog()
     console.print(f"\n  [bold]API keys needed for:[/bold] [cyan]{', '.join(cloud)}[/cyan]")
     console.print(
-        "  [dim](key is hidden as you type; stored in plain YAML at "
-        "~/.weather-agents/config.yaml)[/dim]\n"
+        "  [dim](key is hidden as you type; stored in plain YAML at ~/.skyloom/config.yaml)[/dim]\n"
     )
 
     import getpass
@@ -4767,7 +4766,7 @@ def _run_setup_wizard() -> None:
     console.print()
     console.print(
         Panel(
-            "[bold]Weather Agents Setup[/bold]\n[dim]3 steps · 34 providers · 117 models[/dim]",
+            "[bold]Skyloom Setup[/bold]\n[dim]3 steps · 34 providers · 117 models[/dim]",
             border_style="dim cyan",
             box=box.ROUNDED,
             padding=(1, 2),
@@ -4866,7 +4865,7 @@ def init() -> None:
     if answer in ("", "y", "yes"):
         asyncio.run(_interactive())
     else:
-        console.print("\n  [dim]Run `wa` when ready.[/dim]\n")
+        console.print("\n  [dim]Run `sky` when ready.[/dim]\n")
 
 
 # -- Version ---------------------------------------------------------------
@@ -4875,4 +4874,4 @@ def init() -> None:
 @app.command()
 def version() -> None:
     """Show version information."""
-    console.print(f"  Weather Agents [bold]v{__version__}[/bold]")
+    console.print(f"  Skyloom [bold]v{__version__}[/bold]")

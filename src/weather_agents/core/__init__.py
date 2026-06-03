@@ -1,16 +1,16 @@
-"""Core framework for Weather Agents.
+"""Core framework for Skyloom.
 
 Public symbols are exposed via PEP 562 lazy loading (``__getattr__``).
 Importing this package no longer pulls in ``mcp`` / ``llm`` / ``agent`` /
 ``memory`` eagerly — those modules (and their dependencies like ``httpx``
 and ``litellm``) cost hundreds of ms at startup and are unnecessary for
-``wa --help`` or any caller that only touches ``core.config``.
+``sky --help`` or any caller that only touches ``core.config``.
 
 Reason for the change: ``cli/main.py`` does ``from weather_agents.core.config
 import ...``, which still executes this ``__init__`` before the submodule.
 Eager re-exports therefore tax every CLI invocation. Lazy attribute access
 keeps the public surface stable for ``from weather_agents.core import X``
-callers while letting ``wa --help`` skip the heavy dependency chain.
+callers while letting ``sky --help`` skip the heavy dependency chain.
 
 ``factory`` is intentionally NOT exposed: it imports ``tools.builtin``
 which itself depends on ``core.tool``. Loading ``factory`` from here would

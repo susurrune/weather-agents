@@ -27,7 +27,7 @@ from weather_agents.core.tool import ToolRegistry
 
 if TYPE_CHECKING:
     # mcp imports httpx (~60ms). Defer until a system context is actually
-    # built — CLI paths like ``wa --help`` / ``wa config`` never need it.
+    # built — CLI paths like ``sky --help`` / ``sky config`` never need it.
     from weather_agents.core.mcp import MCPManager
 from weather_agents.core.workspace import init_workspace, resolve_workspace_path
 from weather_agents.plugins.loader import PluginLoader

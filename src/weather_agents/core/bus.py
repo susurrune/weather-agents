@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-log = logging.getLogger("wa.bus")
+log = logging.getLogger("sky.bus")
 
 
 class EventType(StrEnum):

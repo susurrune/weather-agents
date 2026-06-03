@@ -21,7 +21,7 @@ from weather_agents.core.config import _save_user_cfg, load_config
 
 
 class InteractiveMode(StrEnum):
-    """User-facing interactive modes for `wa chat`.
+    """User-facing interactive modes for `sky chat`.
 
     DEFAULT — router decides per-message: short questions answer directly,
               tool work runs autonomously. No human gate.
@@ -72,7 +72,7 @@ class ModeController:
     Yaml is read lazily on the first ``.current`` access — instantiation is
     free of IO so callers can place ``MODE = ModeController()`` at module
     scope without paying ~2s of YAML/dotenv parsing on cold startup of
-    subcommands that never touch the mode (e.g. ``wa voice list``).
+    subcommands that never touch the mode (e.g. ``sky voice list``).
     """
 
     def __init__(self, initial: InteractiveMode | None = None) -> None:

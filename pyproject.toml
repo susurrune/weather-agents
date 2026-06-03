@@ -1,5 +1,5 @@
 [project]
-name = "weather-agents"
+name = "skyloom"
 version = "1.0.1"
 description = "Weather-themed multi-agent system: Fog, Rain, Frost, Snow, Dew — a universal AI tool orchestration framework"
 readme = "README.md"
@@ -43,7 +43,7 @@ desktop = [
 ]
 
 [project.scripts]
-wa = "weather_agents.cli.main:app"
+sky = "weather_agents.cli.main:app"
 
 [build-system]
 requires = ["hatchling"]

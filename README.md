@@ -1,6 +1,6 @@
 <div align="center">
 
-# Weather Agents
+# Skyloom
 
 **雾 · 雨 · 霜 · 雪 · 露 · 晴**
 
@@ -8,27 +8,27 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![CI](https://github.com/susurrune/weather-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/susurrune/weather-agents/actions)
-[![Tests](https://img.shields.io/badge/tests-776_🌡️-8A2BE2)](https://github.com/susurrune/weather-agents)
+[![CI](https://github.com/susurrune/skyloom/actions/workflows/ci.yml/badge.svg)](https://github.com/susurrune/skyloom/actions)
+[![Tests](https://img.shields.io/badge/tests-776_🌡️-8A2BE2)](https://github.com/susurrune/skyloom)
 [![Code style](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
 </div>
 
 ---
 
-Weather Agents 是一个**本地优先的多智能体终端框架**。六个 Agent 各司其职，通过事件总线通信、技能系统增强、编排引擎协作，完成从研究分析到代码生成到部署运维的完整工作流。
+Skyloom 是一个**本地优先的多智能体终端框架**。六个 Agent 各司其职，通过事件总线通信、技能系统增强、编排引擎协作，完成从研究分析到代码生成到部署运维的完整工作流。
 
 它不是又一个大模型聊天客户端——它是一个**分工明确的 AI 团队**。
 
 ```bash
 # 安装
-pipx install git+https://github.com/susurrune/weather-agents.git
+pipx install git+https://github.com/susurrune/skyloom.git
 
 # 交互式对话
-wa
+sky
 
 # 一句话让团队协作
-wa task "设计并实现一个 URL 短链接服务"
+sky task "设计并实现一个 URL 短链接服务"
 ```
 
 ---
@@ -57,19 +57,19 @@ wa task "设计并实现一个 URL 短链接服务"
 
 ```bash
 # 让 Fog 做调研
-wa chat fog "对比 FastAPI 和 Flask 的生态"
+sky chat fog "对比 FastAPI 和 Flask 的生态"
 
 # 让 Rain 写代码
-wa chat rain "实现一个带超时的 LRU Cache"
+sky chat rain "实现一个带超时的 LRU Cache"
 
 # 全团队协作
-wa task "搭建微服务项目：FastAPI + PostgreSQL + Docker"
+sky task "搭建微服务项目：FastAPI + PostgreSQL + Docker"
 ```
 
 协作模式下，Snow 自动拆解目标为 DAG 任务，分配至对应 Agent，按依赖顺序执行并汇总结果：
 
 ```
-wa task "搭建微服务项目"
+sky task "搭建微服务项目"
   ├─ [1] Fog: 调研微服务最佳实践
   ├─ [2] Rain: 生成项目骨架          ← 依赖 1
   ├─ [3] Rain: 编写 Dockerfile       ← 依赖 2
@@ -87,16 +87,16 @@ wa task "搭建微服务项目"
 # 如果没有 pipx
 pip install pipx
 
-# 安装 weather-agents
-pipx install git+https://github.com/susurrune/weather-agents.git
+# 安装 skyloom
+pipx install git+https://github.com/susurrune/skyloom.git
 ```
 
-> 装完后 `wa` 会出现在 `~/.local/bin` 或 `%USERPROFILE%\.local\bin`。如果命令不可用，运行 `pipx ensurepath` 重开终端。
+> 装完后 `sky` 会出现在 `~/.local/bin` 或 `%USERPROFILE%\.local\bin`。如果命令不可用，运行 `pipx ensurepath` 重开终端。
 
 > **国内用户：** 访问 GitHub 慢时，可先克隆到本地再安装：
 > ```bash
-> git clone --depth=1 https://github.com/susurrune/weather-agents.git
-> pipx install ./weather-agents
+> git clone --depth=1 https://github.com/susurrune/skyloom.git
+> pipx install ./skyloom
 > ```
 > 如果克隆也慢，给 git 设代理：`git config --global http.proxy http://127.0.0.1:你的端口`
 
@@ -105,9 +105,9 @@ pipx install git+https://github.com/susurrune/weather-agents.git
 首次运行自动进入设置向导，选择统一模型或每个 Agent 独立配置。也可手动设置：
 
 ```bash
-wa init                                    # 重新跑向导
-wa config set api_key.deepseek sk-xxx      # 直接写入 API Key
-wa config set cli.default_agent rain       # 设置默认启动 Agent（默认 fog）
+sky init                                    # 重新跑向导
+sky config set api_key.deepseek sk-xxx      # 直接写入 API Key
+sky config set cli.default_agent rain       # 设置默认启动 Agent（默认 fog）
 export DEEPSEEK_API_KEY=sk-xxx             # 或环境变量
 ```
 
@@ -115,8 +115,8 @@ export DEEPSEEK_API_KEY=sk-xxx             # 或环境变量
 
 ```bash
 # 每个 Agent 独立配置模型
-wa config set model.fog deepseek/deepseek-v4-flash
-wa config set model.rain claude-sonnet-4-6
+sky config set model.fog deepseek/deepseek-v4-flash
+sky config set model.rain claude-sonnet-4-6
 
 # 统一所有 Agent 模型
 /model deepseek/deepseek-v4-flash    # chat 内命令
@@ -131,23 +131,23 @@ $env:DOUBAO_TTS_API_KEY = "你的火山引擎APIKey"
 [System.Environment]::SetEnvironmentVariable("DOUBAO_TTS_API_KEY", "你的密钥", "User")
 
 # 方式二：一条命令即可
-wa config set tts.api_key 你的火山引擎APIKey
+sky config set tts.api_key 你的火山引擎APIKey
 
 # 查看可用音色
-wa voice list
+sky voice list
 
 # 切换音色
-wa voice select uranus    # 乌拉努斯 - 大气知性女声
-wa voice select cancan    # 灿灿 - 活力甜美少女音
-wa voice select xiaohe    # 小河 - 温柔自然女声
+sky voice select uranus    # 乌拉努斯 - 大气知性女声
+sky voice select cancan    # 灿灿 - 活力甜美少女音
+sky voice select xiaohe    # 小河 - 温柔自然女声
 
 # 启动语音服务器
-wa voice
+sky voice
 ```
 
 #### 同一 Wi-Fi 下用手机访问
 
-`wa voice` 默认绑 `0.0.0.0`，检测到内网 IP 会自动生成自签证书启用 HTTPS（浏览器在非 localhost 下访问麦克风强制要求 HTTPS）。启动后控制台会列出 `https://<内网 IP>:8765`，手机连同一 Wi-Fi 直接打开即可（首次会提示自签证书警告，点继续）。
+`sky voice` 默认绑 `0.0.0.0`，检测到内网 IP 会自动生成自签证书启用 HTTPS（浏览器在非 localhost 下访问麦克风强制要求 HTTPS）。启动后控制台会列出 `https://<内网 IP>:8765`，手机连同一 Wi-Fi 直接打开即可（首次会提示自签证书警告，点继续）。
 
 #### 跨网络访问（cloudflared / ngrok / nginx）
 
@@ -155,19 +155,19 @@ wa voice
 
 ```bash
 # 终端 A：本地起 HTTP 服务（loopback 绑定会跳过自动 HTTPS，避免回源 TLS 握手失败）
-wa voice --host 127.0.0.1 --port 8765
+sky voice --host 127.0.0.1 --port 8765
 
 # 终端 B：起 Cloudflare Quick Tunnel，输出形如 https://xxx.trycloudflare.com
 cloudflared tunnel --url http://localhost:8765
 ```
 
-任何反向代理（nginx、Caddy、ngrok）都适用同样的模式——`--host 127.0.0.1` 让 wa voice 走纯 HTTP，由代理那侧负责对外的 HTTPS 证书。
+任何反向代理（nginx、Caddy、ngrok）都适用同样的模式——`--host 127.0.0.1` 让 sky voice 走纯 HTTP，由代理那侧负责对外的 HTTPS 证书。
 
 ### 升级 / 卸载
 
 ```bash
-pipx upgrade weather-agents
-pipx uninstall weather-agents
+pipx upgrade skyloom
+pipx uninstall skyloom
 ```
 
 ## 四、功能总览
@@ -197,7 +197,7 @@ pipx uninstall weather-agents
 
 ```bash
 # 进入 Frost，激活安全审计模式
-wa chat frost
+sky chat frost
 > /use security_auditor
 > 审计这段 Go 代码
 > /deactivate  # 回到基础模式
@@ -237,9 +237,9 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 ### 更多功能
 
 - **MCP 协议支持** — 通过 stdio 接入 Model Context Protocol 工具集
-- **Plugin 系统** — `~/.weather-agents/plugins/` 目录自动加载自定义工具
+- **Plugin 系统** — `~/.skyloom/plugins/` 目录自动加载自定义工具
 - **语音聊天** — 晴（Fair）专属，Doubao TTS V3 HTTP + WebSocket 语音服务器，支持环境变量一键配置
-- **会话管理** — 创建/加载/删除会话，`wa chat --new` 开新会话
+- **会话管理** — 创建/加载/删除会话，`sky chat --new` 开新会话
 - **费用追踪** — 各 Agent 累计 Token 和费用，支持预算上限
 - **智能工作空间** — 自动检测最佳磁盘位置，多盘跳过 C 盘
 - **安全默认值** — Shell 执行拒危险命令，HTTP 请求禁私网，长输出截断标记
@@ -251,18 +251,18 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 ### 子命令
 
 ```bash
-wa init              # 交互式配置向导
-wa chat [agent] [msg] # 对话（默认由 cli.default_agent 指定，默认 fog）
-wa task <goal>       # 多 Agent 协作
-wa status            # 所有 Agent 状态
-wa config <action>   # 配置管理
-wa memory <action>   # 记忆管理
-wa voice [options]   # 语音服务器（需配置 TTS）
+sky init              # 交互式配置向导
+sky chat [agent] [msg] # 对话（默认由 cli.default_agent 指定，默认 fog）
+sky task <goal>       # 多 Agent 协作
+sky status            # 所有 Agent 状态
+sky config <action>   # 配置管理
+sky memory <action>   # 记忆管理
+sky voice [options]   # 语音服务器（需配置 TTS）
 ```
 
 ### 交互命令
 
-进入 `wa chat` 后：
+进入 `sky chat` 后：
 
 | 命令 | 用途 |
 |:-----|:------|

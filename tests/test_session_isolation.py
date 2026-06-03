@@ -347,8 +347,8 @@ class TestAutoCompactErrorIsRecoverable:
 
 class TestConftestIsolation:
     """The ``app_config`` fixture must point at the per-test tmp dir, not
-    the user's real ``~/.weather-agents/memory.db``."""
+    the user's real ``~/.skyloom/memory.db``."""
 
     def test_app_config_uses_tmp_path(self, app_config, tmp_path):
         assert str(tmp_path) in app_config.memory.db_path
-        assert "~/.weather-agents" not in app_config.memory.db_path
+        assert "~/.skyloom" not in app_config.memory.db_path

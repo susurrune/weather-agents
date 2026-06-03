@@ -154,7 +154,7 @@ class VoiceServer:
         screen as a full-screen app. start_url is relative so it works on the
         ephemeral Cloudflare hostname the phone was opened from."""
         manifest = {
-            "name": "Weather Agents",
+            "name": "Skyloom",
             "short_name": self.agent.display_name or "Agents",
             "description": "Voice companion — talk to your weather agents.",
             "start_url": ".",

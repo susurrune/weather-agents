@@ -1,8 +1,8 @@
-"""Tests for the wa-owned skills directory + Claude-code → wa migration.
+"""Tests for the sky-owned skills directory + Claude-code → sky migration.
 
 Round 6 split skills out of ``~/.claude/skills/`` (where Claude Code
-keeps its install-shared set) into ``~/.weather-agents/skills/`` so
-wa owns the directory and Claude Code's lifecycle no longer affects
+keeps its install-shared set) into ``~/.skyloom/skills/`` so
+sky owns the directory and Claude Code's lifecycle no longer affects
 ours. A migration helper copies the legacy content on demand.
 """
 
@@ -117,13 +117,13 @@ class TestMigrateFromClaude:
         from weather_agents.skills import loader
 
         legacy = tmp_path / "claude_skills"
-        wa = tmp_path / "wa_skills"
+        sky = tmp_path / "wa_skills"
         _make_skill_md(legacy / "pptx", "pptx", body="pptx body")
         _make_skill_md(legacy / "pdf", "pdf", body="pdf body")
 
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_SKILLS_DIR", legacy)
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_PLUGINS_DIR", tmp_path / "claude_plugins")
-        monkeypatch.setattr(loader, "WA_SKILLS_DIR", wa)
+        monkeypatch.setattr(loader, "WA_SKILLS_DIR", sky)
         monkeypatch.setattr(loader, "WA_PLUGINS_DIR", tmp_path / "wa_plugins")
 
         summary = loader.migrate_from_claude()
@@ -131,8 +131,8 @@ class TestMigrateFromClaude:
         assert summary["skills_skipped"] == []
         # Files actually present in the destination, AND the body
         # content survived the copy.
-        assert (wa / "pptx" / "SKILL.md").exists()
-        assert "pptx body" in (wa / "pptx" / "SKILL.md").read_text(encoding="utf-8")
+        assert (sky / "pptx" / "SKILL.md").exists()
+        assert "pptx body" in (sky / "pptx" / "SKILL.md").read_text(encoding="utf-8")
 
     def test_copies_nested_reference_files(self, tmp_path, monkeypatch):
         """SKILL.md often references sibling files (e.g. editing.md,
@@ -142,7 +142,7 @@ class TestMigrateFromClaude:
         from weather_agents.skills import loader
 
         legacy = tmp_path / "claude_skills"
-        wa = tmp_path / "wa_skills"
+        sky = tmp_path / "wa_skills"
         _make_skill_md(legacy / "pptx", "pptx")
         (legacy / "pptx" / "editing.md").write_text("editing guide", encoding="utf-8")
         (legacy / "pptx" / "examples").mkdir()
@@ -150,32 +150,32 @@ class TestMigrateFromClaude:
 
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_SKILLS_DIR", legacy)
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_PLUGINS_DIR", tmp_path / "claude_plugins")
-        monkeypatch.setattr(loader, "WA_SKILLS_DIR", wa)
+        monkeypatch.setattr(loader, "WA_SKILLS_DIR", sky)
         monkeypatch.setattr(loader, "WA_PLUGINS_DIR", tmp_path / "wa_plugins")
 
         loader.migrate_from_claude()
-        assert (wa / "pptx" / "editing.md").read_text(encoding="utf-8") == "editing guide"
-        assert (wa / "pptx" / "examples" / "demo.py").exists()
+        assert (sky / "pptx" / "editing.md").read_text(encoding="utf-8") == "editing guide"
+        assert (sky / "pptx" / "examples" / "demo.py").exists()
 
     def test_idempotent_skips_existing(self, tmp_path, monkeypatch):
         from weather_agents.skills import loader
 
         legacy = tmp_path / "claude_skills"
-        wa = tmp_path / "wa_skills"
+        sky = tmp_path / "wa_skills"
         _make_skill_md(legacy / "pptx", "pptx", body="legacy body")
         # Pre-existing destination with DIFFERENT content — must NOT be
         # clobbered. This is the user's customised copy.
-        _make_skill_md(wa / "pptx", "pptx", body="user customised body")
+        _make_skill_md(sky / "pptx", "pptx", body="user customised body")
 
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_SKILLS_DIR", legacy)
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_PLUGINS_DIR", tmp_path / "claude_plugins")
-        monkeypatch.setattr(loader, "WA_SKILLS_DIR", wa)
+        monkeypatch.setattr(loader, "WA_SKILLS_DIR", sky)
         monkeypatch.setattr(loader, "WA_PLUGINS_DIR", tmp_path / "wa_plugins")
 
         summary = loader.migrate_from_claude()
         assert summary["skills_skipped"] == ["pptx"]
         assert summary["skills_copied"] == []
-        body = (wa / "pptx" / "SKILL.md").read_text(encoding="utf-8")
+        body = (sky / "pptx" / "SKILL.md").read_text(encoding="utf-8")
         assert "user customised body" in body
         assert "legacy body" not in body
 
@@ -183,25 +183,25 @@ class TestMigrateFromClaude:
         from weather_agents.skills import loader
 
         legacy = tmp_path / "claude_skills"
-        wa = tmp_path / "wa_skills"
+        sky = tmp_path / "wa_skills"
         _make_skill_md(legacy / "pptx", "pptx")
 
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_SKILLS_DIR", legacy)
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_PLUGINS_DIR", tmp_path / "claude_plugins")
-        monkeypatch.setattr(loader, "WA_SKILLS_DIR", wa)
+        monkeypatch.setattr(loader, "WA_SKILLS_DIR", sky)
         monkeypatch.setattr(loader, "WA_PLUGINS_DIR", tmp_path / "wa_plugins")
 
         summary = loader.migrate_from_claude(dry_run=True)
         assert summary["skills_copied"] == ["pptx"]
         assert summary["dry_run"] is True
         # Destination must not have been created.
-        assert not (wa / "pptx").exists()
+        assert not (sky / "pptx").exists()
 
     def test_copies_plugin_trees(self, tmp_path, monkeypatch):
         from weather_agents.skills import loader
 
         legacy = tmp_path / "claude_plugins"
-        wa = tmp_path / "wa_plugins"
+        sky = tmp_path / "wa_plugins"
         plugin_src = (
             legacy / "anthropic-skills" / "plugins" / "anthropic-skills" / "skills" / "pptx"
         )
@@ -210,12 +210,12 @@ class TestMigrateFromClaude:
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_SKILLS_DIR", tmp_path / "claude_skills")
         monkeypatch.setattr(loader, "LEGACY_CLAUDE_PLUGINS_DIR", legacy)
         monkeypatch.setattr(loader, "WA_SKILLS_DIR", tmp_path / "wa_skills")
-        monkeypatch.setattr(loader, "WA_PLUGINS_DIR", wa)
+        monkeypatch.setattr(loader, "WA_PLUGINS_DIR", sky)
 
         summary = loader.migrate_from_claude()
         assert summary["plugins_copied"] == ["anthropic-skills/plugins/anthropic-skills"]
         dst = (
-            wa
+            sky
             / "anthropic-skills"
             / "plugins"
             / "anthropic-skills"

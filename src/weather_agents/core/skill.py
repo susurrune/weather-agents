@@ -77,11 +77,11 @@ class Skill:
     # active prompt under ~2KB per skill while preserving the full
     # guide on disk where the LLM can fetch it on demand.
     body_truncated: bool = False
-    # Frontmatter keys that aren't part of wa's first-class schema but
+    # Frontmatter keys that aren't part of sky's first-class schema but
     # appear in real-world Claude Code / community skill files (``version``,
     # ``homepage``, ``slug``, ``changelog``, ``metadata``, ``compatibility``,
     # ``argument-hint``, ``user-invocable``, etc.). Preserved verbatim so
-    # the data survives a round-trip through the loader; nothing in wa
+    # the data survives a round-trip through the loader; nothing in sky
     # depends on the contents, but ``/skill info`` and future tools can
     # surface them.
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -161,20 +161,20 @@ class Skill:
             # Some YAMLs use comma-separated strings; tolerate both.
             allowed_tools = [t.strip() for t in allowed_raw.split(",") if t.strip()] or None
         # Normalize Claude Code tool names (PascalCase + optional
-        # ``Tool(scope pattern)``) into wa's snake_case equivalents.
+        # ``Tool(scope pattern)``) into sky's snake_case equivalents.
         # Real-world Anthropic skills look like:
         #   allowed-tools:
         #     - Bash(ls *)
         #     - Read
         #     - Write
-        # Without this mapping wa would restrict the agent to literal
+        # Without this mapping sky would restrict the agent to literal
         # ``Read`` / ``Write`` which don't exist in our registry, leaving
         # the agent with zero usable tools. Unknown names pass through
         # so non-Claude skills with custom tool names still work.
         if allowed_tools:
             allowed_tools = [_normalize_claude_tool_name(t) for t in allowed_tools]
             # Dedupe preserving order — Bash(ls *) + Bash(rm *) both
-            # map to run_bash; keeping one is correct since wa has no
+            # map to run_bash; keeping one is correct since sky has no
             # per-command Bash scoping.
             seen: set[str] = set()
             deduped: list[str] = []
@@ -189,7 +189,7 @@ class Skill:
         # ``compatibility``, ``argument-hint``, ``user-invocable``, etc.)
         # so they're inspectable later without dropping authored data on
         # the floor. Claude Code skills + community plugins use these
-        # routinely and wa silently ignoring them used to make /skill
+        # routinely and sky silently ignoring them used to make /skill
         # info return a stub.
         known_keys = {
             "name",
@@ -248,11 +248,11 @@ _SKILL_BODY_LITE_THRESHOLD = 2000
 _SKILL_BODY_LITE_MAX_CHARS = 1500
 
 
-# Claude Code → wa tool-name aliases. Real Anthropic skill files write
+# Claude Code → sky tool-name aliases. Real Anthropic skill files write
 # ``allowed-tools`` with their built-in PascalCase tool names (``Read``,
 # ``Write``, ``Bash``, etc.), often with a permission-scoping suffix
-# like ``Bash(ls *)``. wa's registry uses snake_case names. The aliases
-# below map every Claude name we've seen in the wild to its wa
+# like ``Bash(ls *)``. sky's registry uses snake_case names. The aliases
+# below map every Claude name we've seen in the wild to its sky
 # equivalent; names not in the map pass through untouched so custom /
 # plugin-defined tools keep working. Lowercase aliases are also accepted
 # (some authors write ``read`` instead of ``Read``).
@@ -283,18 +283,18 @@ _CLAUDE_TOOL_ALIASES: dict[str, str] = {
 
 
 def _normalize_claude_tool_name(raw: str) -> str:
-    """Translate a Claude Code tool name into wa's registry name.
+    """Translate a Claude Code tool name into sky's registry name.
 
     Handles:
       - PascalCase identifiers (``Read`` → ``read_file``)
       - Permission scoping (``Bash(ls *)`` → ``Bash`` → ``run_bash``)
-      - Snake_case already-wa names (``read_file`` → ``read_file``)
+      - Snake_case already-sky names (``read_file`` → ``read_file``)
       - Unknown names (pass through untouched so custom plugins work)
     """
     s = raw.strip()
     if not s:
         return s
-    # Strip permission scoping: ``Bash(ls *)`` → ``Bash``. wa has no
+    # Strip permission scoping: ``Bash(ls *)`` → ``Bash``. sky has no
     # per-command shell scoping so the inside is informational only.
     paren = s.find("(")
     if paren > 0:

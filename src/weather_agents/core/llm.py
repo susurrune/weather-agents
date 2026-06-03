@@ -21,7 +21,7 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 
 def _lazy_litellm():
-    """Lazy import of litellm — avoids ~1.5s import overhead for ``wa --help``."""
+    """Lazy import of litellm — avoids ~1.5s import overhead for ``sky --help``."""
     import litellm as _lm
 
     # Silence LiteLLM's noisy stderr banners
@@ -53,7 +53,7 @@ def _get_litellm():
 # default OpenAI client and surface "OPENAI_API_KEY missing" instead of
 # routing to the right provider.
 def _build_known_providers() -> set[str]:
-    """Set of provider id prefixes wa is allowed to route through to
+    """Set of provider id prefixes sky is allowed to route through to
     LiteLLM via ``<provider>/<model>``. Derived from the YAML catalog
     plus a minimal fallback so static type checks and bare-source
     invocations still work without the bundled config dir.
@@ -213,7 +213,7 @@ def _build_provider_env_map() -> dict[str, str]:
             return out
     except Exception:
         pass
-    # Last-resort fallback covering the providers wa shipped with.
+    # Last-resort fallback covering the providers sky shipped with.
     return {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -243,16 +243,16 @@ def _format_user_facing_error(model: str, err: BaseException | None) -> str:
         hint = f"已配置: {', '.join(configured)}。" if configured else "未配置任何 API key。"
         return (
             f"❌  {model} 调用失败：缺少或无效的 API key。\n"
-            f"请确认 `{env_var}` 已设置，或运行 `wa init` 重新配置。{hint}"
+            f"请确认 `{env_var}` 已设置，或运行 `sky init` 重新配置。{hint}"
         )
     if "rate limit" in lowered or "429" in text:
         return f"❌  {model} 速率受限，请稍后重试。"
     if "timeout" in lowered:
-        return f"❌  {model} 请求超时，请稍后重试或调高 `wa config set timeout 180`。"
+        return f"❌  {model} 请求超时，请稍后重试或调高 `sky config set timeout 180`。"
     if "model" in lowered and ("not found" in lowered or "does not exist" in lowered):
         return (
             f"❌  {model} 不是该 provider 的有效模型 ID。\n"
-            f"运行 `wa config models` 查看可用模型，或 `wa init` 重新选择。"
+            f"运行 `sky config models` 查看可用模型，或 `sky init` 重新选择。"
         )
     # Content moderation / safety filter (DeepSeek, OpenAI moderation,
     # Claude safety). These are NOT message-sequence problems — clearing
@@ -292,7 +292,7 @@ def _format_user_facing_error(model: str, err: BaseException | None) -> str:
         short = text.splitlines()[0][:200]
         return (
             f"❌  {model} 调用失败 (Bad Request)：{short}\n"
-            f"会话消息序列可能损坏，可运行 `wa memory clear` 清理后重试。"
+            f"会话消息序列可能损坏，可运行 `sky memory clear` 清理后重试。"
         )
     # Generic fallback — short, no stack trace, no LiteLLM banner.
     short = text.splitlines()[0][:200] if text and text.strip() else type(err).__name__

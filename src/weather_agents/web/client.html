@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Weather Agents">
+<meta name="apple-mobile-web-app-title" content="Skyloom">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2914,7 +2914,7 @@ const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
 function toggleSidebar() {
   if (!sidebarEl) return;
   const collapsed = sidebarEl.classList.toggle('collapsed');
-  try { localStorage.setItem('wa-sidebar-collapsed', collapsed ? '1' : '0'); } catch (_) {}
+  try { localStorage.setItem('sky-sidebar-collapsed', collapsed ? '1' : '0'); } catch (_) {}
 }
 if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
 
@@ -2922,7 +2922,7 @@ if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
 (function restoreSidebar() {
   if (!sidebarEl) return;
   try {
-    if (localStorage.getItem('wa-sidebar-collapsed') === '1') {
+    if (localStorage.getItem('sky-sidebar-collapsed') === '1') {
       sidebarEl.classList.add('collapsed');
     }
   } catch (_) {}
