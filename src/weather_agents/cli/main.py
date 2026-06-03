@@ -4277,6 +4277,35 @@ def task(goal: str = typer.Argument(..., help="Task goal for multi-agent orchest
     asyncio.run(_run_task(goal))
 
 
+@app.command("app")
+def app_desktop(
+    agent: str = typer.Option("fair", "--agent", "-a", help="Agent to chat with"),
+    port: int = typer.Option(8765, "--port", "-p", help="Local server port"),
+    tunnel: bool = typer.Option(
+        True,
+        "--tunnel/--no-tunnel",
+        help="Expose a public Cloudflare URL so a phone can join (needs cloudflared)",
+    ),
+    window: bool = typer.Option(
+        True,
+        "--window/--no-window",
+        help="Open a native desktop window (needs pywebview); else use the browser",
+    ),
+) -> None:
+    """Desktop app: native window running the voice client.
+
+    With --tunnel (default) it opens a Cloudflare Quick Tunnel and prints a
+    public https URL + QR code — open that on your phone to talk to this
+    desktop from anywhere. Install extras with: pip install 'weather-agents[desktop]'.
+    """
+    if agent not in AGENT_CLASSES:
+        names = ", ".join(AGENT_CLASSES)
+        raise typer.BadParameter(f"unknown agent '{agent}'; available: {names}")
+    from weather_agents.web.desktop import run_desktop_app
+
+    run_desktop_app(agent_name=agent, port=port, tunnel=tunnel, window=window)
+
+
 @voice_app.callback(invoke_without_command=True)
 def voice(
     ctx: typer.Context,

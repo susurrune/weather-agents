@@ -35,6 +35,12 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.15",
 ]
+# Desktop app extras: native window (pywebview) + QR for phone access.
+# cloudflared is a separate external binary (install via OS package manager).
+desktop = [
+    "pywebview>=5.0",
+    "qrcode>=7.0",
+]
 
 [project.scripts]
 wa = "weather_agents.cli.main:app"

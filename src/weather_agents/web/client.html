@@ -794,6 +794,57 @@
   }
   @keyframes tool-blink { 50% { opacity: 0.2; } }
 
+  /* ═════ Share banner — desktop app shows the phone-access URL + QR ═════ */
+  .share-banner {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    max-width: 340px;
+    padding: 14px 16px;
+    background: color-mix(in srgb, var(--paper-deep) 75%, var(--paper));
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--seal);
+    border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(42, 31, 23, 0.18);
+    font-family: var(--serif-body);
+    animation: settings-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .share-qr {
+    width: 84px;
+    height: 84px;
+    flex-shrink: 0;
+    background: #fff;
+    padding: 4px;
+    border-radius: 3px;
+    image-rendering: pixelated;
+  }
+  .share-text { min-width: 0; }
+  .share-title { font-size: 13px; color: var(--ink); margin-bottom: 4px; }
+  .share-link {
+    font-size: 12px;
+    color: var(--seal-deep);
+    word-break: break-all;
+    text-decoration: none;
+    line-height: 1.4;
+  }
+  .share-link:hover { text-decoration: underline; }
+  .share-close {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    background: none;
+    border: none;
+    color: var(--ink-faint);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .share-close:hover { color: var(--seal); }
+
   /* Thinking — three ink dots forming an em-dash thought */
   .think {
     display: grid;
@@ -2873,10 +2924,30 @@ if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
 const newConvBtn = document.getElementById('new-conv-btn');
 if (newConvBtn) newConvBtn.addEventListener('click', newConversation);
 
+// ── Share banner (desktop app: ?share=<public-url> shows a scan-me panel) ──
+function initShareBanner() {
+  let url = null;
+  try { url = new URLSearchParams(location.search).get('share'); } catch (_) {}
+  if (!url) return;
+  const bar = document.createElement('div');
+  bar.className = 'share-banner';
+  bar.innerHTML =
+    '<img class="share-qr" alt="QR" src="/qr?data=' + encodeURIComponent(url) + '" ' +
+      'onerror="this.style.display=\'none\'">' +
+    '<div class="share-text">' +
+      '<div class="share-title">📱 在手机上打开</div>' +
+      '<a class="share-link" href="' + _esc(url) + '" target="_blank" rel="noopener">' + _esc(url) + '</a>' +
+    '</div>' +
+    '<button class="share-close" title="关闭" aria-label="关闭">×</button>';
+  bar.querySelector('.share-close').addEventListener('click', () => bar.remove());
+  document.body.appendChild(bar);
+}
+
 // ── Init ──
 connect();
 checkSecureContext();
 initRecognition();
+initShareBanner();
 
 window.addEventListener('online', () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) connect();

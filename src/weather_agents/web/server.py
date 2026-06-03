@@ -82,6 +82,7 @@ class VoiceServer:
 
         self._app.router.add_get("/", self._handle_index)
         self._app.router.add_get("/health", self._handle_health)
+        self._app.router.add_get("/qr", self._handle_qr)
         self._app.router.add_get("/ws", self._handle_ws)
 
     @property
@@ -121,6 +122,25 @@ class VoiceServer:
 
     async def _handle_health(self, _request: web.Request) -> web.Response:
         return web.json_response({"status": "ok", "agent": self.agent.name})
+
+    async def _handle_qr(self, request: web.Request) -> web.Response:
+        """Render a QR PNG for ?data=<text> (used by the desktop 'scan me'
+        banner). Returns 404 if the optional qrcode lib isn't installed, so the
+        page falls back to showing the URL as text."""
+        data = request.query.get("data", "")
+        if not data:
+            return web.Response(status=400, text="missing data")
+        try:
+            import io
+
+            import qrcode  # optional dep
+
+            img = qrcode.make(data)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return web.Response(body=buf.getvalue(), content_type="image/png")
+        except Exception:
+            return web.Response(status=404, text="qr unavailable")
 
     async def _activate_session(self, agent_name: str, session_id: str) -> None:
         """Ensure ``agent_name``'s memory is positioned on ``session_id``.
@@ -435,14 +455,23 @@ class VoiceServer:
             _log.warning("tts_synthesis_error %s", exc)
             await self._safe_send(ws, {"type": "audio_end", "error": str(exc)})
 
-    async def run(self) -> None:
-        """Start the aiohttp server and run until cancelled."""
+    async def run(self, on_started: Any = None) -> None:
+        """Start the aiohttp server and run until cancelled.
+
+        ``on_started`` (optional async callable) is awaited once the socket is
+        accepting connections — the desktop app uses it to open the Cloudflare
+        tunnel only after the local server is actually up.
+        """
         runner = web.AppRunner(self._app)
         await runner.setup()
         site = web.TCPSite(runner, self.host, self.port, ssl_context=self.ssl_context)
         await site.start()
 
         _log.info("voice_server_started host=%s port=%s", self.host, self.port)
+
+        if on_started is not None:
+            with contextlib.suppress(Exception):
+                await on_started()
 
         try:
             await asyncio.Event().wait()  # run forever
@@ -457,6 +486,7 @@ async def run_voice_server(
     port: int = 8765,
     agent_name: str = "fair",
     ssl_context: ssl.SSLContext | None = None,
+    on_started: Any = None,
 ) -> None:
     """Create system context, init the target agent, and start the voice server."""
     from weather_agents.core.config import load_config
@@ -498,7 +528,7 @@ async def run_voice_server(
         ssl_context=ssl_context,
     )
     try:
-        await server.run()
+        await server.run(on_started=on_started)
     finally:
         if tts_engine:
             await tts_engine.close()
