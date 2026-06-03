@@ -529,13 +529,17 @@ class BaseAgent:
                 f"You are the {self.display_name} agent in Skyloom, "
                 f"powered by the **{model}** language model. If the user asks "
                 "what model you are, give them this exact model id verbatim — "
-                "do NOT guess or claim to be a different model."
+                "do NOT guess or claim to be a different model.\n"
+                "Always reply in English unless the user clearly writes in "
+                "another language — then match theirs."
             )
         return (
             f"\n\n## 运行环境\n"
             f"你是 Skyloom 中的「{self.display_name}」智能体，"
             f"底层语言模型为 **{model}**。如果用户问你是什么模型，"
-            "直接告诉他们这个准确的 model id —— 不要猜测、不要冒充其他模型。"
+            "直接告诉他们这个准确的 model id —— 不要猜测、不要冒充其他模型。\n"
+            "默认始终用中文回复；除非用户明确用其他语言提问，才用对应语言。"
+            "代码、命令、专有名词等保持原文。"
         )
 
     def _rebuild_system_prompt(self) -> None:
