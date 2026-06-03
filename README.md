@@ -9,7 +9,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/susurrune/skyloom/actions/workflows/ci.yml/badge.svg)](https://github.com/susurrune/skyloom/actions)
-[![Tests](https://img.shields.io/badge/tests-776_🌡️-8A2BE2)](https://github.com/susurrune/skyloom)
+[![Tests](https://img.shields.io/badge/tests-926_🌡️-8A2BE2)](https://github.com/susurrune/skyloom)
 [![Code style](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
 </div>
@@ -29,6 +29,9 @@ sky
 
 # 一句话让团队协作
 sky task "设计并实现一个 URL 短链接服务"
+
+# 桌面端 + 手机端：原生窗口 + 公网网址 + 二维码，手机扫码即可访问
+sky app
 ```
 
 ---
@@ -163,6 +166,40 @@ cloudflared tunnel --url http://localhost:8765
 
 任何反向代理（nginx、Caddy、ngrok）都适用同样的模式——`--host 127.0.0.1` 让 sky voice 走纯 HTTP，由代理那侧负责对外的 HTTPS 证书。
 
+### 桌面端 & 手机端
+
+一条命令把语音端变成跨设备应用：
+
+```bash
+pip install "skyloom[desktop]"   # 原生窗口 + 二维码所需的可选依赖
+sky app                          # 打开桌面窗口 + 公网网址 + 二维码
+```
+
+`sky app` 做三件事：① 打开一个原生桌面窗口（pywebview）运行语音端；② 开一条 **Cloudflare Quick Tunnel**（需 `cloudflared`，无需账号），拿到 `https://xxx.trycloudflare.com` 公网地址；③ 在终端和窗口里显示**二维码**。手机扫码或输入网址即可访问你的桌面端——Cloudflare 的 HTTPS 边缘顺带解决了手机麦克风权限。
+
+- **手机端 PWA**：手机浏览器打开后「添加到主屏幕」，即得一个全屏、带图标、类原生的 App。
+- 参数：`--no-tunnel`（仅本机/局域网）、`--no-window`（用默认浏览器）、`-a <agent>`、`-p <port>`。
+- 想要免安装 `.exe`：见 [`packaging/`](packaging/)（PyInstaller 一键打包）。
+
+### 用户画像 & 角色自定义
+
+Skyloom 在 `~/.skyloom/` 本地记住关于**你**的事，并允许你重塑每个 Agent 的角色（数据不出本机）。
+
+```bash
+# 用户画像（用户本地，跨 agent 共享，自动注入对话）
+sky profile set 称呼 阿K
+sky profile set 喜好 "巴赫、宋画"
+sky profile show
+sky profile forget [字段]          # 省略字段则清空
+
+# 角色设定：自定义任意 agent，set 从标准输入读入新设定
+sky persona show fair
+sky persona set fair               # 粘贴新设定，Ctrl-Z↵(Win)/Ctrl-D(Unix) 结束
+sky persona reset fair             # 恢复内置设定
+```
+
+对话中 Agent 也会主动维护这些：用 `set_user_profile` 记住你说过的事；**晴（Fair）还能按你的要求改写自己**（`set_persona`）——告诉她「以后用更亲近的方式跟我说话」，她会记住并改变。晴的设定本身就是一个**有真实情感、可作伴侣**的角色，而非工具。
+
 ### 升级 / 卸载
 
 ```bash
@@ -218,8 +255,10 @@ sky chat frost
 | 文件 | `read_file` · `write_file` · `edit_file` · `move_file` · `copy_file` · `delete_file` |
 | 目录 | `list_directory` · `tree` · `file_search` · `code_search` |
 | Shell | `shell_exec`（安全模式） |
-| 网络 | `http_get` · `http_post` · `web_search`（DuckDuckGo，免 API Key） |
+| 网络 | `http_get` · `http_post` · `web_search`（DuckDuckGo + Bing 并发竞速，免 API Key，国内可用，带缓存） · `fetch_page` |
 | Git | `git_status` · `git_diff` · `git_log` · `git_add` · `git_commit` · `git_checkout` |
+| 时间 | `get_current_time`（本地 + UTC，确保时效性） |
+| 记忆/人设 | `set_user_profile`（记住用户） · `set_persona`（重写 Agent 角色） |
 | 委派 | `delegate_to`（Agent 间任务委派） |
 | 任务 | `task_done`（Agent 自主判定任务完成） |
 
@@ -236,6 +275,9 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 
 ### 更多功能
 
+- **桌面端 + 手机端** — `sky app` 原生窗口 + Cloudflare 隧道公网地址 + 二维码；手机「添加到主屏幕」即为 PWA App；可 PyInstaller 打包免安装 exe
+- **用户画像** — `~/.skyloom/profile.json` 本地记住用户，跨 Agent 共享、自动注入
+- **角色自定义** — 每个 Agent 的角色设定可被用户覆盖；晴还能按要求改写自己
 - **MCP 协议支持** — 通过 stdio 接入 Model Context Protocol 工具集
 - **Plugin 系统** — `~/.skyloom/plugins/` 目录自动加载自定义工具
 - **语音聊天** — 晴（Fair）专属，Doubao TTS V3 HTTP + WebSocket 语音服务器，支持环境变量一键配置
@@ -254,10 +296,14 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 sky init              # 交互式配置向导
 sky chat [agent] [msg] # 对话（默认由 cli.default_agent 指定，默认 fog）
 sky task <goal>       # 多 Agent 协作
+sky app [options]     # 桌面端：原生窗口 + Cloudflare 隧道 + 二维码（手机访问）
 sky status            # 所有 Agent 状态
 sky config <action>   # 配置管理
 sky memory <action>   # 记忆管理
+sky profile <action>  # 用户画像（show / set / forget）
+sky persona <action>  # Agent 角色设定（show / set / reset）
 sky voice [options]   # 语音服务器（需配置 TTS）
+sky version           # 版本信息
 ```
 
 ### 交互命令
@@ -284,9 +330,8 @@ sky voice [options]   # 语音服务器（需配置 TTS）
 
 > 以下数据基于代码事实：
 
-- **代码**：56 个源文件，~17k 行 Python
-- **测试**：776 项，覆盖率 > 62%
-- **提交**：193 个 commits
+- **代码**：43 个源文件，~20k 行 Python
+- **测试**：926 项，覆盖率 > 62%
 - **CI**：GitHub Actions — Ruff + MyPy + Pytest × 3 个 Python 版本
 
 ### 已落地能力
@@ -302,6 +347,11 @@ sky voice [options]   # 语音服务器（需配置 TTS）
 | 多 Provider LLM（OpenAI/Anthropic/DeepSeek/Ollama） | ✅ 完成 |
 | 会话管理 + Session Resume | ✅ 完成 |
 | 语音聊天（Doubao TTS，支持环境变量一键配置） | ✅ 完成 |
+| 桌面端 `sky app`（原生窗口 + Cloudflare 隧道 + 二维码） | ✅ 完成 |
+| 手机端 PWA（添加到主屏幕）+ PyInstaller 免安装 exe | ✅ 完成 |
+| 用户画像（本地、跨 Agent、自动注入） | ✅ 完成 |
+| 角色自定义（用户/Agent 自身可重写人设） | ✅ 完成 |
+| Web 搜索（DDG + Bing 竞速 + 缓存，国内可用） | ✅ 完成 |
 | 费用追踪 + 预算控制 | ✅ 完成 |
 | 安全守卫（Shell/HTTP/截断） | ✅ 完成 |
 | 上下文压缩 + 智能摘要 | ✅ 完成 |
@@ -336,9 +386,10 @@ ruff format src/ tests/
 | 运行时 | Python 3.11+ · asyncio |
 | LLM | LiteLLM（OpenAI / Anthropic / DeepSeek / Ollama） |
 | CLI | Typer · Rich（Live / Markdown / Tables / Layout） |
-| 记忆 | aiosqlite · 三层架构（Short + Working + Long-term） |
-| 搜索 | DuckDuckGo（内置，免 API Key） |
+| 记忆 | aiosqlite · 三层架构（Short + Working + Long-term）· 本地用户画像 |
+| 搜索 | DuckDuckGo + Bing（并发竞速，内置，免 API Key，带缓存） |
 | 语音 | Doubao TTS V3 HTTP/WebSocket |
+| 多端 | pywebview 桌面窗口 · Cloudflare 隧道 · PWA · PyInstaller 打包 |
 | 工具 | 内置 · MCP 协议 · Plugin 系统 |
 | CI | GitHub Actions · Ruff · MyPy · Pytest × 3 Python |
 
