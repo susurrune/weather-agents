@@ -118,7 +118,14 @@ def run_desktop_app(
         try:
             import webview  # optional dep (pywebview)
 
-            webview.create_window("Skyloom", target, width=920, height=760)
+            webview.create_window(
+                "Skyloom",
+                target,
+                width=960,
+                height=780,
+                min_size=(640, 480),
+                text_select=False,  # keep the page-like feel — no text cursor
+            )
             try:
                 webview.start()
             finally:

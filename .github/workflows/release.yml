@@ -45,6 +45,9 @@ jobs:
           pip install -e ".[desktop]"
           pip install pyinstaller
 
+      - name: Generate app icon
+        run: python packaging/generate_icons.py
+
       - name: Build desktop app
         run: pyinstaller packaging/sky-desktop.spec --noconfirm
 
