@@ -2210,7 +2210,7 @@ def _build_welcome_art() -> Text:
     t.append("     ✦        ✦    ✦         ✦    ·         ✦    \n", style="dim bright_white")
     t.append("   ", style="")
     t.append("≈", style="cyan bold")
-    t.append("  W E A T H E R   A G E N T S  ", style="bold white")
+    t.append("  S K Y L O O M  ", style="bold white")
     t.append("≈", style="cyan bold")
     t.append("\n")
     t.append("     ·        ·    ·         ·    ✦         ·    \n", style="dim bright_white")
