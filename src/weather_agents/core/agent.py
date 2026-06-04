@@ -1881,23 +1881,36 @@ class BaseAgent:
                     ephemeral=ephemeral,
                 )
 
+                # ── Tool execution pipeline (parallel where safe) ─────────
+                # Phase A: parse all tool calls, resolve tools, fire events.
+                # Phase B: approve dangerous tools (serial — approval gates can
+                #   be interactive, so we must not parallelise them).
+                # Phase C: execute all safe/approved tools in parallel via
+                #   asyncio.gather — a turn with 5 independent reads goes from
+                #   ~5×T to ~T, the single biggest latency win in the agent.
+                # Phase D: write every result to memory in the original
+                #   tool_calls order so tool_call_id invariants hold.
+                parsed: list[
+                    dict  # {tc, tool_name, tool_args, tool, parse_error, tool_label, denied}
+                ] = []
+                any_dangerous = False
+
                 for tc in response.tool_calls:
                     tool_name = tc["function"]["name"]
                     raw_args = tc["function"]["arguments"]
+                    parse_error: str | None = None
                     if isinstance(raw_args, str):
                         tool_args = _parse_tool_args(raw_args)
                         if tool_args is None:
                             parse_error = _format_args_parse_error(tool_name, raw_args)
                     else:
                         tool_args = raw_args
-
                     tool = self.tool_registry.get(tool_name)
                     tool_label = (
                         _tool_status_label(tool_name, tool_args)
                         if tool_args
                         else f"{tool_name} (unparseable args)"
                     )
-
                     self.bus.add_event(
                         Event(
                             type=EventType.TOOL_CALL,
@@ -1905,56 +1918,75 @@ class BaseAgent:
                             data={"tool": tool_name, "args": tool_args or {}},
                         )
                     )
+                    if tool and tool.dangerous:
+                        any_dangerous = True
+                    parsed.append(
+                        {
+                            "tc": tc,
+                            "tool_name": tool_name,
+                            "tool_args": tool_args,
+                            "tool": tool,
+                            "parse_error": parse_error,
+                            "tool_label": tool_label,
+                            "denied": False,
+                        }
+                    )
 
-                    if on_status:
-                        on_status(tool_label)
-
-                    if tool_args is None:
-                        self.memory.add_message(
-                            "tool",
-                            parse_error,
-                            name=tool_name,
-                            tool_call_id=tc["id"],
-                            ephemeral=ephemeral,
-                        )
-                    elif tool:
-                        if tool.dangerous:
+                # Phase B: dangerous-tool approval (serial — may prompt the user).
+                if any_dangerous:
+                    for p in parsed:
+                        if p["tool"] and p["tool"].dangerous and not p["denied"]:
                             _log.warning(
                                 "dangerous_tool_call",
                                 extra={
-                                    "tool": tool_name,
+                                    "tool": p["tool_name"],
                                     "agent": self.name,
-                                    "tool_args": dict(tool_args) if tool_args else {},
+                                    "tool_args": dict(p["tool_args"]) if p["tool_args"] else {},
                                 },
                             )
-                            if not await self._check_tool_approval(tool_name, tool_args):
-                                self.memory.add_message(
-                                    "tool",
-                                    f"[denied] dangerous tool '{tool_name}' blocked",
-                                    name=tool_name,
-                                    tool_call_id=tc["id"],
-                                    ephemeral=ephemeral,
-                                )
-                                continue
-                        await self._set_state(AgentState.ACTING)
-                        result = await tool.execute(agent_name=self.name, **tool_args)
-                        self.memory.add_message(
-                            "tool",
-                            result,
-                            name=tool_name,
-                            tool_call_id=tc["id"],
-                            ephemeral=ephemeral,
-                        )
-                    else:
-                        suggestions = _suggest_tool_names(tool_name, self.tool_registry)
+                            if not await self._check_tool_approval(p["tool_name"], p["tool_args"]):
+                                p["denied"] = True
+
+                # Phase C: execute all tools in parallel.
+                async def _exec_one(p: dict) -> dict:
+                    """Execute a single tool and return its result dict."""
+                    if p["parse_error"] is not None:
+                        return {
+                            "tc": p["tc"],
+                            "tool_name": p["tool_name"],
+                            "result": p["parse_error"],
+                        }
+                    if p["denied"]:
+                        return {
+                            "tc": p["tc"],
+                            "tool_name": p["tool_name"],
+                            "result": f"[denied] dangerous tool '{p['tool_name']}' blocked",
+                        }
+                    if p["tool"] is None:
+                        suggestions = _suggest_tool_names(p["tool_name"], self.tool_registry)
                         hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
-                        self.memory.add_message(
-                            "tool",
-                            f"Error: Tool '{tool_name}' does not exist.{hint}",
-                            name=tool_name,
-                            tool_call_id=tc["id"],
-                            ephemeral=ephemeral,
-                        )
+                        return {
+                            "tc": p["tc"],
+                            "tool_name": p["tool_name"],
+                            "result": f"Error: Tool '{p['tool_name']}' does not exist.{hint}",
+                        }
+                    if on_status:
+                        on_status(p["tool_label"])
+                    await self._set_state(AgentState.ACTING)
+                    result = await p["tool"].execute(agent_name=self.name, **p["tool_args"])
+                    return {"tc": p["tc"], "tool_name": p["tool_name"], "result": result}
+
+                outcomes = await asyncio.gather(*[_exec_one(p) for p in parsed])
+
+                # Phase D: write results to memory in original order.
+                for o in outcomes:
+                    self.memory.add_message(
+                        "tool",
+                        o["result"],
+                        name=o["tool_name"],
+                        tool_call_id=o["tc"]["id"],
+                        ephemeral=ephemeral,
+                    )
 
                 await self._set_state(AgentState.THINKING)
 
