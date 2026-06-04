@@ -579,6 +579,13 @@ class MCPManager:
         self.tool_registry = tool_registry
         self.clients: dict[str, MCPClient] = {}
         self._server_configs: list[MCPServerConfig] = []
+        # Agents bound after construction so runtime-added tools propagate into
+        # each agent's own (cloned) registry and its cached tool list.
+        self._agents: dict[str, Any] = {}
+
+    def bind_agents(self, agents: dict[str, Any]) -> None:
+        """Register the live agent map so runtime tool changes reach them."""
+        self._agents = agents
 
     def configure(self, servers: list[dict]) -> None:
         """Configure MCP servers from config data."""
@@ -667,9 +674,98 @@ class MCPManager:
                 parameters=parameters,
                 handler=self._make_mcp_handler(server_name, name),
             )
+            # Register into the base registry AND each agent's cloned registry,
+            # so tools added at runtime (after agents cloned the base) actually
+            # reach the agents. Refresh happens once after the loop.
             self.tool_registry.register(tool)
+            for agent in self._agents.values():
+                reg = getattr(agent, "tool_registry", None)
+                if reg is not None:
+                    reg.register(tool)
             count += 1
+        for agent in self._agents.values():
+            with contextlib.suppress(Exception):
+                agent.refresh_tools()
         return count
+
+    def _unregister_server_tools(self, server_name: str) -> int:
+        """Remove all tools belonging to ``server_name`` from every registry."""
+        prefix = f"mcp_{server_name}_"
+        names = [n for n in self.tool_registry.list_names() if n.startswith(prefix)]
+        for n in names:
+            self.tool_registry.unregister(n)
+            for agent in self._agents.values():
+                reg = getattr(agent, "tool_registry", None)
+                if reg is not None:
+                    reg.unregister(n)
+        for agent in self._agents.values():
+            with contextlib.suppress(Exception):
+                agent.refresh_tools()
+        return len(names)
+
+    async def add_server(self, config_dict: dict) -> str:
+        """Connect to a new MCP server at runtime and register its tools.
+
+        ``config_dict`` keys: name, command, args, url, env. Returns a human
+        message. Reuses the same MCPClient used at startup, so stdio + SSE both
+        work. Does NOT persist — callers handle persistence.
+        """
+        name = str(config_dict.get("name", "")).strip()
+        if not name:
+            return "Error: server name is required"
+        if name in self.clients:
+            return f"MCP server '{name}' is already connected"
+        if not config_dict.get("command") and not config_dict.get("url"):
+            return "Error: provide either 'command' (stdio) or 'url' (SSE)"
+        cfg = MCPServerConfig(
+            name=name,
+            command=config_dict.get("command"),
+            args=config_dict.get("args", []),
+            url=config_dict.get("url"),
+            env=config_dict.get("env", {}),
+        )
+        client = MCPClient(cfg)
+        try:
+            tools = await client.initialize()
+        except Exception as e:  # noqa: BLE001
+            await client.close()
+            return f"连接 MCP server '{name}' 失败: {e}"
+        if not tools:
+            await client.close()
+            return f"MCP server '{name}' 未返回任何工具（连接失败或服务无工具）"
+        self.clients[name] = client
+        self._server_configs.append(cfg)
+        count = self._register_mcp_tools(name, tools)
+        tool_names = ", ".join(t.get("name", "?") for t in tools[:10])
+        return f"✓ 已接入 MCP server '{name}'，注册 {count} 个工具: {tool_names}"
+
+    async def remove_server(self, name: str) -> str:
+        """Disconnect an MCP server and unregister its tools."""
+        name = (name or "").strip()
+        client = self.clients.pop(name, None)
+        if client is None:
+            return f"未连接 MCP server '{name}'"
+        await client.close()
+        self._server_configs = [c for c in self._server_configs if c.name != name]
+        removed = self._unregister_server_tools(name)
+        return f"✓ 已断开 MCP server '{name}'，移除 {removed} 个工具"
+
+    def list_servers(self) -> list[dict]:
+        """Return the connected servers and their tool counts."""
+        out = []
+        for cfg in self._server_configs:
+            prefix = f"mcp_{cfg.name}_"
+            n = sum(1 for t in self.tool_registry.list_names() if t.startswith(prefix))
+            out.append(
+                {
+                    "name": cfg.name,
+                    "transport": "stdio" if cfg.command else "sse",
+                    "target": cfg.command or cfg.url or "",
+                    "tools": n,
+                    "connected": cfg.name in self.clients,
+                }
+            )
+        return out
 
     def _make_mcp_handler(self, server_name: str, tool_name: str):
         async def handler(**kwargs) -> str:
@@ -693,3 +789,67 @@ class MCPManager:
                     extra={"server": client.config.name, "error": str(e)},
                 )
         self.clients.clear()
+
+
+# ── Runtime self-integration: persistence + active-manager singleton ──────
+#
+# These let the running agent add/remove MCP servers itself (the "Skyloom
+# connects software on its own" capability). Persisted servers live in
+# ~/.skyloom/mcp_servers.json and are merged with config.yaml's mcp.servers at
+# startup, so a runtime-added server survives a restart.
+
+_ACTIVE_MANAGER: MCPManager | None = None
+
+
+def set_active_manager(manager: MCPManager | None) -> None:
+    global _ACTIVE_MANAGER
+    _ACTIVE_MANAGER = manager
+
+
+def get_active_manager() -> MCPManager | None:
+    return _ACTIVE_MANAGER
+
+
+def _persist_path():
+    from weather_agents.core import config as _cfg
+
+    return _cfg.USER_CONFIG_DIR / "mcp_servers.json"
+
+
+def load_persisted_servers() -> list[dict]:
+    """Return runtime-added MCP server configs (empty list if none/unreadable)."""
+    p = _persist_path()
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def save_persisted_server(config_dict: dict) -> None:
+    """Append/replace a server entry in the persisted list (by name)."""
+    name = str(config_dict.get("name", "")).strip()
+    if not name:
+        return
+    items = [s for s in load_persisted_servers() if s.get("name") != name]
+    items.append(config_dict)
+    p = _persist_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(p)
+
+
+def remove_persisted_server(name: str) -> None:
+    items = [s for s in load_persisted_servers() if s.get("name") != name]
+    p = _persist_path()
+    if not items and p.exists():
+        with contextlib.suppress(Exception):
+            p.unlink()
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(p)

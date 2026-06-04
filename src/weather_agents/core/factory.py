@@ -115,13 +115,19 @@ def create_system_context() -> SystemContext:
     plugin_dirs = config.plugins.directories if config.plugins.enabled else []
     plugin_loader.load_from_directories(plugin_dirs)
 
-    # Configure MCP manager (servers connect during init_all)
-    mcp_manager: MCPManager | None = None
-    if config.mcp.servers:
-        from weather_agents.core.mcp import MCPManager as _MCPManager
+    # Configure MCP manager (servers connect during init_all). Always create it
+    # — even with no configured servers — so the runtime self-integration tools
+    # (mcp_add_server / mcp_scaffold_server) have a live manager to register
+    # into. Merge config.yaml servers with runtime-persisted ones.
+    from weather_agents.core.mcp import MCPManager as _MCPManager
+    from weather_agents.core.mcp import load_persisted_servers, set_active_manager
 
-        mcp_manager = _MCPManager(base_tool_registry)
-        mcp_manager.configure(config.mcp.servers)
+    mcp_manager = _MCPManager(base_tool_registry)
+    _persisted = load_persisted_servers()
+    _all_servers = list(config.mcp.servers) + _persisted
+    if _all_servers:
+        mcp_manager.configure(_all_servers)
+    set_active_manager(mcp_manager)
 
     # Shared LLM client (cost tracking is global; rate limiting is per-client)
     llm = LLMClient(config, base_tool_registry)
@@ -144,6 +150,10 @@ def create_system_context() -> SystemContext:
         # Register delegate_to tool for this specific agent
         agent_registry.register(create_delegate_tool(agents, calling_agent=agent))
         agents[name] = agent
+
+    # Bind agents so MCP tools (startup + runtime-added) propagate into every
+    # agent's cloned registry, not just the shared base.
+    mcp_manager.bind_agents(agents)
 
     return SystemContext(
         config=config,

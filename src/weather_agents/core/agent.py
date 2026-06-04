@@ -321,6 +321,15 @@ class BaseAgent:
         self._load_skills()
         self.bus.subscribe(self.name, self._handle_event)
 
+    def refresh_tools(self) -> None:
+        """Re-read the tool registry into the cached ``_tools`` list.
+
+        Needed when tools are added/removed AFTER init() — e.g. an MCP server
+        connected at runtime. Without this the agent keeps offering its
+        init-time snapshot and never sees the new tools.
+        """
+        self._tools = self.tool_registry.get_tools()
+
     def _load_skills(self) -> None:
         """Store skill references for on-demand activation.
 

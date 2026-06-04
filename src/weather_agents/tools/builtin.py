@@ -2169,6 +2169,11 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
 
     register_computer_tools(reg)
 
+    # Runtime MCP self-integration tools (add/scaffold/list MCP servers).
+    from weather_agents.tools.mcp_tools import register_mcp_tools
+
+    register_mcp_tools(reg)
+
 
 async def close_http_client() -> None:
     """Close the shared httpx client. Called on shutdown to free connections."""
