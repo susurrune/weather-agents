@@ -18,14 +18,24 @@ from __future__ import annotations
 
 import contextlib
 import json
+from datetime import datetime
 
 from weather_agents.core import config
 
 _VALID_AGENTS = {"fog", "rain", "frost", "snow", "dew", "fair"}
 
+# Keep only the most recent N memories in the prompt + on disk. Emotional
+# context decays — last month's mood matters less than this week's — and an
+# unbounded list would bloat every system prompt. 40 ≈ a few weeks of notes.
+_MEMORY_CAP = 40
+
 
 def _profile_path():
     return config.USER_CONFIG_DIR / "profile.json"
+
+
+def _memories_path():
+    return config.USER_CONFIG_DIR / "memories.json"
 
 
 def _persona_path(agent: str):
@@ -85,6 +95,67 @@ def format_profile_for_prompt(lang: str = "zh") -> str:
     if lang == "en":
         return "\n\n## About the user (remember this and use it naturally)\n" + body
     return "\n\n## 关于用户（记住，并在对话中自然运用，不要生硬复述）\n" + body
+
+
+# ── Emotional / narrative memory ─────────────────────────────────────────
+#
+# Distinct from profile.json (which holds *facts* — name, preferences). This is
+# the running narrative an agent like 晴 keeps about the relationship: moods,
+# what's going on in the user's life, things worth following up on. Free-form,
+# timestamped, capped to the recent past. Saved here (not in the chat DB) so it
+# survives `sky memory clear` and is shared across every agent — the user is one
+# person, and "你上次说项目压力很大" should work no matter who they talk to.
+
+
+def load_memories() -> list[dict]:
+    """Return the list of saved memories (newest last), [] if none."""
+    p = _memories_path()
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def append_memory(note: str) -> bool:
+    """Append a timestamped memory. Returns False for empty notes. Trims to the
+    most recent ``_MEMORY_CAP`` entries so the prompt block stays bounded."""
+    note = (note or "").strip()
+    if not note:
+        return False
+    items = load_memories()
+    items.append({"ts": datetime.now().strftime("%Y-%m-%d"), "note": note})
+    if len(items) > _MEMORY_CAP:
+        items = items[-_MEMORY_CAP:]
+    p = _memories_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(p)
+    return True
+
+
+def clear_memories() -> None:
+    with contextlib.suppress(Exception):
+        _memories_path().unlink()
+
+
+def format_memories_for_prompt(lang: str = "zh", limit: int = 12) -> str:
+    """Render the most recent memories as a prompt block, or '' when empty."""
+    items = load_memories()
+    if not items:
+        return ""
+    recent = items[-limit:]
+    lines = [f"- [{m.get('ts', '')}] {m.get('note', '')}" for m in recent]
+    body = "\n".join(lines)
+    if lang == "en":
+        return (
+            "\n\n## What you remember about them (recent context — "
+            "weave in naturally, never recite)\n" + body
+        )
+    return "\n\n## 你记得关于 ta 的事（近期，自然带出，别生硬复述）\n" + body
 
 
 # ── Per-agent custom persona ─────────────────────────────────────────────

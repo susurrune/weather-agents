@@ -4348,6 +4348,44 @@ def profile(
 
 
 @app.command()
+def memories(
+    action: str = typer.Argument("show", help="show / add / forget"),
+    text: str = typer.Argument(None, help="Memory text (for add)"),
+) -> None:
+    """View or edit what the agents remember about you (近况 / 心情)."""
+    from weather_agents.core.profile import (
+        append_memory,
+        clear_memories,
+        load_memories,
+    )
+
+    if action == "show":
+        items = load_memories()
+        console.print()
+        console.print(Rule("  情感记忆  ", align="left", style="dim"))
+        if not items:
+            console.print(
+                "  [dim]还没有记忆。和「晴」聊聊，她会自然地把你的近况记下来，"
+                "或用 [cyan]sky memories add <内容>[/cyan]。[/dim]"
+            )
+        else:
+            for m in items:
+                console.print(f"  [dim]{m.get('ts', '')}[/dim]  {m.get('note', '')}")
+        console.print(f"\n  [dim]{USER_CONFIG_DIR / 'memories.json'}[/dim]")
+    elif action == "add":
+        if not text:
+            console.print("  [red]用法: sky memories add <内容>[/red]")
+            raise typer.Exit(1)
+        append_memory(text)
+        console.print(f"  [green]已记住：{text}[/green]")
+    elif action == "forget":
+        clear_memories()
+        console.print("  [green]已清除全部情感记忆[/green]")
+    else:
+        console.print(f"  [red]未知操作: {action} (show / add / forget)[/red]")
+
+
+@app.command()
 def persona(
     action: str = typer.Argument("show", help="show / set / reset"),
     agent: str = typer.Argument("fair", help="Agent name"),
@@ -4836,6 +4874,39 @@ def _wizard_pick_model(prompt_title: str, default_id: str | None = None) -> tupl
     return None
 
 
+def _collect_profile_basics() -> None:
+    """Ask for a name + how to be addressed so agents feel personal from turn 1.
+
+    Entirely optional — blank answers skip the field. Stored in the same local
+    profile (用户画像) the agents read each turn. We keep this to two questions:
+    a long form on first run is friction; the agents fill in the rest over time
+    via set_user_profile.
+    """
+    from weather_agents.core.profile import load_profile, set_profile_field
+
+    existing = load_profile()
+    if existing:
+        # Re-running init with a profile already present — don't nag.
+        console.print("  [dim]已有画像，跳过。用 `sky profile` 查看或修改。[/dim]")
+        return
+
+    console.print("  [dim]两个小问题，直接回车可跳过。智能体会在对话中慢慢补全其余。[/dim]\n")
+    try:
+        name = console.input("  你的名字 / 我该怎么称呼你？ ").strip()
+        if name:
+            set_profile_field("称呼", name)
+        addr = console.input("  想让智能体用什么语气？(如：朋友 / 正式 / 随意) ").strip()
+        if addr:
+            set_profile_field("相处语气", addr)
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n  [dim]跳过。[/dim]")
+        return
+    if name or addr:
+        console.print("  [green]✓ 记下了[/green]")
+    else:
+        console.print("  [dim]跳过，之后随时可以 `sky profile set` 添加。[/dim]")
+
+
 def _run_setup_wizard() -> None:
     """Walk the user through choosing a model strategy and storing API keys.
 
@@ -4931,6 +5002,11 @@ def _run_setup_wizard() -> None:
     console.print()
     console.print(Rule("  Step 3 — API keys  ", align="left", style="dim"))
     _collect_keys(providers_needed)
+
+    # Step 4: optional — a couple of facts so agents personalize from message 1.
+    console.print()
+    console.print(Rule("  Step 4 — 关于你 (可选)  ", align="left", style="dim"))
+    _collect_profile_basics()
 
     console.print()
     console.print("  [green]✓ Setup complete[/green]")

@@ -14,6 +14,39 @@ from __future__ import annotations
 import threading
 import urllib.parse
 
+# Shown the instant the window opens, while the server + Cloudflare tunnel are
+# still coming up (can take tens of seconds on a cold cloudflared). Without it
+# the user stares at an empty window — or, in the old flow, at nothing at all
+# until startup finished. Pure inline HTML so it needs no server to render.
+_SPLASH_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skyloom</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:#2a1f17;color:#f3ead7;font-family:system-ui,-apple-system,sans-serif;
+display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px}
+.mark{position:relative;width:96px;height:96px}
+.sun{position:absolute;inset:0;margin:auto;width:40px;height:40px;border-radius:50%;
+background:radial-gradient(circle at 50% 45%,#f0be6e,#d4a056);
+box-shadow:0 0 30px rgba(212,160,86,.5);animation:pulse 2.4s ease-in-out infinite}
+.ring{position:absolute;inset:0;border:1.5px solid rgba(212,160,86,.25);border-top-color:#d4a056;
+border-radius:50%;animation:spin 1.4s linear infinite}
+h1{font-size:24px;font-weight:300;letter-spacing:.42em;padding-left:.42em}
+.tip{font-size:13px;color:rgba(243,234,215,.45);letter-spacing:.04em}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.86);opacity:.8}}
+</style></head><body>
+<div class="mark"><div class="ring"></div><div class="sun"></div></div>
+<h1>SKYLOOM</h1>
+<div class="tip">正在升起…</div>
+</body></html>"""
+
+
+def _splash_url() -> str:
+    """A data: URL carrying the splash page so the window has something to show
+    before the local server is reachable."""
+    return "data:text/html;charset=utf-8," + urllib.parse.quote(_SPLASH_HTML)
+
 
 def share_target(local_url: str, public_url: str | None) -> str:
     """Window URL — carries the public link as ?share= so the page can show a
@@ -96,15 +129,7 @@ def run_desktop_app(
 
     threading.Thread(target=_bg, daemon=True).start()
 
-    if not ready.wait(timeout=45.0):
-        print("  ⚠ 服务器启动超时。")
-    if state["error"]:
-        print(f"  ⚠ 启动失败: {state['error']}")
-        return
-
     local_url = f"http://127.0.0.1:{port}"
-    _print_banner(local_url, state["public_url"], tunnel)
-    target = share_target(local_url, state["public_url"])
 
     def _close_tunnel() -> None:
         import contextlib
@@ -118,16 +143,34 @@ def run_desktop_app(
         try:
             import webview  # optional dep (pywebview)
 
-            webview.create_window(
+            # Open the window NOW with the splash, so the user sees Skyloom
+            # rising while the server + tunnel come up in the background.
+            win = webview.create_window(
                 "Skyloom",
-                target,
+                _splash_url(),
                 width=960,
                 height=780,
                 min_size=(640, 480),
                 text_select=False,  # keep the page-like feel — no text cursor
             )
+
+            def _load_when_ready() -> None:
+                # Runs in a pywebview worker thread after the GUI loop starts.
+                import contextlib
+
+                if not ready.wait(timeout=45.0):
+                    print("  ⚠ 服务器启动超时。")
+                if state["error"]:
+                    print(f"  ⚠ 启动失败: {state['error']}")
+                    return
+                _print_banner(local_url, state["public_url"], tunnel)
+                target = share_target(local_url, state["public_url"])
+                # The window may be closing as we navigate — ignore that race.
+                with contextlib.suppress(Exception):
+                    win.load_url(target)
+
             try:
-                webview.start()
+                webview.start(_load_when_ready)
             finally:
                 _close_tunnel()
             return
@@ -138,6 +181,14 @@ def run_desktop_app(
             )
 
     # Fallback: open in the default browser, keep serving until Ctrl-C.
+    if not ready.wait(timeout=45.0):
+        print("  ⚠ 服务器启动超时。")
+    if state["error"]:
+        print(f"  ⚠ 启动失败: {state['error']}")
+        return
+    _print_banner(local_url, state["public_url"], tunnel)
+    target = share_target(local_url, state["public_url"])
+
     import webbrowser
 
     webbrowser.open(target)

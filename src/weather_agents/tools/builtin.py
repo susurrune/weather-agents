@@ -321,6 +321,18 @@ async def _set_user_profile(key: str = "", value: str = "", **kwargs) -> str:
     return f"已记住：{key} = {value}"
 
 
+async def _remember(note: str = "", **kwargs) -> str:
+    """Append a free-form emotional/contextual memory about the user."""
+    note = (note or "").strip()
+    if not note:
+        return "Error: note is required"
+    from weather_agents.core.profile import append_memory
+
+    if not append_memory(note):
+        return "Error: empty note"
+    return f"已记在心里：{note}"
+
+
 async def _set_persona(agent: str = "", persona: str = "", **kwargs) -> str:
     """Save a custom persona for an agent (applied from the next turn)."""
     agent = (agent or "").strip().lower()
@@ -2033,6 +2045,27 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
                 ToolParameter(name="value", type="string", description="The value to remember"),
             ],
             handler=_set_user_profile,
+            cacheable=False,
+        ),
+        Tool(
+            name="remember",
+            description=(
+                "Save a free-form memory about the user — their mood, what's "
+                "going on in their life, something to follow up on next time. "
+                "Distinct from set_user_profile (which is for durable facts like "
+                "name/preferences); this is the running narrative / emotional "
+                "context. Persists locally across sessions and is shared with "
+                "every agent. Use it naturally when something worth remembering "
+                "comes up — e.g. '最近在准备考试，压力大' or '养了只叫橘子的猫'."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="note",
+                    type="string",
+                    description="The thing to remember, in one short sentence",
+                ),
+            ],
+            handler=_remember,
             cacheable=False,
         ),
         Tool(

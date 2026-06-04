@@ -538,6 +538,7 @@ class BaseAgent:
 
         lang = getattr(self.config.llm, "language", "zh")
         user_block = profile.format_profile_for_prompt(lang)
+        user_block += profile.format_memories_for_prompt(lang)
         if lang == "en":
             return (
                 f"\n\n## Runtime\n"

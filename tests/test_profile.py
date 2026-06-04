@@ -46,6 +46,56 @@ class TestUserProfile:
         assert profile.load_profile() == {}  # degrades, no crash
 
 
+class TestMemories:
+    def test_roundtrip_and_format(self):
+        assert profile.load_memories() == []
+        assert profile.format_memories_for_prompt("zh") == ""
+
+        assert profile.append_memory("最近在准备考试，压力大") is True
+        assert profile.append_memory("养了只叫橘子的猫") is True
+        items = profile.load_memories()
+        assert [m["note"] for m in items] == ["最近在准备考试，压力大", "养了只叫橘子的猫"]
+        assert all("ts" in m for m in items)
+
+        block = profile.format_memories_for_prompt("zh")
+        assert "橘子" in block and "考试" in block
+        assert "About them" in profile.format_memories_for_prompt("en") or "remember" in (
+            profile.format_memories_for_prompt("en").lower()
+        )
+
+    def test_empty_note_ignored(self):
+        assert profile.append_memory("   ") is False
+        assert profile.load_memories() == []
+
+    def test_cap_keeps_recent(self):
+        for i in range(profile._MEMORY_CAP + 10):
+            profile.append_memory(f"note {i}")
+        items = profile.load_memories()
+        assert len(items) == profile._MEMORY_CAP
+        # Oldest were dropped; newest retained.
+        assert items[-1]["note"] == f"note {profile._MEMORY_CAP + 9}"
+        assert items[0]["note"] == "note 10"
+
+    def test_format_limit(self):
+        for i in range(20):
+            profile.append_memory(f"m{i}")
+        block = profile.format_memories_for_prompt("zh", limit=5)
+        # Only the last 5 appear.
+        assert "m19" in block and "m15" in block
+        assert "m14" not in block
+
+    def test_clear(self):
+        profile.append_memory("x")
+        profile.clear_memories()
+        assert profile.load_memories() == []
+
+    def test_corrupt_file_is_safe(self):
+        p = config.USER_CONFIG_DIR / "memories.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("not a list", encoding="utf-8")
+        assert profile.load_memories() == []
+
+
 class TestPersona:
     def test_save_load_clear(self):
         assert profile.load_persona("fair") is None
