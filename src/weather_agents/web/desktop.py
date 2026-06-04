@@ -167,7 +167,8 @@ def run_desktop_app(
                 target = share_target(local_url, state["public_url"])
                 # The window may be closing as we navigate — ignore that race.
                 with contextlib.suppress(Exception):
-                    win.load_url(target)
+                    if win is not None:
+                        win.load_url(target)
 
             try:
                 webview.start(_load_when_ready)

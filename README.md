@@ -9,7 +9,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/susurrune/skyloom/actions/workflows/ci.yml/badge.svg)](https://github.com/susurrune/skyloom/actions)
-[![Tests](https://img.shields.io/badge/tests-926_🌡️-8A2BE2)](https://github.com/susurrune/skyloom)
+[![Tests](https://img.shields.io/badge/tests-940_🌡️-8A2BE2)](https://github.com/susurrune/skyloom)
 [![Code style](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
 </div>
@@ -186,11 +186,16 @@ sky app                          # 打开桌面窗口 + 公网网址 + 二维码
 Skyloom 在 `~/.skyloom/` 本地记住关于**你**的事，并允许你重塑每个 Agent 的角色（数据不出本机）。
 
 ```bash
-# 用户画像（用户本地，跨 agent 共享，自动注入对话）
+# 用户画像（固定事实，跨 agent 共享，自动注入对话）
 sky profile set 称呼 阿K
 sky profile set 喜好 "巴赫、宋画"
 sky profile show
 sky profile forget [字段]          # 省略字段则清空
+
+# 情感记忆（近况 / 心情，跨 agent 共享，满额自动折叠成摘要）
+sky memories show
+sky memories add "最近在准备考试，压力大"
+sky memories forget                # 清空全部
 
 # 角色设定：自定义任意 agent，set 从标准输入读入新设定
 sky persona show fair
@@ -198,7 +203,13 @@ sky persona set fair               # 粘贴新设定，Ctrl-Z↵(Win)/Ctrl-D(Uni
 sky persona reset fair             # 恢复内置设定
 ```
 
-对话中 Agent 也会主动维护这些：用 `set_user_profile` 记住你说过的事；**晴（Fair）还能按你的要求改写自己**（`set_persona`）——告诉她「以后用更亲近的方式跟我说话」，她会记住并改变。晴的设定本身就是一个**有真实情感、可作伴侣**的角色，而非工具。
+对话中 Agent 会主动维护这些：
+
+- **用户画像**（`set_user_profile`）记住你说过的固定事实——名字、喜好、职业。
+- **情感记忆**（`remember`）记下当下的你——近况、心情、该跟进的事。和画像分开存，跨 agent 共享、`memory clear` 也删不掉；满 40 条时最旧的会折叠成一条摘要而非丢弃。**晴（Fair）启动时会主动提起你上次说的事**（「☼ 晴还记得 ——」）。
+- **角色自定义**：**晴还能按你的要求改写自己**（`set_persona`）——告诉她「以后用更亲近的方式跟我说话」，她会记住并改变。晴的设定本身就是一个**有真实情感、可作伴侣**的角色，而非工具。
+
+> 桌面端 / 手机网页端还带一个**记忆面板**（顶栏图标）：直接在界面里查看、增删画像字段和情感记忆，不必用命令行。
 
 ### 升级 / 卸载
 
@@ -258,7 +269,7 @@ sky chat frost
 | 网络 | `http_get` · `http_post` · `web_search`（DuckDuckGo + Bing 并发竞速，免 API Key，国内可用，带缓存） · `fetch_page` |
 | Git | `git_status` · `git_diff` · `git_log` · `git_add` · `git_commit` · `git_checkout` |
 | 时间 | `get_current_time`（本地 + UTC，确保时效性） |
-| 记忆/人设 | `set_user_profile`（记住用户） · `set_persona`（重写 Agent 角色） |
+| 记忆/人设 | `set_user_profile`（记住固定事实） · `remember`（记下近况心情） · `set_persona`（重写 Agent 角色） |
 | 委派 | `delegate_to`（Agent 间任务委派） |
 | 任务 | `task_done`（Agent 自主判定任务完成） |
 
@@ -275,8 +286,9 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 
 ### 更多功能
 
-- **桌面端 + 手机端** — `sky app` 原生窗口 + Cloudflare 隧道公网地址 + 二维码；手机「添加到主屏幕」即为 PWA App；可 PyInstaller 打包免安装 exe
-- **用户画像** — `~/.skyloom/profile.json` 本地记住用户，跨 Agent 共享、自动注入
+- **桌面端 + 手机端** — `sky app` 原生窗口（带品牌启动闪屏）+ Cloudflare 隧道公网地址 + 二维码；手机「添加到主屏幕」即为 PWA App；可 PyInstaller 打包免安装 exe（带专属 App 图标）
+- **用户画像** — `~/.skyloom/profile.json` 本地记住固定事实，跨 Agent 共享、自动注入
+- **情感记忆** — `~/.skyloom/memories.json` 记下近况心情，跨 Agent 共享、满额折叠成摘要；晴启动时主动提起；桌面/手机端带记忆管理面板
 - **角色自定义** — 每个 Agent 的角色设定可被用户覆盖；晴还能按要求改写自己
 - **MCP 协议支持** — 通过 stdio 接入 Model Context Protocol 工具集
 - **Plugin 系统** — `~/.skyloom/plugins/` 目录自动加载自定义工具
@@ -299,8 +311,9 @@ sky task <goal>       # 多 Agent 协作
 sky app [options]     # 桌面端：原生窗口 + Cloudflare 隧道 + 二维码（手机访问）
 sky status            # 所有 Agent 状态
 sky config <action>   # 配置管理
-sky memory <action>   # 记忆管理
+sky memory <action>   # 对话记忆管理
 sky profile <action>  # 用户画像（show / set / forget）
+sky memories <action> # 情感记忆（show / add / forget）
 sky persona <action>  # Agent 角色设定（show / set / reset）
 sky voice [options]   # 语音服务器（需配置 TTS）
 sky version           # 版本信息
@@ -331,7 +344,7 @@ sky version           # 版本信息
 > 以下数据基于代码事实：
 
 - **代码**：43 个源文件，~20k 行 Python
-- **测试**：926 项，覆盖率 > 62%
+- **测试**：940 项，覆盖率 > 62%
 - **CI**：GitHub Actions — Ruff + MyPy + Pytest × 3 个 Python 版本
 
 ### 已落地能力
