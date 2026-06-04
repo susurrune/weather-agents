@@ -28,7 +28,7 @@ for pkg in ("litellm", "tiktoken", "tiktoken_ext"):
     hiddenimports += h
 
 hiddenimports += collect_submodules("weather_agents")
-hiddenimports += ["webview", "qrcode", "qrcode.image.svg", "aiohttp", "aiosqlite"]
+hiddenimports += ["webview", "qrcode", "qrcode.image.svg", "aiohttp", "aiosqlite", "psutil"]
 
 import os
 

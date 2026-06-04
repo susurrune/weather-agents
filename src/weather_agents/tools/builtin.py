@@ -2162,6 +2162,13 @@ def register_builtin_tools(registry: ToolRegistry | None = None) -> None:
     for tool in tools:
         reg.register(tool)
 
+    # Computer-operation tools (app launch, system diag, package mgmt, …) live
+    # in their own module to keep this file focused; register them here so they
+    # ride the same base registry every agent inherits.
+    from weather_agents.tools.computer import register_computer_tools
+
+    register_computer_tools(reg)
+
 
 async def close_http_client() -> None:
     """Close the shared httpx client. Called on shutdown to free connections."""
