@@ -9,7 +9,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/susurrune/skyloom/actions/workflows/ci.yml/badge.svg)](https://github.com/susurrune/skyloom/actions)
-[![Tests](https://img.shields.io/badge/tests-940_🌡️-8A2BE2)](https://github.com/susurrune/skyloom)
+[![Tests](https://img.shields.io/badge/tests-968_🌡️-8A2BE2)](https://github.com/susurrune/skyloom)
 [![Code style](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
 </div>
@@ -270,6 +270,8 @@ sky chat frost
 | Git | `git_status` · `git_diff` · `git_log` · `git_add` · `git_commit` · `git_checkout` |
 | 时间 | `get_current_time`（本地 + UTC，确保时效性） |
 | 记忆/人设 | `set_user_profile`（记住固定事实） · `remember`（记下近况心情） · `set_persona`（重写 Agent 角色） |
+| 电脑操作 | `launch_app` · `open_path` · `browser_open` · `system_info` · `system_diagnose` · `list_processes` · `kill_process` · `package_manager` · `service_control` |
+| MCP | `mcp_list_servers` · `mcp_add_server` · `mcp_remove_server` · `mcp_scaffold_server`（运行时接入/编写 MCP 集成） |
 | 委派 | `delegate_to`（Agent 间任务委派） |
 | 任务 | `task_done`（Agent 自主判定任务完成） |
 
@@ -288,6 +290,8 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 
 - **桌面端 + 手机端** — `sky app` 原生窗口（带品牌启动闪屏）+ Cloudflare 隧道公网地址 + 二维码；手机「添加到主屏幕」即为 PWA App；可 PyInstaller 打包免安装 exe（带专属 App 图标）
 - **用户画像** — `~/.skyloom/profile.json` 本地记住固定事实，跨 Agent 共享、自动注入
+- **电脑操作** — 启动应用、系统体检与故障修复、进程管理、软件安装/卸载/升级（winget/brew/apt 自动识别）、服务管控，跨平台
+- **MCP 自集成** — 运行时接入任意软件的 MCP（stdio+SSE）；`mcp_scaffold_server` 直接写一个新的 MCP server（纯 Python、零依赖），即连即用
 - **情感记忆** — `~/.skyloom/memories.json` 记下近况心情，跨 Agent 共享、满额折叠成摘要；晴启动时主动提起；桌面/手机端带记忆管理面板
 - **角色自定义** — 每个 Agent 的角色设定可被用户覆盖；晴还能按要求改写自己
 - **MCP 协议支持** — 通过 stdio 接入 Model Context Protocol 工具集
@@ -344,7 +348,7 @@ sky version           # 版本信息
 > 以下数据基于代码事实：
 
 - **代码**：43 个源文件，~20k 行 Python
-- **测试**：940 项，覆盖率 > 62%
+- **测试**：968 项，覆盖率 > 62%
 - **CI**：GitHub Actions — Ruff + MyPy + Pytest × 3 个 Python 版本
 
 ### 已落地能力
