@@ -12,4 +12,4 @@ import logging as _logging
 
 _logging.getLogger("LiteLLM").setLevel(_logging.ERROR)
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
