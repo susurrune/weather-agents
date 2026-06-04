@@ -3919,14 +3919,39 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
                         console.print("  [dim]cancelled[/dim]")
                         return
                 console.print()
-                console.print(f"  [bold]{target.display_name}[/bold]")
-                reply = await target.chat(refined_goal)
-                console.print(
-                    Padding(
-                        Markdown(_strip_hr(reply), code_theme=_CODE_THEME),
-                        pad=(0, 0, 0, 2),
-                    )
-                )
+                # Stream with a live spinner + tool-status display instead of a
+                # blocking chat() that prints just the agent name and then looks
+                # frozen for the whole (possibly 30-60s) generation. Mirrors the
+                # interactive REPL and the orchestration fallback so `sky task`
+                # gives the same "agent is working" feedback as a normal TUI.
+                from rich.live import Live as _Live
+
+                _t0 = time.monotonic()
+                _md = ""
+                _status = ""
+                _reasoning = ""
+                with _Live(
+                    _build_stream_display(target, "", ""),
+                    console=console,
+                    refresh_per_second=12,
+                    transient=False,
+                ) as _live:
+                    async for ev in target.chat_stream(refined_goal):
+                        et = ev["type"]
+                        if et == "content":
+                            _md += ev["text"]
+                            _live.update(_build_stream_display(target, _status, _md))
+                        elif et == "reasoning":
+                            _reasoning += ev["text"]
+                            preview = _reasoning[-80:].replace("\n", " ")
+                            _status = f"思考中：{preview}" if preview else "思考中…"
+                            _live.update(_build_stream_display(target, _status, _md))
+                        elif et == "tool_status":
+                            _status = ev["label"]
+                            _live.update(_build_stream_display(target, _status, _md))
+                        elif et == "done":
+                            break
+                    _live.update(_build_response_panel(target, _md, time.monotonic() - _t0))
                 return
 
         from weather_agents.core.factory import orchestrate_task
@@ -4033,7 +4058,10 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
                 on_task_start=_on_start,
                 on_task_done=_on_done,
                 on_planned=_on_planned,
-                on_tool_status=dashboard.on_tool_status if dashboard else None,
+                # Resolve dashboard at CALL time, not bind time: the dashboard is
+                # created later inside _on_planned, so binding now would freeze
+                # this to None and the live table would never show tool status.
+                on_tool_status=lambda label: dashboard.on_tool_status(label) if dashboard else None,
                 result_truncate=500,
             )
         )
