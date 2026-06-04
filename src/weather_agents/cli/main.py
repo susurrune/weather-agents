@@ -1463,6 +1463,7 @@ async def _interactive(agent_name: str | None = None) -> None:
     ws = getattr(ctx, "workspace_path", "")
     workspace_path = ws if isinstance(ws, str) else ""
     _print_welcome(model, workspace_path)
+    _print_recall(current)
 
     # One-time migration hint. When sky's own skills directory is empty
     # but the user already has Anthropic-format skills installed under
@@ -2304,6 +2305,28 @@ def _print_welcome(model: str, workspace_path: str = "") -> None:
         )
     )
     console.print()
+
+
+def _print_recall(agent_name: str) -> None:
+    """Companion touch: when 晴 (fair) opens with memories on file, surface the
+    most recent one as a gentle "上次我们聊到…" line. Deliberately NOT an LLM
+    call — it must be instant and free on every launch; the real follow-up
+    happens once the user speaks (the memories are already in her prompt)."""
+    if agent_name != "fair":
+        return
+    with contextlib.suppress(Exception):
+        from weather_agents.core.profile import load_memories
+
+        items = load_memories()
+        if not items:
+            return
+        last = str(items[-1].get("note", "")).strip()
+        if not last:
+            return
+        if len(last) > 48:
+            last = last[:47] + "…"
+        console.print(f"  [dim]☼ 晴还记得 ——[/dim] [italic]{last}[/italic]")
+        console.print()
 
 
 def _print_help(ctx) -> None:

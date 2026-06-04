@@ -87,6 +87,13 @@ class VoiceServer:
         self._app.router.add_get("/manifest.webmanifest", self._handle_manifest)
         self._app.router.add_get("/sw.js", self._handle_sw)
         self._app.router.add_get("/icon.svg", self._handle_icon)
+        # Profile + emotional-memory management panel (read/edit from the phone).
+        self._app.router.add_get("/api/profile", self._handle_get_profile)
+        self._app.router.add_post("/api/profile", self._handle_post_profile)
+        self._app.router.add_post("/api/profile/delete", self._handle_delete_profile)
+        self._app.router.add_get("/api/memories", self._handle_get_memories)
+        self._app.router.add_post("/api/memories", self._handle_post_memory)
+        self._app.router.add_post("/api/memories/delete", self._handle_delete_memories)
         self._app.router.add_get("/ws", self._handle_ws)
 
     @property
@@ -218,6 +225,80 @@ class VoiceServer:
             f"{circles}</svg>"
         )
         return web.Response(body=svg.encode("utf-8"), content_type="image/svg+xml")
+
+    # ── Profile + memory management API ──────────────────────────────────
+    # Lets the phone/web client read and edit the same local profile.json and
+    # memories.json the agents use, so memory management isn't CLI-only.
+
+    async def _handle_get_profile(self, _request: web.Request) -> web.Response:
+        from weather_agents.core import profile
+
+        return web.json_response({"profile": profile.load_profile()})
+
+    async def _handle_post_profile(self, request: web.Request) -> web.Response:
+        from weather_agents.core import profile
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        key = str(data.get("key", "")).strip()
+        value = str(data.get("value", ""))
+        if not key:
+            return web.json_response({"error": "key required"}, status=400)
+        profile.set_profile_field(key, value)
+        return web.json_response({"profile": profile.load_profile()})
+
+    async def _handle_delete_profile(self, request: web.Request) -> web.Response:
+        from weather_agents.core import profile
+
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        key = data.get("key")
+        profile.clear_profile_field(key if key else None)
+        return web.json_response({"profile": profile.load_profile()})
+
+    async def _handle_get_memories(self, _request: web.Request) -> web.Response:
+        from weather_agents.core import profile
+
+        return web.json_response({"memories": profile.load_memories()})
+
+    async def _handle_post_memory(self, request: web.Request) -> web.Response:
+        from weather_agents.core import profile
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        note = str(data.get("note", "")).strip()
+        if not note:
+            return web.json_response({"error": "note required"}, status=400)
+        profile.append_memory(note)
+        return web.json_response({"memories": profile.load_memories()})
+
+    async def _handle_delete_memories(self, request: web.Request) -> web.Response:
+        from weather_agents.core import profile
+
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        index = data.get("index")
+        if index is None:
+            profile.clear_memories()
+        else:
+            # Delete a single memory by position (newest-last ordering).
+            items = profile.load_memories()
+            try:
+                idx = int(index)
+            except (TypeError, ValueError):
+                return web.json_response({"error": "bad index"}, status=400)
+            if 0 <= idx < len(items):
+                items.pop(idx)
+                profile._write_memories(items)
+        return web.json_response({"memories": profile.load_memories()})
 
     async def _activate_session(self, agent_name: str, session_id: str) -> None:
         """Ensure ``agent_name``'s memory is positioned on ``session_id``.

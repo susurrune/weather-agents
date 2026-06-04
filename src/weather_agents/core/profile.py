@@ -28,6 +28,20 @@ _VALID_AGENTS = {"fog", "rain", "frost", "snow", "dew", "fair"}
 # context decays — last month's mood matters less than this week's — and an
 # unbounded list would bloat every system prompt. 40 ≈ a few weeks of notes.
 _MEMORY_CAP = 40
+# When over cap, fold this many of the oldest notes into ONE digest entry rather
+# than dropping them outright, so long-term gist survives ("早些时候你提过…").
+_FOLD_BATCH = 8
+
+# Pluggable summarizer. The agent layer (which has LLM access) may install an
+# LLM-backed one via set_memory_summarizer() for genuinely smart digests; until
+# then _digest() gives a deterministic, dependency-free fallback.
+_summarizer = None
+
+
+def set_memory_summarizer(fn) -> None:
+    """Install a callable ``list[str] -> str`` used to compress old memories."""
+    global _summarizer
+    _summarizer = fn
 
 
 def _profile_path():
@@ -150,9 +164,55 @@ def append_memory(note: str) -> bool:
                 return True
     items.append({"ts": datetime.now().strftime("%Y-%m-%d"), "note": note})
     if len(items) > _MEMORY_CAP:
-        items = items[-_MEMORY_CAP:]
+        items = _fold_oldest(items)
     _write_memories(items)
     return True
+
+
+def _digest(notes: list[str]) -> str:
+    """Deterministic fallback summary: join unique notes, capped in length.
+
+    Strips a prior "早些时候：" prefix so repeated folds don't nest the marker."""
+    seen: list[str] = []
+    for n in notes:
+        n = n.strip()
+        if n.startswith("早些时候："):
+            n = n[len("早些时候：") :]
+        for part in n.split("；"):
+            part = part.strip()
+            if part and part not in seen:
+                seen.append(part)
+    joined = "；".join(seen)
+    if len(joined) > 180:
+        joined = joined[:179] + "…"
+    return "早些时候：" + joined
+
+
+def _summarize_notes(notes: list[str]) -> str:
+    if _summarizer is not None:
+        try:
+            out = _summarizer(notes)
+            if out and str(out).strip():
+                return str(out).strip()
+        except Exception:
+            pass
+    return _digest(notes)
+
+
+def _fold_oldest(items: list[dict]) -> list[dict]:
+    """Compress the oldest overflow into a single digest entry, preserving gist
+    instead of dropping it. Keeps the list at or below ``_MEMORY_CAP``."""
+    fold_n = (len(items) - _MEMORY_CAP) + _FOLD_BATCH
+    fold_n = min(fold_n, len(items) - 1)  # never fold the just-added newest note
+    if fold_n <= 0:
+        return items[-_MEMORY_CAP:]
+    old, rest = items[:fold_n], items[fold_n:]
+    digest = {
+        "ts": old[-1].get("ts", datetime.now().strftime("%Y-%m-%d")),
+        "note": _summarize_notes([str(m.get("note", "")) for m in old]),
+        "summary": True,
+    }
+    return [digest, *rest]
 
 
 def _write_memories(items: list[dict]) -> None:

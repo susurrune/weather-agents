@@ -312,6 +312,74 @@ def test_strip_markdown(md, expected):
     assert _strip_markdown(md) == expected, f"failed for: {md!r}"
 
 
+# ── Memory / profile API ──
+
+
+class _JsonRequest:
+    """Minimal stand-in for aiohttp Request with a JSON body."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def json(self):
+        if self._payload is _RAISE:
+            raise ValueError("no body")
+        return self._payload
+
+
+_RAISE = object()
+
+
+@pytest.fixture
+def _tmp_cfg(tmp_path, monkeypatch):
+    from weather_agents.core import config
+
+    monkeypatch.setattr(config, "USER_CONFIG_DIR", tmp_path / ".skyloom")
+
+
+@pytest.mark.asyncio
+async def test_profile_api_roundtrip(voice_server, _tmp_cfg):
+    # Empty initially.
+    resp = await voice_server._handle_get_profile(_make_request("GET", "/api/profile"))
+    assert json.loads(resp.body)["profile"] == {}
+    # Add a field.
+    resp = await voice_server._handle_post_profile(_JsonRequest({"key": "称呼", "value": "阿K"}))
+    assert json.loads(resp.body)["profile"] == {"称呼": "阿K"}
+    # Missing key → 400.
+    resp = await voice_server._handle_post_profile(_JsonRequest({"value": "x"}))
+    assert resp.status == 400
+    # Delete the field.
+    resp = await voice_server._handle_delete_profile(_JsonRequest({"key": "称呼"}))
+    assert json.loads(resp.body)["profile"] == {}
+
+
+@pytest.mark.asyncio
+async def test_memories_api_roundtrip(voice_server, _tmp_cfg):
+    resp = await voice_server._handle_get_memories(_make_request("GET", "/api/memories"))
+    assert json.loads(resp.body)["memories"] == []
+    # Add two.
+    await voice_server._handle_post_memory(_JsonRequest({"note": "在准备考试"}))
+    resp = await voice_server._handle_post_memory(_JsonRequest({"note": "养了只猫"}))
+    mems = json.loads(resp.body)["memories"]
+    assert [m["note"] for m in mems] == ["在准备考试", "养了只猫"]
+    # Empty note → 400.
+    resp = await voice_server._handle_post_memory(_JsonRequest({"note": "  "}))
+    assert resp.status == 400
+    # Delete by index (newest-last → index 0 is the oldest).
+    resp = await voice_server._handle_delete_memories(_JsonRequest({"index": 0}))
+    mems = json.loads(resp.body)["memories"]
+    assert [m["note"] for m in mems] == ["养了只猫"]
+    # Delete all.
+    resp = await voice_server._handle_delete_memories(_JsonRequest({}))
+    assert json.loads(resp.body)["memories"] == []
+
+
+@pytest.mark.asyncio
+async def test_memory_api_bad_json(voice_server, _tmp_cfg):
+    resp = await voice_server._handle_post_memory(_JsonRequest(_RAISE))
+    assert resp.status == 400
+
+
 # ── Helpers ──
 
 

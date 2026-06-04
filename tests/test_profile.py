@@ -67,14 +67,39 @@ class TestMemories:
         assert profile.append_memory("   ") is False
         assert profile.load_memories() == []
 
-    def test_cap_keeps_recent(self):
-        for i in range(profile._MEMORY_CAP + 10):
+    def test_cap_folds_oldest_into_digest(self):
+        total = profile._MEMORY_CAP + 10
+        for i in range(total):
             profile.append_memory(f"note {i}")
         items = profile.load_memories()
-        assert len(items) == profile._MEMORY_CAP
-        # Oldest were dropped; newest retained.
-        assert items[-1]["note"] == f"note {profile._MEMORY_CAP + 9}"
-        assert items[0]["note"] == "note 10"
+        # Stays within cap.
+        assert len(items) <= profile._MEMORY_CAP
+        # Newest is always retained verbatim.
+        assert items[-1]["note"] == f"note {total - 1}"
+        # The oldest overflow was folded into a digest, not dropped — note 0's
+        # gist survives inside a summary entry rather than vanishing.
+        assert items[0].get("summary") is True
+        assert "note 0" in items[0]["note"]
+
+    def test_summarizer_hook_used_when_set(self):
+        profile.set_memory_summarizer(lambda notes: f"摘要({len(notes)}条)")
+        try:
+            for i in range(profile._MEMORY_CAP + 5):
+                profile.append_memory(f"事 {i}")
+            items = profile.load_memories()
+            assert items[0].get("summary") is True
+            assert items[0]["note"].startswith("摘要(")
+        finally:
+            profile.set_memory_summarizer(None)
+
+    def test_digest_does_not_nest_prefix(self):
+        # Two rounds of folding must not produce "早些时候：早些时候：…".
+        for i in range(profile._MEMORY_CAP * 2 + 20):
+            profile.append_memory(f"x{i}")
+        items = profile.load_memories()
+        summaries = [m for m in items if m.get("summary")]
+        for s in summaries:
+            assert s["note"].count("早些时候：") == 1
 
     def test_format_limit(self):
         for i in range(20):
