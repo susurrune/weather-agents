@@ -14,7 +14,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      # Pin ruff so a new release can't break CI on an unchanged codebase
+      # (an unpinned `pip install ruff` silently upgraded and reformatted before).
+      - run: pip install ruff==0.15.15
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
 

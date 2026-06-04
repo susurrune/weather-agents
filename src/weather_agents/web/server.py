@@ -210,12 +210,8 @@ class VoiceServer:
             (15, 50, "#3a7a32"),  # dew   — green
             (12, 32, "#5a7e8a"),  # mist  — fog echo
         ]
-        rays = "".join(
-            f'<line x1="32" y1="32" x2="{x}" y2="{y}"/>' for x, y, _ in dots
-        )
-        circles = "".join(
-            f'<circle cx="{x}" cy="{y}" r="3.4" fill="{c}"/>' for x, y, c in dots
-        )
+        rays = "".join(f'<line x1="32" y1="32" x2="{x}" y2="{y}"/>' for x, y, _ in dots)
+        circles = "".join(f'<circle cx="{x}" cy="{y}" r="3.4" fill="{c}"/>' for x, y, c in dots)
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
             '<rect width="64" height="64" rx="14" fill="#2a1f17"/>'
