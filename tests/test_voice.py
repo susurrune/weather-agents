@@ -74,6 +74,20 @@ async def test_index_returns_html(voice_server):
     assert "text/html" in resp.content_type
 
 
+@pytest.mark.asyncio
+async def test_icon_is_valid_svg_with_agent_dots(voice_server):
+    """GET /icon.svg returns the Skyloom mark (sun + six agent dots) as SVG."""
+    request = _make_request("GET", "/icon.svg")
+    resp = await voice_server._handle_icon(request)
+    assert resp.status == 200
+    assert resp.content_type == "image/svg+xml"
+    svg = resp.body.decode("utf-8")
+    assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>")
+    # central sun + six agent dots = at least seven circles
+    assert svg.count("<circle") >= 7
+    assert "#d4a056" in svg  # amber sun
+
+
 # ── _handle_speech (core logic, tested with mock WS) ──
 
 

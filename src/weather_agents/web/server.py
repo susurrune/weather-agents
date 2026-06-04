@@ -191,18 +191,31 @@ class VoiceServer:
         )
 
     async def _handle_icon(self, _request: web.Request) -> web.Response:
-        """App icon for the manifest / home screen — the central sun mark on a
-        dark rounded tile (matches the favicon family)."""
+        """App icon for the manifest / home screen. Matches the desktop bundle
+        icon (packaging/generate_icons.py): a dark rounded tile, a central amber
+        sun (= fair), and six coloured agent dots around it joined by faint rays."""
+        # Agent dots: (cx, cy, colour) — fog/rain/frost/snow/dew around the sun.
+        dots = [
+            (14, 15, "#5a7e8a"),  # fog   — muted teal
+            (50, 16, "#3a5298"),  # rain  — blue
+            (52, 32, "#2a7088"),  # frost — cyan
+            (49, 50, "#4a4a80"),  # snow  — periwinkle
+            (15, 50, "#3a7a32"),  # dew   — green
+            (12, 32, "#5a7e8a"),  # mist  — fog echo
+        ]
+        rays = "".join(
+            f'<line x1="32" y1="32" x2="{x}" y2="{y}"/>' for x, y, _ in dots
+        )
+        circles = "".join(
+            f'<circle cx="{x}" cy="{y}" r="3.4" fill="{c}"/>' for x, y, c in dots
+        )
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
             '<rect width="64" height="64" rx="14" fill="#2a1f17"/>'
-            '<circle cx="32" cy="32" r="12" fill="#d4a056"/>'
-            '<g stroke="#d4a056" stroke-width="2.5" stroke-linecap="round">'
-            '<line x1="32" y1="8" x2="32" y2="16"/><line x1="32" y1="48" x2="32" y2="56"/>'
-            '<line x1="8" y1="32" x2="16" y2="32"/><line x1="48" y1="32" x2="56" y2="32"/>'
-            '<line x1="15" y1="15" x2="21" y2="21"/><line x1="43" y1="43" x2="49" y2="49"/>'
-            '<line x1="49" y1="15" x2="43" y2="21"/><line x1="21" y1="43" x2="15" y2="49"/>'
-            "</g></svg>"
+            f'<g stroke="#d4a056" stroke-width="1" opacity="0.35">{rays}</g>'
+            '<circle cx="32" cy="32" r="11" fill="#d4a056"/>'
+            '<circle cx="32" cy="32" r="6" fill="#f0be6e"/>'
+            f"{circles}</svg>"
         )
         return web.Response(body=svg.encode("utf-8"), content_type="image/svg+xml")
 
