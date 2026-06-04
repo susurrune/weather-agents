@@ -119,22 +119,48 @@ def load_memories() -> list[dict]:
         return []
 
 
+def _norm(text: str) -> str:
+    """Normalize for dedup: lowercase, drop whitespace + common punctuation so
+    "养了只猫，叫橘子" and "养了只猫叫橘子。" collapse to the same key."""
+    return "".join(
+        c for c in text.lower() if not c.isspace() and c not in "，。,.、!！?？~…「」\"'"
+    )
+
+
 def append_memory(note: str) -> bool:
     """Append a timestamped memory. Returns False for empty notes. Trims to the
-    most recent ``_MEMORY_CAP`` entries so the prompt block stays bounded."""
+    most recent ``_MEMORY_CAP`` entries so the prompt block stays bounded.
+
+    Skips exact duplicates: an LLM re-saving the same fact every turn would
+    otherwise flood the store and the prompt. If a memory normalizes to the same
+    key (ignoring case/whitespace/punctuation), we refresh its date and keep the
+    longer wording instead of appending a second copy."""
     note = (note or "").strip()
     if not note:
         return False
     items = load_memories()
+    key = _norm(note)
+    if key:
+        for m in items:
+            if _norm(str(m.get("note", ""))) == key:
+                m["ts"] = datetime.now().strftime("%Y-%m-%d")  # refresh recency
+                if len(note) > len(str(m.get("note", ""))):
+                    m["note"] = note  # keep the richer phrasing
+                _write_memories(items)
+                return True
     items.append({"ts": datetime.now().strftime("%Y-%m-%d"), "note": note})
     if len(items) > _MEMORY_CAP:
         items = items[-_MEMORY_CAP:]
+    _write_memories(items)
+    return True
+
+
+def _write_memories(items: list[dict]) -> None:
     p = _memories_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(p)
-    return True
 
 
 def clear_memories() -> None:

@@ -89,6 +89,16 @@ class TestMemories:
         profile.clear_memories()
         assert profile.load_memories() == []
 
+    def test_exact_duplicates_collapse(self):
+        assert profile.append_memory("养了只猫，叫橘子") is True
+        # Same fact, only punctuation/whitespace differs → refreshed, not dup'd.
+        assert profile.append_memory("养了只猫 叫橘子。") is True
+        items = profile.load_memories()
+        assert len(items) == 1
+        # A genuinely different memory is still appended.
+        assert profile.append_memory("最近在搬家") is True
+        assert len(profile.load_memories()) == 2
+
     def test_corrupt_file_is_safe(self):
         p = config.USER_CONFIG_DIR / "memories.json"
         p.parent.mkdir(parents=True, exist_ok=True)
