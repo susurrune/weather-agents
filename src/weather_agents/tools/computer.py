@@ -69,11 +69,31 @@ async def _launch_app(name: str = "", args: str = "", **kwargs) -> str:
     name = (name or "").strip()
     if not name:
         return "Error: app name is required"
-    extra = args.split() if args else []
+    # Reject cmd.exe / shell metacharacters — the Windows path uses cmd /c start
+    # which would interpret &, |, ^, <, >, % as command separators/operators
+    # even when passed via argv list (create_subprocess_exec joins them into a
+    # command-line string that cmd.exe then re-parses).
+    for ch in name:
+        if ch in "&|<>^%\n\r\t":
+            return f"Error: unsafe character {ch!r} in app name"
+    import shlex
+
+    extra = shlex.split(args) if args else []
     try:
         if _SYSTEM == "Windows":
-            # `start` resolves App Paths, PATH, and registered names. The empty
-            # "" is start's title argument (required when the target is quoted).
+            # Resolve via App Paths / PATH first, falling back to start.
+            exe = shutil.which(name)
+            if exe:
+                proc = await asyncio.create_subprocess_exec(
+                    exe,
+                    *extra,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return f"已启动 {name} (pid {proc.pid})"
+            # Fallback: cmd /c start — only for names shutil.which couldn't
+            # resolve (e.g. "Microsoft Edge" registered under App Paths).
             rc, out, err = await _run(["cmd", "/c", "start", "", name, *extra])
         elif _SYSTEM == "Darwin":
             rc, out, err = await _run(["open", "-a", name, *extra])
@@ -85,6 +105,7 @@ async def _launch_app(name: str = "", args: str = "", **kwargs) -> str:
                     *extra,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    start_new_session=True,
                 )
                 return f"已启动 {name} (pid {proc.pid})"
             rc, out, err = await _run(["gtk-launch", name, *extra])
@@ -326,6 +347,11 @@ async def _kill_process(target: str = "", **kwargs) -> str:
     target = (target or "").strip()
     if not target:
         return "Error: target (pid or name) is required"
+    # Reject shell/metacharacter injection — pkill uses regex by default, and
+    # unescaped '.' would match ANY process.
+    for ch in target:
+        if ch in "&|;`$(){}[]<>!?*+.^\\\"'%~\n\r\t":
+            return f"Error: unsafe character {ch!r} in target"
     try:
         import psutil
     except ImportError:
@@ -334,7 +360,7 @@ async def _kill_process(target: str = "", **kwargs) -> str:
             rc, out, err = await _run(["taskkill", "/F", *arg])
         else:
             rc, out, err = (
-                await _run(["pkill", "-9", target])
+                await _run(["pkill", "-9", "--", target])
                 if not target.isdigit()
                 else await _run(["kill", "-9", target])
             )

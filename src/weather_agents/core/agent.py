@@ -1976,7 +1976,24 @@ class BaseAgent:
                     result = await p["tool"].execute(agent_name=self.name, **p["tool_args"])
                     return {"tc": p["tc"], "tool_name": p["tool_name"], "result": result}
 
-                outcomes = await asyncio.gather(*[_exec_one(p) for p in parsed])
+                # return_exceptions=True: a single failing tool must not lose the
+                # results of other tools — gather would otherwise raise on the first
+                # exception, skipping Phase D and leaving dangling tool_call_ids.
+                outcomes_raw = await asyncio.gather(
+                    *[_exec_one(p) for p in parsed], return_exceptions=True
+                )
+                outcomes: list[dict] = []
+                for i, o in enumerate(outcomes_raw):
+                    if isinstance(o, BaseException):
+                        outcomes.append(
+                            {
+                                "tc": parsed[i]["tc"],
+                                "tool_name": parsed[i]["tool_name"],
+                                "result": f"Error: tool crashed — {o}",
+                            }
+                        )
+                    else:
+                        outcomes.append(o)
 
                 # Phase D: write results to memory in original order.
                 for o in outcomes:
