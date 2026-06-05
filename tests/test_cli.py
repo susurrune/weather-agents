@@ -1103,23 +1103,23 @@ class TestArrowPickFromList:
         return iter(keys)
 
     def test_enter_picks_first_item(self):
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("a", "Alpha"), ("b", "Beta"), ("c", "Gamma")]
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key", side_effect=["enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["enter"]),
         ):
             pick = _arrow_pick_from_list(items, "Pick one")
         assert pick == "a"
 
     def test_down_then_enter_picks_second(self):
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("a", "Alpha"), ("b", "Beta")]
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key", side_effect=["down", "enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["down", "enter"]),
         ):
             pick = _arrow_pick_from_list(items, "Pick")
         assert pick == "b"
@@ -1127,24 +1127,24 @@ class TestArrowPickFromList:
     def test_up_clamps_at_top(self):
         """Up at position 0 must not wrap around — the user expects to
         stay put, not jump to the bottom."""
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("a", "Alpha"), ("b", "Beta")]
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key", side_effect=["up", "up", "enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["up", "up", "enter"]),
         ):
             pick = _arrow_pick_from_list(items, "Pick")
         assert pick == "a"
 
     def test_down_clamps_at_bottom(self):
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("a", "Alpha"), ("b", "Beta")]
         with (
             self._stub_tty(),
             patch(
-                "weather_agents.cli.main._get_key",
+                "weather_agents.cli.pickers.get_key",
                 side_effect=["down", "down", "down", "enter"],
             ),
         ):
@@ -1152,12 +1152,12 @@ class TestArrowPickFromList:
         assert pick == "b"
 
     def test_esc_cancels(self):
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("a", "Alpha"), ("b", "Beta")]
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key", side_effect=["esc"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["esc"]),
         ):
             pick = _arrow_pick_from_list(items, "Pick")
         assert pick is None
@@ -1166,23 +1166,23 @@ class TestArrowPickFromList:
         """Typing letters narrows the view; cursor jumps back to 0 of
         the filtered list. With 'b' typed, the only match is Beta, so
         Enter picks it without needing Down first."""
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("alpha", "Alpha"), ("beta", "Beta"), ("gamma", "Gamma")]
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key", side_effect=["b", "enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["b", "enter"]),
         ):
             pick = _arrow_pick_from_list(items, "Pick")
         assert pick == "beta"
 
     def test_filter_case_insensitive(self):
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("Alpha", "Alpha"), ("Beta", "Beta")]
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key", side_effect=["B", "enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["B", "enter"]),
         ):
             pick = _arrow_pick_from_list(items, "Pick")
         assert pick == "Beta"
@@ -1190,14 +1190,14 @@ class TestArrowPickFromList:
     def test_backspace_pops_filter(self):
         """Backspace must remove the last filter character so the user
         can recover from a typo without escaping out and restarting."""
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("alpha", "Alpha"), ("beta", "Beta")]
         # Type 'z' (no match) → backspace → list restored → enter on first
         with (
             self._stub_tty(),
             patch(
-                "weather_agents.cli.main._get_key",
+                "weather_agents.cli.pickers.get_key",
                 side_effect=["z", "backspace", "enter"],
             ),
         ):
@@ -1209,13 +1209,13 @@ class TestArrowPickFromList:
         (would have to invent one). The user has to either clear the
         filter (backspace) or cancel (esc). We assert by feeding Enter
         first (no-op) then Esc — final result is cancel."""
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("alpha", "Alpha")]
         with (
             self._stub_tty(),
             patch(
-                "weather_agents.cli.main._get_key",
+                "weather_agents.cli.pickers.get_key",
                 side_effect=["z", "enter", "esc"],
             ),
         ):
@@ -1225,11 +1225,11 @@ class TestArrowPickFromList:
     def test_empty_items_returns_none_immediately(self):
         """No items → no picker UI, no input read. The handler can
         decide whether to print a 'no skills available' message."""
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key") as get_key,
+            patch("weather_agents.cli.pickers.get_key") as get_key,
         ):
             pick = _arrow_pick_from_list([], "Pick")
         assert pick is None
@@ -1238,12 +1238,12 @@ class TestArrowPickFromList:
     def test_non_tty_short_circuits(self):
         """Non-TTY (piped / test without stub) must return None so the
         slash-command handler can fall back to its numeric path."""
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("a", "Alpha")]
         with (
             patch("weather_agents.cli.main.sys.stdin.isatty", return_value=False),
-            patch("weather_agents.cli.main._get_key") as get_key,
+            patch("weather_agents.cli.pickers.get_key") as get_key,
         ):
             pick = _arrow_pick_from_list(items, "Pick")
         assert pick is None
@@ -1254,12 +1254,12 @@ class TestArrowPickFromList:
         marked differently. We can't easily snapshot Rich's Live output
         in a unit test, so we just verify the picker accepts the arg
         and still picks correctly."""
-        from weather_agents.cli.main import _arrow_pick_from_list
+        from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 
         items = [("a", "Alpha"), ("b", "Beta")]
         with (
             self._stub_tty(),
-            patch("weather_agents.cli.main._get_key", side_effect=["enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["enter"]),
         ):
             pick = _arrow_pick_from_list(items, "Pick", active_keys={"a"})
         assert pick == "a"
@@ -1343,7 +1343,7 @@ class TestArrowPickSession:
 
         with (
             patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
-            patch("weather_agents.cli.main._get_key", side_effect=["enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["enter"]),
             patch("weather_agents.cli.main.console.print"),
         ):
             await _arrow_pick_session(agent, action="load")
@@ -1366,7 +1366,7 @@ class TestArrowPickSession:
 
         with (
             patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
-            patch("weather_agents.cli.main._get_key", side_effect=["down", "enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["down", "enter"]),
             patch("weather_agents.cli.main.console.print"),
         ):
             await _arrow_pick_session(agent, action="delete")
@@ -1391,7 +1391,7 @@ class TestArrowPickSession:
 
         with (
             patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
-            patch("weather_agents.cli.main._get_key", side_effect=["enter"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["enter"]),
             patch("weather_agents.cli.main.console.print"),
         ):
             await _arrow_pick_session(agent, action="delete")
@@ -1408,7 +1408,7 @@ class TestArrowPickSession:
 
         with (
             patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
-            patch("weather_agents.cli.main._get_key") as get_key,
+            patch("weather_agents.cli.pickers.get_key") as get_key,
             patch("weather_agents.cli.main.console.print"),
         ):
             await _arrow_pick_session(agent, action="load")
@@ -1432,7 +1432,7 @@ class TestArrowPickSession:
 
         with (
             patch("weather_agents.cli.main.sys.stdin.isatty", return_value=True),
-            patch("weather_agents.cli.main._get_key", side_effect=["esc"]),
+            patch("weather_agents.cli.pickers.get_key", side_effect=["esc"]),
             patch("weather_agents.cli.main.console.print"),
         ):
             await _arrow_pick_session(agent, action="load")
@@ -1538,7 +1538,7 @@ class TestEscPollerCIRobustness:
             _patch("weather_agents.cli.main.console.input", side_effect=["hi", "/quit"]),
             # Simulate CI: every call to _get_key raises UnsupportedOperation
             _patch(
-                "weather_agents.cli.main._get_key",
+                "weather_agents.cli.pickers.get_key",
                 side_effect=io.UnsupportedOperation("no fileno"),
             ),
             _patch("weather_agents.cli.main._poll_esc", side_effect=OSError("no console")),
