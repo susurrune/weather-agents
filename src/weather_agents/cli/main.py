@@ -167,8 +167,8 @@ _input_history: list[str] = []
 _history_idx: int = 0
 
 app = typer.Typer(name="sky", help="Skyloom CLI", no_args_is_help=False)
-voice_app = typer.Typer(help="Voice chat server and TTS voice management")
-app.add_typer(voice_app, name="voice", help="Voice chat server and TTS voice management")
+web_app = typer.Typer(help="Web chat server and TTS voice management")
+app.add_typer(web_app, name="web", help="Web chat server and TTS voice management")
 # Shared singleton console (see cli/console.py) — kept importable as
 # ``weather_agents.cli.main.console`` for backwards compat (tests patch it here).
 console = _shared_console
@@ -3664,7 +3664,7 @@ def persona(
         console.print(f"  [red]未知操作: {action} (show / set / reset)[/red]")
 
 
-@voice_app.callback(invoke_without_command=True)
+@web_app.callback(invoke_without_command=True)
 def voice(
     ctx: typer.Context,
     host: str = typer.Option(
@@ -3723,7 +3723,7 @@ def voice(
     asyncio.run(_run_voice_server(host, port, agent, cert_file, key_file, tunnel=tunnel))
 
 
-@voice_app.command("list")
+@web_app.command("list")
 def voice_list() -> None:
     """List available TTS voices."""
     from weather_agents.web.tts import VOICE_CATALOG
@@ -3742,19 +3742,19 @@ def voice_list() -> None:
     console.print(tbl)
     current = load_config().tts.voice_type
     console.print(f"\n  当前音色: [cyan]{current}[/cyan]")
-    console.print("  [dim]使用 [cyan]sky voice select <名称>[/cyan] 切换音色[/dim]")
+    console.print("  [dim]使用 [cyan]sky web select <名称>[/cyan] 切换音色[/dim]")
 
 
-@voice_app.command("select")
+@web_app.command("select")
 def voice_select(
     name: str = typer.Argument(..., help="音色名称 (如 sajiaoxuemei, uranus)"),
 ) -> None:
-    """Select a TTS voice by name (use 'sky voice list' to see available voices)."""
+    """Select a TTS voice by name (use 'sky web list' to see available voices)."""
     from weather_agents.web.tts import get_voice_by_key
 
     entry = get_voice_by_key(name)
     if not entry:
-        console.print(f"[red]未知音色: {name}. 使用 sky voice list 查看可用音色[/red]")
+        console.print(f"[red]未知音色: {name}. 使用 sky web list 查看可用音色[/red]")
         raise typer.Exit(1)
     _save_user_cfg({"tts": {"voice_type": entry["voice_type"]}})
     console.print(f"[green]已切换音色至: {entry['name']} ({entry['desc']})[/green]")

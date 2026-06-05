@@ -137,20 +137,20 @@ $env:DOUBAO_TTS_API_KEY = "你的火山引擎APIKey"
 sky config set tts.api_key 你的火山引擎APIKey
 
 # 查看可用音色
-sky voice list
+sky web list
 
 # 切换音色
-sky voice select uranus    # 乌拉努斯 - 大气知性女声
-sky voice select cancan    # 灿灿 - 活力甜美少女音
-sky voice select xiaohe    # 小河 - 温柔自然女声
+sky web select uranus    # 乌拉努斯 - 大气知性女声
+sky web select cancan    # 灿灿 - 活力甜美少女音
+sky web select xiaohe    # 小河 - 温柔自然女声
 
 # 启动语音服务器
-sky voice
+sky web
 ```
 
 #### 同一 Wi-Fi 下用手机访问
 
-`sky voice` 默认绑 `0.0.0.0`，检测到内网 IP 会自动生成自签证书启用 HTTPS（浏览器在非 localhost 下访问麦克风强制要求 HTTPS）。启动后控制台会列出 `https://<内网 IP>:8765`，手机连同一 Wi-Fi 直接打开即可（首次会提示自签证书警告，点继续）。
+`sky web` 默认绑 `0.0.0.0`，检测到内网 IP 会自动生成自签证书启用 HTTPS（浏览器在非 localhost 下访问麦克风强制要求 HTTPS）。启动后控制台会列出 `https://<内网 IP>:8765`，手机连同一 Wi-Fi 直接打开即可（首次会提示自签证书警告，点继续）。
 
 #### 跨网络访问（cloudflared / ngrok / nginx）
 
@@ -158,13 +158,13 @@ sky voice
 
 ```bash
 # 终端 A：本地起 HTTP 服务（loopback 绑定会跳过自动 HTTPS，避免回源 TLS 握手失败）
-sky voice --host 127.0.0.1 --port 8765
+sky web --host 127.0.0.1 --port 8765
 
 # 终端 B：起 Cloudflare Quick Tunnel，输出形如 https://xxx.trycloudflare.com
 cloudflared tunnel --url http://localhost:8765
 ```
 
-任何反向代理（nginx、Caddy、ngrok）都适用同样的模式——`--host 127.0.0.1` 让 sky voice 走纯 HTTP，由代理那侧负责对外的 HTTPS 证书。
+任何反向代理（nginx、Caddy、ngrok）都适用同样的模式——`--host 127.0.0.1` 让 sky web 走纯 HTTP，由代理那侧负责对外的 HTTPS 证书。
 
 ### 桌面端 & 手机端
 
@@ -172,13 +172,13 @@ cloudflared tunnel --url http://localhost:8765
 
 ```bash
 pip install qrcode                # 二维码所需的可选依赖
-sky voice --tunnel                # 语音聊天 + Cloudflare 公网网址 + 二维码
+sky web --tunnel                # 语音聊天 + Cloudflare 公网网址 + 二维码
 ```
 
-`sky voice --tunnel` 做三件事：① 在本地启动语音 WebSocket 服务器；② 开一条 **Cloudflare Quick Tunnel**（需 `cloudflared`，无需账号），拿到 `https://xxx.trycloudflare.com` 公网地址；③ 在终端打印**二维码**。手机扫码或输入网址即可语音对话——Cloudflare 的 HTTPS 边缘顺带解决了手机麦克风权限。
+`sky web --tunnel` 做三件事：① 在本地启动语音 WebSocket 服务器；② 开一条 **Cloudflare Quick Tunnel**（需 `cloudflared`，无需账号），拿到 `https://xxx.trycloudflare.com` 公网地址；③ 在终端打印**二维码**。手机扫码或输入网址即可语音对话——Cloudflare 的 HTTPS 边缘顺带解决了手机麦克风权限。
 
 - **手机端 PWA**：手机浏览器打开后「添加到主屏幕」，即得一个全屏、带图标、类原生的 App。
-- `sky voice` 默认绑定 `0.0.0.0:8765`，参数：`--tunnel`（公网）、`-a <agent>`、`-p <port>`、`-H <host>`。
+- `sky web` 默认绑定 `0.0.0.0:8765`，参数：`--tunnel`（公网）、`-a <agent>`、`-p <port>`、`-H <host>`。
 - 想要免安装 `.exe`：见 [`packaging/`](packaging/)（PyInstaller 一键打包）。
 
 ### 用户画像 & 角色自定义
@@ -312,14 +312,14 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 sky init              # 交互式配置向导
 sky chat [agent] [msg] # 对话（默认由 cli.default_agent 指定，默认 fog）
 sky task <goal>       # 多 Agent 协作
-sky voice [options]   # 语音聊天 + 可选 --tunnel 公网二维码（手机访问）
+sky web [options]   # 语音聊天 + 可选 --tunnel 公网二维码（手机访问）
 sky status            # 所有 Agent 状态
 sky config <action>   # 配置管理
 sky memory <action>   # 对话记忆管理
 sky profile <action>  # 用户画像（show / set / forget）
 sky memories <action> # 情感记忆（show / add / forget）
 sky persona <action>  # Agent 角色设定（show / set / reset）
-sky voice [options]   # 语音服务器（需配置 TTS）
+sky web [options]   # 语音服务器（需配置 TTS）
 sky version           # 版本信息
 ```
 
@@ -364,7 +364,7 @@ sky version           # 版本信息
 | 多 Provider LLM（OpenAI/Anthropic/DeepSeek/Ollama） | ✅ 完成 |
 | 会话管理 + Session Resume | ✅ 完成 |
 | 语音聊天（Doubao TTS，支持环境变量一键配置） | ✅ 完成 |
-| 语音端 `sky voice --tunnel`（Cloudflare 隧道 + 公网二维码） | ✅ 完成 |
+| 语音端 `sky web --tunnel`（Cloudflare 隧道 + 公网二维码） | ✅ 完成 |
 | 手机端 PWA（添加到主屏幕）+ PyInstaller 免安装 exe | ✅ 完成 |
 | 用户画像（本地、跨 Agent、自动注入） | ✅ 完成 |
 | 角色自定义（用户/Agent 自身可重写人设） | ✅ 完成 |

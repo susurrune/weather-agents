@@ -30,7 +30,7 @@ src/weather_agents/
 │   └── mode.py       #   auto / plan 模式状态
 ├── web/              # 入口层：语音/PWA
 │   ├── server.py     #   aiohttp WebSocket 语音服务 + REST（画像/记忆 API）
-│   ├── tunnel.py     #   Cloudflare Quick Tunnel（sky voice --tunnel 公网访问）
+│   ├── tunnel.py     #   Cloudflare Quick Tunnel（sky web --tunnel 公网访问）
 │   ├── tts.py        #   Doubao TTS（HTTP + WebSocket）
 │   └── certs.py      #   自签 TLS（LAN HTTPS，麦克风需要）
 ├── core/             # 核心层：与 UI 无关的全部业务逻辑

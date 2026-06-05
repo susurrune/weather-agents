@@ -72,7 +72,7 @@ class ModeController:
     Yaml is read lazily on the first ``.current`` access — instantiation is
     free of IO so callers can place ``MODE = ModeController()`` at module
     scope without paying ~2s of YAML/dotenv parsing on cold startup of
-    subcommands that never touch the mode (e.g. ``sky voice list``).
+    subcommands that never touch the mode (e.g. ``sky web list``).
     """
 
     def __init__(self, initial: InteractiveMode | None = None) -> None:
