@@ -381,6 +381,8 @@ sky version           # 版本信息
 
 ## 七、开发
 
+> 架构总览、分层依赖、数据流与扩展点见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+
 ```bash
 # 安装 dev 依赖
 pip install -e ".[dev]"
