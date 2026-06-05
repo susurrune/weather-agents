@@ -19,12 +19,14 @@
 ```
 src/weather_agents/
 ├── cli/              # 入口层：Typer 命令 + 交互式 REPL + 渲染（不含业务逻辑）
-│   ├── main.py       #   命令注册、交互循环、配置向导（持续瘦身中）
+│   ├── main.py       #   命令注册、交互循环（持续瘦身中）
 │   ├── console.py    #   共享 Rich Console 单例（Live 协调的唯一终端句柄）
 │   ├── keys.py       #   跨平台原始键盘输入（get_key / poll_esc）
+│   ├── pickers.py    #   交互选择控件（arrow_pick_from_list / flatten_catalog）
 │   ├── rendering.py  #   响应渲染：流式面板 + 最终回复面板（纯展示）
 │   ├── tool_display.py #  Claude Code 风格工具状态显示（同路径折叠）
 │   ├── dashboard.py  #   sky task 的实时编排面板（TaskDashboard）
+│   ├── wizard.py     #   首次启动配置向导（模型/密钥/画像）
 │   └── mode.py       #   auto / plan 模式状态
 ├── web/              # 入口层：语音/桌面/PWA
 │   ├── server.py     #   aiohttp WebSocket 语音服务 + REST（画像/记忆 API）
@@ -142,10 +144,9 @@ prompt cache（Anthropic/DeepSeek 前缀缓存）跨回合命中，省首字节�
 
 按优先级（持续推进中）：
 
-1. **`cli/main.py` 持续瘦身（5088 → ~4.4k 行）**。已抽出 `console` / `dashboard` /
-   `rendering` / `tool_display` / `keys`。后续可继续抽 `pickers`（arrow-picker +
-   catalog flatten，被 wizard / `/model` / `/apikey` 共用，需先抽以避免循环依赖）、
-   `wizard`（配置向导）、`commands`（各 Typer 命令组）、`repl`（交互循环）。
+1. **`cli/main.py` 持续瘦身（5088 → ~3.99k 行，−21%）**。已抽出 `console` /
+   `dashboard` / `rendering` / `tool_display` / `keys` / `pickers` / `wizard`。
+   后续可继续抽 `commands`（各 Typer 命令组）、`repl`（交互循环 + `_read_line_with_popup`）。
    每次抽一个内聚单元，全量测试守护。
 2. **`core/agent.py`（~2.8k 行）**：`chat_stream` 与 `_llm_loop` 有重叠的工具执行
    逻辑，可提取共享的 `_execute_tool_calls()` 助手。
