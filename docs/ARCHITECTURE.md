@@ -28,10 +28,9 @@ src/weather_agents/
 │   ├── dashboard.py  #   sky task 的实时编排面板（TaskDashboard）
 │   ├── wizard.py     #   首次启动配置向导（模型/密钥/画像）
 │   └── mode.py       #   auto / plan 模式状态
-├── web/              # 入口层：语音/桌面/PWA
+├── web/              # 入口层：语音/PWA
 │   ├── server.py     #   aiohttp WebSocket 语音服务 + REST（画像/记忆 API）
-│   ├── desktop.py    #   pywebview 原生窗口 + 启动闪屏
-│   ├── tunnel.py     #   Cloudflare Quick Tunnel（手机公网访问）
+│   ├── tunnel.py     #   Cloudflare Quick Tunnel（sky voice --tunnel 公网访问）
 │   ├── tts.py        #   Doubao TTS（HTTP + WebSocket）
 │   └── certs.py      #   自签 TLS（LAN HTTPS，麦克风需要）
 ├── core/             # 核心层：与 UI 无关的全部业务逻辑

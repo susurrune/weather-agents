@@ -2259,6 +2259,24 @@ _TOOL_LABELS: dict[str, str] = {
     "git_add": "Git add {files}",
     "git_commit": "Git commit",
     "git_checkout": "Git checkout {branch}",
+    # Computer-operation tools
+    "launch_app": "Launching {name}",
+    "open_path": "Opening {target}",
+    "browser_open": "Opening {url} in browser",
+    "list_installed_apps": "Listing installed apps",
+    "system_info": "System info",
+    "system_diagnose": "System diagnosis",
+    "list_processes": "Listing processes",
+    "kill_process": "Killing {target}",
+    "package_manager": "Package {action} {name}",
+    "service_control": "Service {action} {name}",
+    # Runtime MCP tools
+    "mcp_list_servers": "Listing MCP servers",
+    "mcp_add_server": "Adding MCP server {name}",
+    "mcp_remove_server": "Removing MCP server {name}",
+    "mcp_scaffold_server": "Scaffolding MCP server {name}",
+    # Emotional memory
+    "remember": "Remembering: {note}",
 }
 
 
@@ -2745,9 +2763,9 @@ def _tool_status_label(name: str, args: dict) -> str:
             label = f"{name}..."
     else:
         label = f"{name}..."
-    # Truncate long labels
-    if len(label) > 60:
-        label = label[:57] + "..."
+    # Truncate long labels — keep enough room that paths are visible.
+    if len(label) > 100:
+        label = label[:97] + "..."
     return label
 
 

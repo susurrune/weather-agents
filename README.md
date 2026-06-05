@@ -171,14 +171,14 @@ cloudflared tunnel --url http://localhost:8765
 一条命令把语音端变成跨设备应用：
 
 ```bash
-pip install "skyloom[desktop]"   # 原生窗口 + 二维码所需的可选依赖
-sky app                          # 打开桌面窗口 + 公网网址 + 二维码
+pip install qrcode                # 二维码所需的可选依赖
+sky voice --tunnel                # 语音聊天 + Cloudflare 公网网址 + 二维码
 ```
 
-`sky app` 做三件事：① 打开一个原生桌面窗口（pywebview）运行语音端；② 开一条 **Cloudflare Quick Tunnel**（需 `cloudflared`，无需账号），拿到 `https://xxx.trycloudflare.com` 公网地址；③ 在终端和窗口里显示**二维码**。手机扫码或输入网址即可访问你的桌面端——Cloudflare 的 HTTPS 边缘顺带解决了手机麦克风权限。
+`sky voice --tunnel` 做三件事：① 在本地启动语音 WebSocket 服务器；② 开一条 **Cloudflare Quick Tunnel**（需 `cloudflared`，无需账号），拿到 `https://xxx.trycloudflare.com` 公网地址；③ 在终端打印**二维码**。手机扫码或输入网址即可语音对话——Cloudflare 的 HTTPS 边缘顺带解决了手机麦克风权限。
 
 - **手机端 PWA**：手机浏览器打开后「添加到主屏幕」，即得一个全屏、带图标、类原生的 App。
-- 参数：`--no-tunnel`（仅本机/局域网）、`--no-window`（用默认浏览器）、`-a <agent>`、`-p <port>`。
+- `sky voice` 默认绑定 `0.0.0.0:8765`，参数：`--tunnel`（公网）、`-a <agent>`、`-p <port>`、`-H <host>`。
 - 想要免安装 `.exe`：见 [`packaging/`](packaging/)（PyInstaller 一键打包）。
 
 ### 用户画像 & 角色自定义
@@ -312,7 +312,7 @@ Ollama:      llama3 · qwen2.5 · deepseek-r1（本地，离线可用）
 sky init              # 交互式配置向导
 sky chat [agent] [msg] # 对话（默认由 cli.default_agent 指定，默认 fog）
 sky task <goal>       # 多 Agent 协作
-sky app [options]     # 桌面端：原生窗口 + Cloudflare 隧道 + 二维码（手机访问）
+sky voice [options]   # 语音聊天 + 可选 --tunnel 公网二维码（手机访问）
 sky status            # 所有 Agent 状态
 sky config <action>   # 配置管理
 sky memory <action>   # 对话记忆管理
@@ -364,7 +364,7 @@ sky version           # 版本信息
 | 多 Provider LLM（OpenAI/Anthropic/DeepSeek/Ollama） | ✅ 完成 |
 | 会话管理 + Session Resume | ✅ 完成 |
 | 语音聊天（Doubao TTS，支持环境变量一键配置） | ✅ 完成 |
-| 桌面端 `sky app`（原生窗口 + Cloudflare 隧道 + 二维码） | ✅ 完成 |
+| 语音端 `sky voice --tunnel`（Cloudflare 隧道 + 公网二维码） | ✅ 完成 |
 | 手机端 PWA（添加到主屏幕）+ PyInstaller 免安装 exe | ✅ 完成 |
 | 用户画像（本地、跨 Agent、自动注入） | ✅ 完成 |
 | 角色自定义（用户/Agent 自身可重写人设） | ✅ 完成 |

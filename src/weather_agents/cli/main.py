@@ -3354,6 +3354,8 @@ async def _run_voice_server(
     agent_name: str,
     cert_file: str | None = None,
     key_file: str | None = None,
+    *,
+    tunnel: bool = False,
 ) -> None:
     """Start the voice WebSocket server and print connection info."""
     import contextlib
@@ -3435,18 +3437,60 @@ async def _run_voice_server(
                 "  (手机 HTTPS · 有安全警告点继续)", style="green"
             )
     panel_text.append(f"\n  TTS: {tts_status}", style="dim")
+    # ── Cloudflare tunnel (optional — the phone-access path moved here from
+    #     the deprecated `sky app` command per user request) ──
+    tunnel_url: str | None = None
+    tunnel_obj = None
+    if tunnel:
+        from weather_agents.web.tunnel import CloudflareTunnel
+
+        if CloudflareTunnel.is_available():
+            tunnel_obj = CloudflareTunnel(port=port)
+            try:
+                tunnel_url = await asyncio.wait_for(tunnel_obj.start(timeout=30.0), timeout=35.0)
+            except Exception:
+                tunnel_url = None
+        if tunnel_url:
+            panel_text.append(f"\n  📱  公网: {tunnel_url}", style="green")
+            if firewall_hint:
+                panel_text.append("  (跳过防火墙)", style="dim")
+        else:
+            panel_text.append(
+                "\n  ⚠ 未检测到 cloudflared，隧道未启动。安装后重试：", style="yellow"
+            )
+            panel_text.append(
+                "\n    https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/",
+                style="dim",
+            )
     if firewall_hint:
         panel_text.append(firewall_hint, style="yellow")
     else:
-        panel_text.append("\n  手机与电脑需在同一 Wi-Fi 或热点", style="dim")
+        if not tunnel_url:
+            panel_text.append("\n  手机与电脑需在同一 Wi-Fi 或热点", style="dim")
     console.print()
     console.print(Panel(panel_text, border_style=color, box=box.ROUNDED, padding=(1, 2)))
+    if tunnel_url:
+        # Print a QR code so the phone can scan-and-go.
+        try:
+            import qrcode  # optional dep
+
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(tunnel_url)
+            qr.make(fit=True)
+            console.print()
+            qr.print_ascii(invert=True)
+        except Exception:
+            pass
     console.print()
 
     try:
         await _run_voice(host=host, port=port, agent_name=agent_name, ssl_context=ssl_context)
     except KeyboardInterrupt:
         console.print("\n  [dim]语音服务已关闭[/dim]\n")
+    finally:
+        if tunnel_obj is not None:
+            with contextlib.suppress(Exception):
+                await tunnel_obj.close()
 
 
 @app.command()
@@ -3496,35 +3540,6 @@ def chat(
 def task(goal: str = typer.Argument(..., help="Task goal for multi-agent orchestration")) -> None:
     """Multi-agent orchestration: Snow decomposes and coordinates agents."""
     asyncio.run(_run_task(goal))
-
-
-@app.command("app")
-def app_desktop(
-    agent: str = typer.Option("fair", "--agent", "-a", help="Agent to chat with"),
-    port: int = typer.Option(8765, "--port", "-p", help="Local server port"),
-    tunnel: bool = typer.Option(
-        True,
-        "--tunnel/--no-tunnel",
-        help="Expose a public Cloudflare URL so a phone can join (needs cloudflared)",
-    ),
-    window: bool = typer.Option(
-        True,
-        "--window/--no-window",
-        help="Open a native desktop window (needs pywebview); else use the browser",
-    ),
-) -> None:
-    """Desktop app: native window running the voice client.
-
-    With --tunnel (default) it opens a Cloudflare Quick Tunnel and prints a
-    public https URL + QR code — open that on your phone to talk to this
-    desktop from anywhere. Install extras with: pip install 'skyloom[desktop]'.
-    """
-    if agent not in AGENT_CLASSES:
-        names = ", ".join(AGENT_CLASSES)
-        raise typer.BadParameter(f"unknown agent '{agent}'; available: {names}")
-    from weather_agents.web.desktop import run_desktop_app
-
-    run_desktop_app(agent_name=agent, port=port, tunnel=tunnel, window=window)
 
 
 @app.command()
@@ -3682,12 +3697,21 @@ def voice(
         "-k",
         help="Path to TLS private key (required with --cert-file)",
     ),
+    tunnel: bool = typer.Option(
+        False,
+        "--tunnel",
+        "-t",
+        help="Expose a public Cloudflare URL so a phone can join without LAN (needs cloudflared)",
+    ),
 ) -> None:
     """Start voice chat server for remote voice conversation.
 
     When accessing from a mobile browser (not localhost), HTTPS is required
     for microphone access.  If --cert-file/--key-file are provided they are
     used directly; otherwise a self-signed certificate is auto-generated.
+
+    With --tunnel, starts a Cloudflare Quick Tunnel and prints a public HTTPS
+    URL + QR code — open that on your phone to talk from anywhere.
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -3696,7 +3720,7 @@ def voice(
     if agent not in AGENT_CLASSES:
         names = ", ".join(AGENT_CLASSES)
         raise typer.BadParameter(f"unknown agent '{agent}'; available: {names}")
-    asyncio.run(_run_voice_server(host, port, agent, cert_file, key_file))
+    asyncio.run(_run_voice_server(host, port, agent, cert_file, key_file, tunnel=tunnel))
 
 
 @voice_app.command("list")

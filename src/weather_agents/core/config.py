@@ -254,7 +254,7 @@ class LLMConfig:
     # mid-argument. 16384 gives enough headroom for reasoning + one
     # large write_file while leaving a buffer for follow-up.
     max_tokens: int = 16384
-    timeout: int = 120
+    timeout: int = 180
     max_retries: int = 2
     api_keys: dict[str, str] = field(default_factory=dict)
     language: str = "zh"
