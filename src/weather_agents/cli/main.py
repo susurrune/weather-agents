@@ -2611,7 +2611,6 @@ def _handle_workspace_auto(ctx) -> None:
         console.print(f"  [yellow]Warning: {e}[/yellow]")
 
 
-
 from weather_agents.cli.model_mgmt import (  # noqa: E402
     _handle_apikey_command,
     _handle_model_command,
@@ -2620,7 +2619,7 @@ from weather_agents.cli.model_mgmt import (  # noqa: E402
 )
 
 
-async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
+async def _run_task(goal: str, agents=None, *, confirm: bool = False, resume: bool = False) -> None:
     """Run a goal through the orchestration path.
 
     ``confirm=True`` is what PLAN mode passes — the plan is rendered and the
@@ -2633,6 +2632,16 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
         own_ctx = create_system_context()
         await own_ctx.init_all()
         agents = own_ctx.agent_map
+
+    if resume:
+        from weather_agents.core.checkpoint import load as _load_cp
+
+        cp = _load_cp()
+        if cp and cp.get("goal") == goal:
+            n = len(cp.get("completed_ids", []))
+            console.print(f"  [dim]Resuming — {n} tasks already done[/dim]")
+        elif cp:
+            console.print("  [yellow]Checkpoint is for a different goal.[/yellow]")
 
     try:
         # Route simple goals to a single agent — skips Snow's LLM decomposition
@@ -2811,6 +2820,7 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
                 on_task_start=_on_start,
                 on_task_done=_on_done,
                 on_planned=_on_planned,
+                resume=resume,
                 # Resolve dashboard at CALL time, not bind time: the dashboard is
                 # created later inside _on_planned, so binding now would freeze
                 # this to None and the live table would never show tool status.
@@ -2842,6 +2852,11 @@ async def _run_task(goal: str, agents=None, *, confirm: bool = False) -> None:
             return
 
         _, results, summary = _orch_task.result()
+        # Clear checkpoint on clean completion
+        if not resume:
+            from weather_agents.core.checkpoint import clear as _clear_cp
+
+            _clear_cp()
 
         if dashboard:
             dashboard.stop()
@@ -3120,9 +3135,12 @@ def chat(
 
 
 @app.command()
-def task(goal: str = typer.Argument(..., help="Task goal for multi-agent orchestration")) -> None:
+def task(
+    goal: str = typer.Argument(..., help="Task goal for multi-agent orchestration"),
+    resume: bool = typer.Option(False, "--resume", "-r", help="Resume from last checkpoint"),
+) -> None:
     """Multi-agent orchestration: Snow decomposes and coordinates agents."""
-    asyncio.run(_run_task(goal))
+    asyncio.run(_run_task(goal, resume=resume))
 
 
 @app.command()
