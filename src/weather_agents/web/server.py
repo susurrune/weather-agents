@@ -659,18 +659,24 @@ async def run_voice_server(
     # Create TTS engine if configured
     tts_engine = None
     if cfg.tts.enabled:
-        tts_engine = DoubaoTTS(
-            access_token=cfg.tts.access_token or None,
-            api_key=cfg.tts.api_key or None,
-            app_id=cfg.tts.app_id or None,
-            resource_id=cfg.tts.resource_id,
-            voice_type=cfg.tts.voice_type,
-            encoding=cfg.tts.encoding,
-            speed_ratio=cfg.tts.speed_ratio,
-            volume_ratio=cfg.tts.volume_ratio,
-            pitch_ratio=cfg.tts.pitch_ratio,
-            emotion=cfg.tts.emotion,
-        )
+        provider = getattr(cfg.tts, "provider", "doubao") or "doubao"
+        if provider == "doubao":
+            tts_engine = DoubaoTTS(
+                access_token=cfg.tts.access_token or None,
+                api_key=cfg.tts.api_key or None,
+                app_id=cfg.tts.app_id or None,
+                resource_id=cfg.tts.resource_id,
+                voice_type=cfg.tts.voice_type,
+                encoding=cfg.tts.encoding,
+                speed_ratio=cfg.tts.speed_ratio,
+                volume_ratio=cfg.tts.volume_ratio,
+                pitch_ratio=cfg.tts.pitch_ratio,
+                emotion=cfg.tts.emotion,
+            )
+        else:
+            from weather_agents.web.tts_providers import create_provider
+
+            tts_engine = create_provider(cfg)
 
     server = VoiceServer(
         ctx.agent_map,
