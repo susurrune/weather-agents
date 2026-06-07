@@ -260,22 +260,20 @@ mypy src/                     # 类型检查
 
 ## 后续规划
 
-### v1.5（进行中）
+### v1.5 ✅ 已完成
+- [x] `core/agent.py` 解耦（2789→2248）
+- [x] `tools/builtin.py` 按主题拆分（2183→1229）
+- [x] mypy strict 0 错误
+- [x] CI 优化（—cov 拆分，提速 ~30%）
 
-- [x] **`core/agent.py` 解耦**（2789 → 2248，`agent_helpers.py` 577 行已抽出）
-- [x] **`tools/builtin.py` 按主题拆分**（2183 → 1229，`git_tools.py`/`search_tools.py`/`_common.py` 已抽出）
-- [x] **mypy strict**（0 错误）
-- [ ] **`cli/main.py` 继续瘦身**（4016 → 目标 <3000）
-- [ ] **CI 测试时间 < 20s**（当前 ~25s）
-
-### 中期（v2.0 — 1-3 个月）
-
-- [ ] **MCP 双向桥**：除了消费 MCP server 外，让 Skyloom 自身也作为 MCP server 对外提供能力
-- [ ] **多 TTS 供应商支持**（按需，但不破坏豆包默认行为）
-- [ ] **本地 RAG**：长期记忆从 KV 升级到向量检索
-- [ ] **Agent 自演进**：晴可以创建新技能（已有骨架）扩展到全部 Agent
-- [ ] **工作流持久化**：`sky task` 中断后可恢复
-- [ ] **Web 端记忆面板**：在浏览器里编辑画像/记忆/角色
+### v2.0（进行中）
+- [x] **工作流持久化** `sky task --resume`
+- [x] **MCP 双向桥** `sky mcp`
+- [x] **Web 记忆面板**（API + UI）
+- [x] **Agent 自演进**（全部 Agent 已有 `self_evolve`）
+- [x] **本地语义检索**（n-gram Jaccard + LIKE 双层召回）
+- [ ] **向量 RAG 升级**（chromadb / numpy 嵌入）
+- [ ] **多 TTS 供应商**（按需，不破坏豆包）
 
 ### 长期（探索）
 
