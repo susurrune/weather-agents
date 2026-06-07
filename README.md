@@ -260,13 +260,13 @@ mypy src/                     # 类型检查
 
 ## 后续规划
 
-### 短期（v1.5 — 1-2 周）
+### v1.5（进行中）
 
-- [ ] **`core/agent.py` 解耦**（2789 行→拆为 `agent_loop`/`tool_executor`/`stream_handler`）
-- [ ] **`tools/builtin.py` 按主题拆分**（2183 行→`file_tools`/`net_tools`/`git_tools`/`search_tools`）
-- [ ] **`cli/main.py` 继续瘦身**（4016 行→提取 `commands.py` 各 Typer 命令组、`repl.py` 交互循环）
-- [ ] 全量 mypy strict 通过
-- [ ] CI 测试时间 < 20s（当前 24s）
+- [x] **`core/agent.py` 解耦**（2789 → 2248，`agent_helpers.py` 577 行已抽出）
+- [x] **`tools/builtin.py` 按主题拆分**（2183 → 1229，`git_tools.py`/`search_tools.py`/`_common.py` 已抽出）
+- [x] **mypy strict**（0 错误）
+- [ ] **`cli/main.py` 继续瘦身**（4016 → 目标 <3000）
+- [ ] **CI 测试时间 < 20s**（当前 ~25s）
 
 ### 中期（v2.0 — 1-3 个月）
 

@@ -53,7 +53,11 @@ src/weather_agents/
 ├── agents/           # 六个 agent 的人设与技能绑定（薄层，仅声明）
 │   ├── fog.py rain.py frost.py snow.py dew.py fair.py
 ├── tools/            # 工具实现（注册进 core.ToolRegistry）
-│   ├── builtin.py    #   文件/目录/shell/HTTP/git/搜索/时间/画像
+│   ├── builtin.py    #   主 facade + 注册函数（持续瘦身中）
+│   ├── _common.py    #   共享常量、截断、路径保护
+│   ├── git_tools.py  #   git status/diff/log/add/commit/checkout
+│   ├── search_tools.py # 文件搜索/代码搜索/grep + list/tree/move/copy/delete
+│   ├── _web_search.py#   Web 搜索（DDG+Bing 竞速）+ 缓存
 │   ├── computer.py   #   电脑操作：启动应用/系统诊断/进程/包管理/服务
 │   ├── mcp_tools.py  #   运行时 MCP 管理：增删/列出/脚手架生成
 │   └── delegate.py   #   delegate_to（agent 间任务委派）
@@ -147,9 +151,8 @@ prompt cache（Anthropic/DeepSeek 前缀缓存）跨回合命中，省首字节�
    `dashboard` / `rendering` / `tool_display` / `keys` / `pickers` / `wizard`。
    后续可继续抽 `commands`（各 Typer 命令组）、`repl`（交互循环 + `_read_line_with_popup`）。
    每次抽一个内聚单元，全量测试守护。
-2. **`core/agent.py`（~2.8k 行）**：`chat_stream` 与 `_llm_loop` 有重叠的工具执行
-   逻辑，可提取共享的 `_execute_tool_calls()` 助手。
-3. **`tools/builtin.py`（~2.2k 行）**：可按主题拆为 `file_tools` / `net_tools` /
-   `git_tools` / `search_tools`，与 `computer.py` / `mcp_tools.py` 并列。
+2. **`core/agent.py`（~2.2k 行）**：✅ `agent_helpers.py`（578行）已抽出纯函数 helper。
+3. **`tools/builtin.py`（~1.2k 行）**：✅ 已拆为 `git_tools.py` / `search_tools.py` /
+   `_common.py` / `_web_search.py`，与 `computer.py` / `mcp_tools.py` 并列。
 
 重构守则：纯结构移动、不改行为、每步 `uv run pytest -x` 通过、危险红线见 `CLAUDE.md`。
