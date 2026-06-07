@@ -3544,6 +3544,23 @@ def _is_configured() -> bool:
 
 
 @app.command()
+def mcp() -> None:
+    """Run Skyloom as an MCP server (stdio JSON-RPC).
+
+    Connect any MCP-compatible client (Claude Desktop, Zed, Continue, etc.)
+    to use Skyloom agents as tools.
+    """
+    asyncio.run(_mcp_server_run())
+
+
+@app.command()
 def version() -> None:
     """Show version information."""
     console.print(f"  Skyloom [bold]v{__version__}[/bold]")
+
+
+async def _mcp_server_run() -> None:
+    from weather_agents.core.mcp_server import MCPServer
+
+    server = MCPServer()
+    await server.run()
