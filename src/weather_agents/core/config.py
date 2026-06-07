@@ -316,6 +316,9 @@ class TTSConfig:
     volume_ratio: float = 1.0
     pitch_ratio: float = 1.0
     emotion: str = "happy"
+    # Multi-provider API keys (non-Doubao). e.g. tts.api_keys.openai, tts.api_secrets.iflytek
+    api_keys: dict[str, str] = field(default_factory=dict)
+    api_secrets: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -558,6 +561,13 @@ def _load_config_uncached() -> AppConfig:
         cfg.tts.volume_ratio = float(tts_cfg.get("volume_ratio", 1.0))
         cfg.tts.pitch_ratio = float(tts_cfg.get("pitch_ratio", 1.0))
         cfg.tts.emotion = tts_cfg.get("emotion", cfg.tts.emotion)
+        # Multi-provider keys
+        if api_keys := tts_cfg.get("api_keys"):
+            if isinstance(api_keys, dict):
+                cfg.tts.api_keys = {str(k): str(v) for k, v in api_keys.items()}
+        if api_secrets := tts_cfg.get("api_secrets"):
+            if isinstance(api_secrets, dict):
+                cfg.tts.api_secrets = {str(k): str(v) for k, v in api_secrets.items()}
 
     # Env var fallback for TTS API key — fastest configuration path
     if not cfg.tts.api_key:

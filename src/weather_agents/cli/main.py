@@ -3008,7 +3008,9 @@ async def _run_voice_server(
 
     # Check TTS status
     cfg = load_config()
-    tts_status = "豆包 TTS" if cfg.tts.enabled else "浏览器 TTS"
+    _tts_names = {"doubao": "豆包", "edge": "Edge", "openai": "OpenAI", "azure": "Azure", "elevenlabs": "ElevenLabs", "fishaudio": "Fish Audio", "iflytek": "讯飞", "tencent": "腾讯云", "aliyun": "阿里云", "baidu": "百度"}
+    _tts_label = _tts_names.get(cfg.tts.provider, cfg.tts.provider.upper()) + " TTS"
+    tts_status = _tts_label if cfg.tts.enabled else "浏览器 TTS"
 
     firewall_hint = ""
     with contextlib.suppress(Exception):
