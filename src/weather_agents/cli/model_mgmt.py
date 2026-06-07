@@ -14,7 +14,9 @@ from weather_agents.cli.keys import get_key as _get_key
 from weather_agents.cli.pickers import arrow_pick_from_list as _arrow_pick_from_list
 from weather_agents.core.agent import TaskState
 from weather_agents.core.config import (
+    _sync_api_keys_to_env,
     delete_config,
+    load_config,
     load_model_catalog,
     set_config,
 )
@@ -443,6 +445,8 @@ TASK_STATE_ICONS: dict[TaskState, tuple[str, str]] = {
     TaskState.FAILED: ("✗", "red"),
     TaskState.SKIPPED: ("–", "dim"),
 }
+
+
 def _provider_for_model(model: str) -> str:
     """Resolve a model id back to its catalog provider key.
 
@@ -498,5 +502,3 @@ def _provider_for_model(model: str) -> str:
     if "gemini" in m_lower:
         return "google_gemini"
     return "openai"
-
-
