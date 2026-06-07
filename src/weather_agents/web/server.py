@@ -8,7 +8,7 @@ import json
 import re
 import ssl
 from pathlib import Path
-from typing import Any
+from typing import Any, Any as _Any
 
 from aiohttp import web
 
@@ -47,7 +47,7 @@ class VoiceServer:
         agent_name: str = "fair",
         host: str = "0.0.0.0",
         port: int = 8765,
-        tts_engine: DoubaoTTS | object | None = None,
+        tts_engine: _Any | None = None,
         ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         self._agent_map = agent_map
