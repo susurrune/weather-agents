@@ -271,8 +271,7 @@ mypy src/                     # 类型检查
 - [x] **MCP 双向桥** `sky mcp`
 - [x] **Web 记忆面板**（API + UI）
 - [x] **Agent 自演进**（全部 Agent 已有 `self_evolve`）
-- [x] **本地语义检索**（n-gram Jaccard + LIKE 双层召回）
-- [ ] **向量 RAG 升级**（chromadb / numpy 嵌入）
+- [x] **本地语义检索**（FTS5 + n-gram Jaccard 三层召回，CJK 原生支持）
 - [ ] **多 TTS 供应商**（按需，不破坏豆包）
 
 ### 长期（探索）
