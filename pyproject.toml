@@ -35,12 +35,8 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.15",
 ]
-# Desktop app extras: native window (pywebview) + QR for phone access.
-# psutil powers the rich system diagnostics / process tools (computer.py);
-# without it those degrade gracefully but the bundled app should have it.
-# cloudflared is a separate external binary (install via OS package manager).
-desktop = [
-    "pywebview>=5.0",
+# Optional extras — install with: pip install "skyloom[extras]"
+extras = [
     "qrcode>=7.0",
     "psutil>=5.9",
 ]

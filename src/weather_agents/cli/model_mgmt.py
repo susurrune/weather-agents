@@ -16,7 +16,6 @@ from weather_agents.core.agent import TaskState
 from weather_agents.core.config import (
     _sync_api_keys_to_env,
     delete_config,
-    load_config,
     load_model_catalog,
     set_config,
 )
