@@ -47,7 +47,7 @@ class VoiceServer:
         agent_name: str = "fair",
         host: str = "0.0.0.0",
         port: int = 8765,
-        tts_engine: DoubaoTTS | None = None,
+        tts_engine: DoubaoTTS | object | None = None,
         ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         self._agent_map = agent_map

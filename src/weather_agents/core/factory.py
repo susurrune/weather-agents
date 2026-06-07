@@ -680,7 +680,7 @@ async def _run_orchestration(
         if cp and cp.get("goal") == goal:
             _log.info("checkpoint_resume goal=%s tasks=%d", goal, len(cp.get("tasks", [])))
             # Replay previously-completed results; skip them in the loop.
-            completed: set[str] = set(cp.get("completed_ids", []))
+            _cp_completed: set[str] = set(cp.get("completed_ids", []))
             # We can't fully resume plan/execute complexity here — return a
             # minimal result set and let the caller decide what to do.
             # For now the simple case: single task that already completed.

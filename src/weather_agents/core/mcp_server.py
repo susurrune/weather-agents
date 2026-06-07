@@ -81,7 +81,7 @@ class MCPServer:
 
     def __init__(self) -> None:
         self._initialized = False
-        self._ctx = None
+        self._ctx: Any = None
         self._agents: dict[str, Any] = {}
 
     async def run(self) -> None:

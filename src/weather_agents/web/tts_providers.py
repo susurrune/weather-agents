@@ -16,6 +16,7 @@ import base64
 import json
 import os as _os
 import time as _time
+from typing import Any as _Any
 
 import httpx
 
@@ -553,7 +554,7 @@ _PROVIDER_MAP: dict[str, type] = {
 _NEEDS_SECRET = {"iflytek", "tencent", "aliyun", "baidu"}
 
 
-def create_provider(cfg) -> object | None:
+def create_provider(cfg) -> _Any | None:
     """Build a non-Doubao TTS engine from config, or None."""
     provider = cfg.tts.provider
     cls = _PROVIDER_MAP.get(provider)
