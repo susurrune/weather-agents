@@ -8,7 +8,8 @@ import json
 import re
 import ssl
 from pathlib import Path
-from typing import Any as _Any, Any
+from typing import Any
+from typing import Any as _Any
 
 from aiohttp import web
 
